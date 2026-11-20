@@ -4,7 +4,10 @@ Thuật ngữ kiến trúc dùng chung: `docs/GLOSSARY.md` (dẫn từ README). 
 
 Lõi vận hành doanh nghiệp theo GÓI (lõi + năng lực dùng chung + gói ngành; cấu hình từng công ty là dữ liệu — 0056 / 0059). Tài liệu
 riêng của khách KHÔNG nằm trong repo này (`docs/clients/` nếu có ở máy là lối tắt bị `.gitignore`), code và tài liệu ở đây KHÔNG nhắc tên khách.
-**Người / agent trong team: trước khi làm đọc `../barista-docs/BAT-DAU.md` và luật ở đầu `../barista-docs/DIEU-PHOI.md`** (giữ chỗ số ADR / api / migration, ghi việc đang làm, khoá phát hành). Thông tin bản cài và khách cụ thể: `barista-docs/CLAUDE.md` (repo nội bộ). Bản quyền: không phải mã nguồn mở, đối tác dùng theo thoả thuận (`LICENSE`, tiếng Anh, không ghi tên cá nhân). Greenfield: chỉ chuẩn
+**Người / agent trong team: trước khi làm đọc `../barista-docs/BAT-DAU.md` và luật ở đầu `../barista-docs/DIEU-PHOI.md`** (giữ chỗ số ADR / api / migration, ghi việc đang làm, khoá phát hành). Thông tin bản cài và khách cụ thể: `barista-docs/CLAUDE.md` (repo nội bộ). **Repo này CÔNG KHAI, mã nguồn mở Apache 2.0** (`LICENSE`, `NOTICE`):
+commit đẩy lên — kể cả thông điệp commit — ai cũng đọc được ngay. Không đưa vào đây tên khách, email / số điện thoại thật, khoá API, dữ liệu khách,
+script riêng một khách, ghi chú nội bộ hay tài liệu kinh doanh (chúng ở các repo riêng tư `barista-docs`, `barista-ops`). Người trong team: trước khi
+đẩy main chạy `bash ../barista-ops/share/scan-core.sh HEAD` (quét tên khách / email thật / khoá) — phải ra "sạch". Greenfield: chỉ chuẩn
 mới nhất, không lớp tương thích cũ. Kiến trúc lõi + lý do: `docs/ARCHITECTURE.md`.
 **Bắt đầu từ `docs/OVERVIEW.md`.** Vì sao chọn cách này: ADR ở repo riêng `../barista-docs/decisions/` (mỗi quyết định một file — đọc trước khi đổi thứ
 gì nền tảng; số giữ nguyên, mục lục `README.md` ở đó). Làm thế nào: `docs/runbooks/` (runbook vận hành bản cài — 11, 17 — ở `../barista-docs/runbooks/`).
@@ -17,7 +20,7 @@ trade_finance, hosting, accounting_service, equity_research, edu, telephony, rea
 mã, migration, phần mẫu (hồ sơ `san-moi-gioi` / `san-moi-gioi-demo`) và test của Bất động sản + Hoa hồng ở `barista-packs` từ 12/11/2026 — `0191`) · `barista-docs` (ADR
 `decisions/`, runbook nội bộ, `clients/<khách>/` — RIÊNG TƯ) · `barista-ops` (`instances/*.json` từng bản cài — RIÊNG TƯ). Repo này KHÔNG
 chứa ADR, ghi chú nội bộ hay tên khách: `docs/decisions` và `docs/clients` (nếu có ở máy) chỉ là lối tắt cục bộ trỏ sang `../barista-docs/` (gitignore);
-tài liệu và chú thích mã ở đây chỉ ghi SỐ ADR ("ADR 0045"), không link sang `barista-docs` (lõi có thể công khai; người ngoài team không vào được repo đó); tên khách trong chữ viết "khách đầu tiên". Tên gói chấm công là `timekeeping` (không `time`, không `attendance` — trùng điểm danh của edu).
+tài liệu và chú thích mã ở đây chỉ ghi SỐ ADR ("ADR 0045"), không link sang `barista-docs` (lõi công khai; người ngoài team không vào được repo đó); tên khách trong chữ viết "khách đầu tiên". Tên gói chấm công là `timekeeping` (không `time`, không `attendance` — trùng điểm danh của edu).
 
 Cấu trúc: `backend/` (Python 3.14, uv, FastAPI, psycopg 3 — không ORM) · `macos/` (SwiftUI, SwiftPM — app "Barista Desk") · `web/` (Next.js 16, shadcn, Tailwind 4, pnpm — client thuần qua BFF, KHÔNG chạm DB: ADR 0047, đọc `web/CLAUDE.md`) · `ios/` (xcodegen, dùng chung mã `macos/Sources/BaristaDesk`; sửa mã chung ⇒ build cả Mac lẫn iOS — ADR 0041).
 
