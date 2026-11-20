@@ -1,5 +1,7 @@
 # Barista — quy tắc cho agent làm việc trên repo
 
+> Người đóng góp từ ngoài: bỏ qua các đoạn nhắc `../barista-docs`, `../barista-packs`, `../barista-ops` — đó là các repo riêng của nhóm vận hành; mọi luật kỹ thuật bên dưới vẫn áp dụng đủ khi chỉ có repo này. Bắt đầu từ [README](README.md).
+
 Thuật ngữ kiến trúc dùng chung: `docs/GLOSSARY.md` (dẫn từ README). Không định nghĩa lại Pack / Workspace / Module / Screen / Tool / Skill trong từng ADR; thuật ngữ mới hoặc đổi nghĩa thì cập nhật từ điển. Mục ghi “đề xuất” không phải tính năng đã có.
 
 Lõi vận hành doanh nghiệp theo GÓI (lõi + năng lực dùng chung + gói ngành; cấu hình từng công ty là dữ liệu — 0056 / 0059). Tài liệu

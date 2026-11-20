@@ -1,6 +1,6 @@
 # Barista Web
 
-Máy khách web của khách đầu tiên (Next.js 16 App Router · React 19 · TypeScript strict · Tailwind 4 · shadcn/ui trên base-ui · pnpm).
+Máy khách web của Barista (Next.js 16 App Router · React 19 · TypeScript strict · Tailwind 4 · shadcn/ui trên base-ui · pnpm).
 Cùng ngôn ngữ giao diện với app Mac/iPhone `macos/Sources/BaristaDesk`: **khung kiểu Lark — thanh bên trái (Tìm · Trợ lý · Tin nhắn ·
 một mục mỗi phân hệ · người dùng) → cột giữa đổi theo mục → "khung làm việc" bên phải**, nền #F2F2F7,
 thẻ trắng bo tròn, chế độ tối, màu xanh làm điểm nhấn, thang chữ 20/16/14/12 chỉ ba độ đậm, không in hoa có dấu, không nghiêng.
@@ -8,7 +8,7 @@ thẻ trắng bo tròn, chế độ tối, màu xanh làm điểm nhấn, thang 
 ## Chạy
 
 ```bash
-# core (đã chạy sẵn ở :8300 khi dev): BARISTA_DEV_AUTH=1 uv run uvicorn barista.main:app --port 8300  (xem ../CLAUDE.md)
+# core (đã chạy sẵn ở :8300 khi dev): BARISTA_DEV_AUTH=1 uv run uvicorn barista.main:app --port 8300  (xem ../README.md)
 cd web
 pnpm install
 pnpm dev            # http://localhost:3100  — chọn vai ở màn đăng nhập dev

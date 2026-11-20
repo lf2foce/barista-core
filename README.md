@@ -1,16 +1,38 @@
 # Barista
 
+**An open-source core for running a business by modules ("packs"), with an AI assistant that works under the same permissions and the same single command door as every human user.**
+One codebase; each company's configuration is data. Permissions are enforced in the database (PostgreSQL row-level security), money goes through a double-entry ledger,
+and the assistant can only *propose* changes that a person approves.
+
 Nền tảng vận hành doanh nghiệp theo gói, có trợ lý AI dùng cùng quyền và cửa thực thi với người dùng. Code dùng chung; cấu hình từng công ty là dữ liệu.
 
-## Bắt đầu từ đây
+## Thử trong 10 phút / Quick start
 
-- Người trong team: đọc `barista-docs/BAT-DAU.md` (repo nội bộ) trước — bốn repo, cài máy, bảng điều phối, cách gộp code.
+Cần / Requirements: Python 3.14 + [uv](https://docs.astral.sh/uv/), PostgreSQL (thử với 18), Node + pnpm (cho web). App Mac (`macos/`) chỉ cần nếu muốn dùng Swift.
+
+```bash
+bash backend/scripts/dev-db.sh              # một lần: tạo role + DB dev, ghi backend/.env (kho tệp, khoá ký)
+cd backend && uv sync
+uv run python -m barista.seed --reset       # công ty mẫu (dữ liệu GIẢ): crm, directory, finance, hr, kpi, marketing, talk
+BARISTA_DEV_AUTH=1 uv run uvicorn barista.main:app --port 8300   # API: http://127.0.0.1:8300/docs
+cd ../web && pnpm install && pnpm dev       # giao diện: http://localhost:3100
+```
+
+Mở http://localhost:3100, chọn một vai ở màn đăng nhập dev (ví dụ `giamdoc@sanmau.demo`). Bạn sẽ thấy công ty mẫu với khách, việc, kế toán, nhân sự.
+
+- **Trợ lý AI** cần khoá model (Gemini mặc định): đặt `BARISTA_LLM_API_KEY`, hoặc `BARISTA_LLM_API_KEY_FILE` + `BARISTA_LLM_API_KEY_VAR`. Không có khoá thì mọi thứ khác vẫn chạy.
+- `BARISTA_DEV_AUTH=1` chỉ để thử trên máy mình; đăng nhập thật là Google OIDC ([runbook 09](docs/runbooks/09-dang-nhap-google.md)).
+- Chi tiết, DB test, chạy bộ test, bản cài thứ hai: [runbook 01](docs/runbooks/01-chay-tren-may-dev.md).
+
+## Đọc tiếp
+
 - [Tổng quan hệ thống](docs/OVERVIEW.md): sản phẩm, các tầng và tình trạng triển khai.
 - [Từ điển kiến trúc](docs/GLOSSARY.md): nguồn định nghĩa chung cho Pack, Workspace, Module, Screen, Tool, Skill và Workflow.
 - [Kiến trúc](docs/ARCHITECTURE.md): ranh giới và hợp đồng kỹ thuật.
-- Các quyết định: lý do, phương án chọn / bỏ, trạng thái từng thiết kế.
 - [Runbook](docs/runbooks/README.md): cách chạy và vận hành.
-- [Quy tắc sửa repo](CLAUDE.md): bất biến và kiểm tra trước khi hoàn tất.
+- [Làm gói riêng](docs/runbooks/21-goi-cua-doi-tac.md): `scripts/pack.sh new` tạo khuôn, `scripts/pack.sh check` tự kiểm. Gói chỉ dùng `barista.api` và có thể nằm repo riêng với giấy phép riêng.
+- [Quy tắc sửa repo](CLAUDE.md): các luật bất biến và kiểm tra trước khi hoàn tất. [Đóng góp](CONTRIBUTING.md).
+- Các quyết định thiết kế (ADR) được giữ ở một repo riêng; mã và tài liệu ở đây chỉ ghi số ADR ("ADR 0045"), phần lý do đã tóm trong tài liệu kiến trúc.
 
 ## Hai loại từ điển
 
