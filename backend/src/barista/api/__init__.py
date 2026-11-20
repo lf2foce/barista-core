@@ -99,7 +99,7 @@ type Ctx = _Ctx
 # gọi model NGOÀI giao dịch.
 type Prep = _Prep
 
-__version__ = "1.69.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
+__version__ = "1.70.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
 #                         1.7: gộp ba nhánh cùng mang 1.6 — regulations.declare / compare / known_codes (0154) · Module.inbound (webhook VÀO từ nhà cung cấp) · Pack(records=…) cấu hình mặc định qua lệnh của module sở hữu (0153)
 #                              · Module.consumes nhận thêm họ outreach / doc_read / paper_draft — dịch vụ lõi mở cho gói ngoài (0155)
 #                         1.8: NeedsConfirmation — lệnh tự biết việc trợ lý định làm chạm lịch / dữ liệu của NGƯỜI KHÁC ⇒ cả lệnh thành thẻ đề xuất (0158)
@@ -216,6 +216,8 @@ __version__ = "1.69.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                              khai trường có lịch sử của đối tượng CỦA CHÍNH module; ``Ctx.track(loại, id, trường, cũ, mới)`` ghi trong cùng giao dịch (nạp lịch sử ⇒ im);
 #                              ``history.block(ctx, loại, id)`` khối "Lịch sử thay đổi" cho thẻ; truy vấn ``core.history`` (trợ lý). Migration base/102 — bảng mới, không bảo trì.
 #                         1.69: (ADR 0246, luật tự động) ``Module.date_source`` + ``DateIn`` — nguồn ngày cho luật theo thời gian ("N ngày trước / sau <ngày> của bản ghi") · ``Module.trigger(ids=, owner=)`` khoá mã làm đầu vào lệnh + người phụ trách bản ghi · ``Module.command(auto=True)`` lệnh luật tự động được chạy — chỉ thêm
+#                         1.70: (bổ sung ADR 0245) họ ``ledger_read`` trả ``snapshot = {token, journals, mapping}`` và nhận ``snapshot=`` — sổ hoặc bảng Ánh xạ tài khoản đổi giữa
+#                              các lần đọc của một báo cáo (token chung cho dòng + số dư cùng pháp nhân) ⇒ Conflict (gói không ghép hai trạng thái); gói lưu snapshot cùng báo cáo đã duyệt để biết ánh xạ đổi sau duyệt.
 
 __all__ = [
     "VN",

@@ -32,7 +32,7 @@
 
 | Module | Tên | Gói | Schema | Mã | Lệnh | Truy vấn | Nội bộ |
 |---|---|---|---|---|---|---|---|
-| `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (13 file) | 68 | 83 | 55 |
+| `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (20 file) | 68 | 83 | 55 |
 | `admin` | Quản trị | `base` | — | `modules/admin.py` | 38 | 43 | 12 |
 | `apps` | App của tôi | `base` | `apps` | `modules/apps.py` | 11 | 20 | 2 |
 | `asks` | Yêu cầu gửi bên ngoài | `base` | `asks` | `modules/asks.py` | 10 | 3 | 4 |
@@ -67,7 +67,7 @@
 
 ### `acct` — Kế toán
 
-- **Mã:** `acct/__init__.py`, `acct/assurance.py`, `acct/bank.py`, `acct/corrections.py`, `acct/dossier.py`, `acct/dossier_logic.py`, `acct/expenses.py`, `acct/goods.py`, `acct/ledger_read.py`, `acct/periods.py`, `acct/placements.py`, `acct/settlements.py`, `acct/vat.py`
+- **Mã:** `acct/__init__.py`, `acct/assurance.py`, `acct/bank.py`, `acct/cash_in.py`, `acct/common.py`, `acct/corrections.py`, `acct/dossier.py`, `acct/dossier_logic.py`, `acct/expenses.py`, `acct/goods.py`, `acct/integrity.py`, `acct/ledger_read.py`, `acct/payouts.py`, `acct/periods.py`, `acct/placements.py`, `acct/receivables.py`, `acct/reconcile.py`, `acct/reports.py`, `acct/settlements.py`, `acct/vat.py`
 - **Tài nguyên quyền:** `acct`
 - **Hợp đồng quyền hệ thống** (thao tác ← module được gọi):
   - `acct.advances_left` ← `pay`

@@ -20,9 +20,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from barista.api import Conflict, Ctx, Input, Invalid, NotFound, entities, today
+from barista.api import Conflict, Ctx, Input, Invalid, NotFound, today
 from barista.kernel import ledger
-from barista.modules.acct import _accept, _allocate, _vnd, locked_message, m
+from barista.modules.acct import m
+from barista.modules.acct.cash_in import _accept, _allocate
+from barista.modules.acct.common import _vnd, locked_message
 
 ENTRY_PREFIXES = ("inventory", "expense", "revenue", "payable")   # bút toán không tiền: hàng, chi phí, doanh thu, phải trả — không gì đụng tiền
 DEDUCTION_PREFIXES = ("expense", "payable")                        # bên trả giữ lại: phí (chi phí) / tiền đã trả hộ khách (giảm phải trả)
@@ -81,19 +83,12 @@ async def post_entry(ctx: Ctx, inp: PostEntry) -> dict[str, Any]:
         src = inp.reverses_source or inp.source
         if not SOURCE.fullmatch(src) or src.split(".")[0] != module:
             raise Invalid("Chỉ đảo được bút toán của chính module gọi")
-        orig = await ledger.journal(ctx, _key(src, inp.reverses_ref))
-        if orig is None:
+        # Sổ cái quyết định gọi lại / đảo một lần / khoá kỳ (docs/MONEY-INVARIANTS.md) — ở đây chỉ kiểm hợp đồng của cửa gói.
+        got = await ledger.reverse(ctx, original_key=_key(src, inp.reverses_ref), key=key, memo=inp.memo[:300], source=inp.source, on=inp.on,
+                                   exact_day=inp.on is not None)
+        if got is None:
             raise NotFound(f"Không có bút toán {src} {inp.reverses_ref} để đảo")
-        if (old := await ledger.journal(ctx, key)) is not None:
-            if sorted(old["lines"]) != sorted((c, -a) for c, a in orig["lines"]) or old["entity_id"] != orig["entity_id"]:
-                raise Conflict("IDEMPOTENCY_CONFLICT: bút toán đảo đã ghi với số / pháp nhân khác bút toán gốc")
-            if inp.on is not None and old["posted_on"] != inp.on:
-                raise Conflict(f"IDEMPOTENCY_CONFLICT: bút toán đảo đã ghi ngày {old['posted_on']:%d/%m/%Y}, không phải {inp.on:%d/%m/%Y}")
-            return {"journal_id": old["id"], "created": False}
-        if msg := await locked_message(ctx, orig["entity_id"], inp.on or today()):
-            raise Invalid(msg)
-        jid = await ledger.reverse(ctx, original_key=_key(src, inp.reverses_ref), key=key, memo=inp.memo[:300], source=inp.source, on=inp.on)
-        return {"journal_id": jid, "created": True}
+        return {"journal_id": got.journal_id, "created": got.created}
     want: dict[str, int] = {}
     for ln in inp.lines:
         want[ln.account] = want.get(ln.account, 0) + ln.amount_vnd
@@ -103,22 +98,11 @@ async def post_entry(ctx: Ctx, inp: PostEntry) -> dict[str, Any]:
     if bad := [c for c, _ in lines if not owned_account(c, module, ENTRY_PREFIXES)]:
         raise Invalid(f"Tài khoản không ghi được qua hợp đồng này (phải là tài khoản cố định của chính gói, tiền tố {' / '.join(ENTRY_PREFIXES)}): "
                       f"{', '.join(bad)}")
-    if (old := await ledger.journal(ctx, key)) is not None:
-        if sorted(old["lines"]) != lines:
-            raise Conflict("IDEMPOTENCY_CONFLICT: bút toán đã ghi với số khác")
-        # Gọi lại KHÁC nội dung không phải "đã ghi": pháp nhân / ngày hạch toán mà bên gọi NÊU RÕ phải khớp bút toán cũ. Không nêu (trống = mặc định / hôm
-        # nay) ⇒ nhận bút toán cũ — lần thử lại không đổi kết quả chỉ vì pháp nhân mặc định hay ngày đã đổi. Sửa pháp nhân = đảo rồi ghi lại.
-        if inp.entity_id is not None and old["entity_id"] != inp.entity_id:
-            raise Conflict("IDEMPOTENCY_CONFLICT: bút toán đã ghi vào pháp nhân khác — đảo rồi ghi lại, không ghi đè")
-        if inp.on is not None and old["posted_on"] != inp.on:
-            raise Conflict(f"IDEMPOTENCY_CONFLICT: bút toán đã ghi ngày {old['posted_on']:%d/%m/%Y}, không phải {inp.on:%d/%m/%Y}")
-        return {"journal_id": old["id"], "created": False}
-    entity = inp.entity_id or await entities.default(ctx)
-    on = inp.on or today()
-    if msg := await locked_message(ctx, entity, on):
-        raise Invalid(msg)
-    jid = await ledger.post(ctx, key=key, memo=inp.memo[:300], source=inp.source, ref=inp.source_ref[:200], lines=lines, on=on, entity=entity)
-    return {"journal_id": jid, "created": True}
+    # Gọi lại: pháp nhân / ngày hạch toán chỉ phải khớp khi bên gọi NÊU RÕ (trống ⇒ sổ cái điền pháp nhân mặc định / ngày hôm nay, lần thử lại không đổi
+    # kết quả chỉ vì mặc định đã đổi). Sửa pháp nhân / ngày = đảo rồi ghi lại. So nội dung, đảo một lần, khoá kỳ: sổ cái (docs/MONEY-INVARIANTS.md).
+    posted = await ledger.post(ctx, key=key, memo=inp.memo[:300], source=inp.source, ref=inp.source_ref[:200], lines=lines, on=inp.on or today(),
+                               entity=inp.entity_id, exact_day=inp.on is not None)
+    return {"journal_id": posted.journal_id, "created": posted.created}
 
 
 class SettleItem(BaseModel):
@@ -179,9 +163,9 @@ async def settle_line(ctx: Ctx, inp: SettleLine) -> dict[str, Any]:
         raise Invalid(msg)
     await _accept(ctx, line)
     if ded:
-        jid = await ledger.post(ctx, key=f"acct.deduct:{line['id']}", memo=f"Bên trả giữ lại — bảng kê {inp.source_ref}"[:300], source="acct.deduction",
+        jid = (await ledger.post(ctx, key=f"acct.deduct:{line['id']}", memo=f"Bên trả giữ lại — bảng kê {inp.source_ref}"[:300], source="acct.deduction",
                                 ref=line["bank_ref"], lines=[*((d.account, d.amount_vnd) for d in inp.deductions), ("unapplied:bank", -ded)],
-                                entity=line["entity_id"], on=line["received_on"])
+                                entity=line["entity_id"], on=line["received_on"])).journal_id
         async with ctx.conn.cursor() as cur:
             await cur.executemany(
                 """INSERT INTO acct.line_deductions (line_id, account, amount_vnd, memo, source, source_ref, journal_id, created_by)

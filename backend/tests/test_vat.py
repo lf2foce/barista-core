@@ -20,7 +20,7 @@ from barista.kernel import events, executor, regulations
 from barista.kernel.clock import today
 from barista.kernel.errors import Invalid
 from barista.kernel.principal import Principal
-from barista.modules.acct import _AR_DRIFT
+from barista.modules.acct.integrity import _AR_DRIFT
 from barista.modules.acct.vat import ROUNDING, period_bounds, rate_on, split
 from tests import money_source
 from tests.conftest import Who, approved, edge, ok, owner_val, q

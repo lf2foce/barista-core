@@ -35,7 +35,10 @@ from barista.api import (
     ui,
 )
 from barista.kernel import ledger
-from barista.modules.acct import _accept, _target, _vnd, locked_message, m, void_books
+from barista.modules.acct import m
+from barista.modules.acct.cash_in import _accept
+from barista.modules.acct.common import _vnd, locked_message
+from barista.modules.acct.receivables import _target, void_books
 
 # ── Danh mục khoản thu / chi ──
 
@@ -216,8 +219,8 @@ async def release(ctx: Ctx, t: dict[str, Any], amount: int, *, reason: str, corr
             raise Invalid(f"Ngày đảo không được trước ngày thu {p['received_on']:%d/%m/%Y}")
         await ctx.one("SELECT id FROM acct.statement_lines WHERE id = %s FOR UPDATE", (p["line_id"],))
         rid = uuid4()
-        jid = await ledger.post(ctx, key=f"acct.payment_reversal:{rid}", memo=f"Đảo phiếu thu {t['code']}: {reason}"[:300], source="acct.payment_reversal",
-                                ref=t["code"], lines=[(t["receivable_account"], part), ("unapplied:bank", -part)], entity=t["entity_id"], on=on)
+        jid = (await ledger.post(ctx, key=f"acct.payment_reversal:{rid}", memo=f"Đảo phiếu thu {t['code']}: {reason}"[:300], source="acct.payment_reversal",
+                                ref=t["code"], lines=[(t["receivable_account"], part), ("unapplied:bank", -part)], entity=t["entity_id"], on=on)).journal_id
         await ctx.exec("""INSERT INTO acct.payment_reversals (id, payment_id, amount_vnd, reason, corrects, reversed_on, journal_id, created_by)
                           VALUES (%s, %s, %s, %s, %s, %s, %s, core.me())""", (rid, p["id"], part, reason, corrects, on, jid))
         await ctx.exec("""UPDATE acct.statement_lines SET allocated_vnd = allocated_vnd - %s, status = 'open', decided_by = core.me(), decided_at = now()
@@ -337,7 +340,7 @@ async def reduce_receivable(ctx: Ctx, t: dict[str, Any], amount: int, *, reason:
     if over > 0:   # số mới thấp hơn số đã thu ⇒ phần thu thừa về chưa phân bổ trước, rồi mới giảm
         await release(ctx, t, over, reason=f"Giảm phải thu: {reason}", corrects=ref, on=on, guard=True)
     cid = uuid4()
-    jid = await ledger.post(ctx, key=key or f"acct.credit:{cid}", memo=memo[:300], source=source, ref=t["code"], lines=lines, entity=t["entity_id"], on=on)
+    jid = (await ledger.post(ctx, key=key or f"acct.credit:{cid}", memo=memo[:300], source=source, ref=t["code"], lines=lines, entity=t["entity_id"], on=on)).journal_id
     await ctx.exec("""INSERT INTO acct.receivable_credits (id, receivable_id, amount_vnd, reason, corrects, credited_on, journal_id, created_by)
                       VALUES (%s, %s, %s, %s, %s, %s, %s, core.me())""", (cid, t["id"], amount, reason, ref, on, jid))
     if amount == t["amount_vnd"]:   # giảm hết: khoản thành "đã huỷ" (số phải thu không về 0 — ràng buộc số dương giữ nguyên)

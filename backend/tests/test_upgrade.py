@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import psycopg
 import pytest
 from psycopg import AsyncConnection
 
@@ -204,6 +205,8 @@ NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | {"word/001_documents.sql",   # 0227
                                               "base/099_audit_partial_indexes.sql",   # quét màn 18/11: hai chỉ mục từng phần trên core.audit_log — chỉ THÊM, lock_timeout 10s ⇒ không bảo trì
                                               "base/100_connectors.sql",   # khung kết nối chung (0244): schema MỚI connectors — chỉ THÊM, bản cũ không đọc ⇒ không bảo trì
                                               "base/101_connector_routes.sql",   # webhook chung (1.66): bảng MỚI connectors.routes — chỉ THÊM ⇒ không bảo trì
+                                              "base/104_ledger_whole_entries.sql",   # rà 20/11: bút toán một khối giữ bằng trigger (cùng giao dịch, ≥ 2 dòng) + đảo một lần — bản cũ ghi đầu + dòng cùng giao dịch ⇒ không bảo trì
+                                              "finance/077_receivable_issued_facts.sql",   # rà 20/11: số lúc lập của khoản phải thu — cột mới + trigger điền khi chèn (bản cũ chèn được) ⇒ không bảo trì
                                               "base/102_field_changes.sql",   # ADR 0246: bảng MỚI core.field_changes (lịch sử thay đổi theo trường) — chỉ THÊM, bản cũ không đọc / ghi ⇒ không bảo trì
                                               "crm/088_lost_reasons.sql",   # ADR 0246: bảng MỚI crm.lost_reasons + cột crm.leads.lost_reason_key trống được — bản cũ không đọc / ghi ⇒ không bảo trì
                                               "crm/089_stage_idle_days.sql",   # ADR 0246: cột crm.stages.idle_days trống được — bản cũ không đọc / ghi ⇒ không bảo trì
@@ -1413,4 +1416,78 @@ async def test_0122_move_refuses_without_a_configured_store_and_checks_every_obj
     finally:
         settings.files_dir = old_dir
         files.use_store(old_store)
+        await reset_schemas(URL)
+
+
+async def _077_company(c: Any, tid: Any, rows: dict[str, tuple[Any, ...]]) -> dict[str, Any]:
+    """Công ty + khoản phải thu kiểu cũ (trước finance/077): (bản chất, số hiện tại, phí hiện tại, đã giảm, trạng thái, bút toán lập, thuế đã cộng)."""
+    await c.execute("INSERT INTO core.tenants(id,name) VALUES(%s,'Công ty phải thu')", (tid,))
+    eid = (await (await c.execute("INSERT INTO core.legal_entities(tenant_id,code,name,is_default) VALUES(%s,'CHINH','Chính',true) RETURNING id",
+                                  (tid,))).fetchone() or [None])[0]
+    await c.execute("INSERT INTO ledger.accounts(tenant_id,code,name,kind) VALUES(%s,'receivable:customers','PT','asset'),"
+                    "(%s,'revenue:services','DT','revenue')", (tid, tid))
+    ids: dict[str, Any] = {}
+    for i, (k, (nature, amount, fee, credited, status, issued, vat)) in enumerate(rows.items()):
+        opening = k.startswith("dau_ky")   # khoản đầu kỳ: bút toán lập theo từng dòng của lô, khoá ở recognized_key
+        rid = (await (await c.execute(
+            """INSERT INTO acct.receivables(tenant_id,code,source,source_ref,label,nature,amount_vnd,fee_vnd,revenue_account,payee_key,due_on,status,
+                                            credited_vnd)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'revenue:services',%s,core.today(),%s,%s) RETURNING id""",
+            (tid, f"TTCU{i:04d}", "test.opening" if opening else "test.order", k, k, nature, amount, fee, "" if nature == "revenue" else "nguoi_nhan",
+             status, credited))).fetchone() or [None])[0]
+        ids[k] = rid
+        if issued:
+            key = f"acct.opening_batch:lo1:{i}" if opening else f"acct.ar:{rid}"
+            await c.execute("UPDATE acct.receivables SET recognized_key=%s WHERE id=%s", (key, rid))
+            async with c.transaction():   # bút toán một khối (base/104): đầu + dòng cùng giao dịch
+                jid = (await (await c.execute("INSERT INTO ledger.journals(tenant_id,memo,source,idempotency_key) VALUES(%s,'lập','acct.receivable',%s)"
+                                              " RETURNING id", (tid, key))).fetchone() or [None])[0]
+                await c.execute("""INSERT INTO ledger.postings(tenant_id,journal_id,account_id,amount_vnd)
+                                   SELECT %s,%s,id,CASE WHEN code='receivable:customers' THEN %s ELSE -%s END FROM ledger.accounts WHERE tenant_id=%s""",
+                                (tid, jid, issued, issued, tid))
+        if vat:
+            await c.execute("""INSERT INTO acct.vat_invoices(tenant_id,receivable_id,entity_id,kind,symbol,number,issued_on,category,treatment,rate_bps,
+                                                             price_mode,base_vnd,tax_vnd,gross_vnd,rule_refs)
+                               VALUES(%s,%s,%s,'invoice','1C26TAA',%s,core.today(),'dich_vu','standard',1000,'exclusive',%s,%s,%s,'{vn-vat@test:r}')""",
+                            (tid, rid, eid, str(i + 1), amount - vat, vat, amount))
+    return ids
+
+
+async def test_finance_077_fills_the_issued_amount_from_the_source_not_the_state() -> None:
+    """finance/077 (rà Codex 20/11, hai lần): số lúc lập lấy từ NGUỒN — bút toán lập ``acct.ar:<id>`` khi có; không có thì số hiện tại trừ thuế của
+    hoá đơn giá chưa thuế còn hiệu lực. Đúng cả khi khoản bị giảm rồi huỷ bằng đường khác (lập 100, giảm 20, huỷ 80 ⇒ 100) và khi cộng VAT (lập
+    100, cộng thuế 10 ⇒ 100, không phải 110) và với khoản đầu kỳ (bút toán từng dòng của lô, khoá ở ``recognized_key``). Sau nâng cấp: chèn mới tự điền, sửa bị chặn."""
+    await _db()
+    try:
+        await migrate(URL, until="finance/076_discrepancy_dossiers.sql")
+        tid = uuid.uuid4()
+        rows = {"giu": ("revenue", 50, 50, 0, "open", 50, 0), "giam_roi_huy": ("revenue", 80, 80, 20, "void", 100, 0),
+                "giam_het": ("revenue", 80, 80, 100, "void", 100, 0), "giam_mot_phan": ("revenue", 70, 70, 30, "open", 100, 0),
+                "cong_vat": ("revenue", 110, 110, 0, "open", 100, 10), "thu_ho_vat": ("pass_through", 110, 30, 0, "open", None, 10),
+                "dau_ky_giam": ("revenue", 80, 80, 20, "open", 100, 0)}
+        async with await AsyncConnection.connect(URL, autocommit=True) as c:
+            ids = await _077_company(c, tid, rows)
+        await migrate(URL)
+        async with await AsyncConnection.connect(URL, autocommit=True) as c:
+            got = {k: tuple((await (await c.execute("SELECT issued_amount_vnd, issued_fee_vnd FROM acct.receivables WHERE id=%s", (rid,))).fetchone()) or ())
+                   for k, rid in ids.items()}
+            assert got == {"giu": (50, 50), "giam_roi_huy": (100, 100), "giam_het": (100, 100), "giam_mot_phan": (100, 100),
+                           "cong_vat": (100, 100), "thu_ho_vat": (100, 20), "dau_ky_giam": (100, 100)}
+            with pytest.raises(psycopg.errors.RaiseException, match="không sửa được"):
+                await c.execute("UPDATE acct.receivables SET issued_amount_vnd = 1 WHERE id=%s", (ids["giu"],))
+    finally:
+        await reset_schemas(URL)
+
+
+async def test_finance_077_stops_when_the_sources_disagree() -> None:
+    """finance/077: khoản có bút toán lập 100, chưa giảm, không hoá đơn, mà số hiện tại 90 ⇒ hai nguồn không khớp ⇒ migration DỪNG, nêu mã khoản —
+    không đoán."""
+    await _db()
+    try:
+        await migrate(URL, until="finance/076_discrepancy_dossiers.sql")
+        async with await AsyncConnection.connect(URL, autocommit=True) as c:
+            await _077_company(c, uuid.uuid4(), {"lech": ("revenue", 90, 90, 0, "open", 100, 0)})
+        with pytest.raises(Exception, match="TTCU0000"):
+            await migrate(URL)
+    finally:
         await reset_schemas(URL)

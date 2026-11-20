@@ -44,7 +44,8 @@ from barista.api import (
     ui,
 )
 from barista.kernel import ledger, registry
-from barista.modules.acct import CODE_ALPHABET, G_BOOK, _vnd, m
+from barista.modules.acct import G_BOOK, m
+from barista.modules.acct.common import CODE_ALPHABET, _vnd, locked_message
 
 EQUITY = "equity:opening"
 SOURCE = "acct.opening_batch"   # nguồn bút toán sổ cái của mọi dòng đầu kỳ (và bút toán đảo lô)
@@ -134,6 +135,21 @@ async def apply_reopen_period(ctx: Ctx, inp: ApplyReopen) -> dict[str, Any]:
         raise Conflict("Mốc khoá đã đổi từ lúc xin — xin lại theo mốc hiện tại")
     await ledger.reopen_to(ctx, entity=inp.entity_id, through=inp.locked_through, reason=inp.reason)
     return {"entity_id": inp.entity_id, "locked_through": inp.locked_through}
+
+
+class PeriodIn(Input):
+    entity_id: UUID | None = None
+    on: date
+
+
+@m.query("period_open", resource=None, title="Ngày còn trong kỳ mở", internal=True, agent="deny", callers=("pay",), family="ledger_ref",
+         why="Gói khai consumes(\"ledger_ref\") kiểm TRƯỚC khi chốt đối tượng của nó (vd ký một thương vụ): ngày ghi nhận (không sau hôm nay) của pháp "
+             "nhân đứng tên còn trong kỳ mở không (0119) — "
+             "chặn rõ thay vì để bút toán bị khoá chặn lặng lẽ ở bên nghe sự kiện; pay.submit_run kiểm ngày hạch toán của kỳ lương trước khi "
+             "gửi duyệt. Trả {open, locked_through, message} — chỉ mốc khoá.")
+async def period_open(ctx: Ctx, inp: PeriodIn) -> dict[str, Any]:
+    msg = await locked_message(ctx, inp.entity_id, inp.on)
+    return {"open": not msg, "locked_through": await ledger.locked_through(ctx, inp.entity_id or await entities.default(ctx)), "message": msg}
 
 
 # ── Số dư đầu kỳ: dòng nháp ──
@@ -338,7 +354,7 @@ async def _post_line(ctx: Ctx, batch: dict[str, Any], n: int, r: dict[str, Any])
         control = r["account"]
     elif r["kind"] == "receivable":
         code = await _receivable_code(ctx, r["ref"])
-        from barista.modules.acct import debtor
+        from barista.modules.acct.common import debtor
 
         # bên nợ (0177): mã người nếu dòng nháp có (đã kiểm lúc nhập), không thì TÊN ⇒ tìm / tạo định danh; tên hiện lấy từ định danh
         party_id, party_name = await debtor(ctx, r["party_id"], r["party"])
@@ -363,8 +379,8 @@ async def _post_line(ctx: Ctx, batch: dict[str, Any], n: int, r: dict[str, Any])
              abs(amount), Jsonb({"opening_batch": str(batch["id"]), "ref": r["ref"], "issued_on": str(r["issued_on"]),
                                  "due_on": str(r["due_on"]) if r["due_on"] else None})))
     # ngày hạch toán = ngày cắt D của lô (trigger khoá kỳ kiểm D > mốc)
-    jid = await ledger.post(ctx, key=key, memo=memo, source=SOURCE, ref=batch["code"], entity=batch["entity_id"], on=batch["cut_on"],
-                            lines=[(control, amount), (EQUITY, -amount)])
+    jid = (await ledger.post(ctx, key=key, memo=memo, source=SOURCE, ref=batch["code"], entity=batch["entity_id"], on=batch["cut_on"],
+                            lines=[(control, amount), (EQUITY, -amount)])).journal_id
     if pid is not None:
         await ctx.exec("UPDATE acct.payables SET journal_id = %s WHERE id = %s", (jid, pid))
     await ctx.exec("UPDATE acct.opening_lines SET batch_id = %s, journal_key = %s WHERE id = %s", (batch["id"], key, r["id"]))
@@ -464,8 +480,9 @@ async def reverse_opening_batch(ctx: Ctx, inp: ReverseBatch) -> dict[str, Any]:
             p = (await _balances(ctx, "p.source=%s AND p.source_ref=%s", (f"{r['domain']}.opening", source_ref)) or [None])[0]
             if p is None or p["left_vnd"] != p["amount_vnd"]:
                 raise Invalid(f"Khoản {r['label']} đã chi / cấn trừ — không đảo lô được")
-        jid = await ledger.reverse(ctx, original_key=r["journal_key"], key=f"{SOURCE}.reverse:{b['id']}:{ref}", memo=f"Đảo đầu kỳ {b['code']}: {r['label']}",
-                                   source=SOURCE, on=b["cut_on"])
+        undo = await ledger.reverse(ctx, original_key=r["journal_key"], key=f"{SOURCE}.reverse:{b['id']}:{ref}", memo=f"Đảo đầu kỳ {b['code']}: {r['label']}",
+                                    source=SOURCE, on=b["cut_on"])
+        jid = undo.journal_id if undo else None
         if r["kind"] in ("payable", "advance"):
             await ctx.exec("""INSERT INTO acct.payable_adjustments (payable_id, amount_vnd, action_key, reason, journal_id)
                               SELECT id, amount_vnd, %s, %s, %s FROM acct.payables WHERE source = %s AND source_ref = %s""",

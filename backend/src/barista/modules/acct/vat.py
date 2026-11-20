@@ -40,8 +40,10 @@ from barista.api import (
     ui,
 )
 from barista.kernel import ledger, registry
-from barista.modules.acct import _target, _vnd, locked_message, m
+from barista.modules.acct import m
+from barista.modules.acct.common import _vnd, locked_message
 from barista.modules.acct.corrections import _day, _need_approval, _need_books, reduce_receivable
+from barista.modules.acct.receivables import _target
 
 LAW = "vn-vat"
 OUTPUT = "tax:vat_output"
@@ -356,8 +358,8 @@ async def issue_vat_invoice(ctx: Ctx, inp: IssueVat) -> dict[str, Any]:
     vid, jid = uuid4(), None
     if p["tax"]:
         debit = t["revenue_account"] if p["price_mode"] == "inclusive" else t["receivable_account"]
-        jid = await ledger.post(ctx, key=f"acct.vat:{vid}", memo=f"Thuế GTGT {rate.label.lower()} — hoá đơn {invoice_no} ({t['code']})"[:300],
-                                source="acct.vat_invoice", ref=t["code"], lines=[(debit, p["tax"]), (OUTPUT, -p["tax"])], entity=t["entity_id"], on=on)
+        jid = (await ledger.post(ctx, key=f"acct.vat:{vid}", memo=f"Thuế GTGT {rate.label.lower()} — hoá đơn {invoice_no} ({t['code']})"[:300],
+                                source="acct.vat_invoice", ref=t["code"], lines=[(debit, p["tax"]), (OUTPUT, -p["tax"])], entity=t["entity_id"], on=on)).journal_id
     await ctx.exec("""INSERT INTO acct.vat_invoices (id, receivable_id, entity_id, kind, symbol, number, issued_on, category, treatment, rate_bps, price_mode,
                                                      base_vnd, tax_vnd, gross_vnd, rule_refs, journal_id, issued_by)
                       VALUES (%s, %s, %s, 'invoice', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, core.me())""",
@@ -403,8 +405,9 @@ async def cancel_vat_invoice(ctx: Ctx, inp: CancelVat) -> dict[str, Any]:
         raise Invalid(f"{t['code']} đã thu cả phần thuế ({_vnd(t['paid_vnd'])}) — đảo phần phiếu thu vượt {_vnd(t['amount_vnd'] - added)} trước rồi huỷ")
     cj = None
     if inv["journal_id"]:
-        cj = await ledger.reverse(ctx, original_key=f"acct.vat:{inv['id']}", key=f"acct.vat_cancel:{inv['id']}",
-                                  memo=f"Huỷ hoá đơn {inv['symbol']}-{inv['number']} ({t['code']}): {inp.reason.strip()}"[:300], source="acct.vat_cancel", on=on)
+        undo = await ledger.reverse(ctx, original_key=f"acct.vat:{inv['id']}", key=f"acct.vat_cancel:{inv['id']}",
+                                    memo=f"Huỷ hoá đơn {inv['symbol']}-{inv['number']} ({t['code']}): {inp.reason.strip()}"[:300], source="acct.vat_cancel", on=on)
+        cj = undo.journal_id if undo else None
     await ctx.exec("""UPDATE acct.vat_invoices SET cancelled_on = %s, cancelled_by = core.me(), cancel_reason = %s, cancel_journal_id = %s WHERE id = %s""",
                    (on, inp.reason.strip(), cj, inv["id"]))
     if added:

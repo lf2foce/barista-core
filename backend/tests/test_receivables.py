@@ -11,7 +11,7 @@ from barista.kernel import events, executor
 from barista.kernel.clock import today
 from barista.kernel.principal import elevate
 from barista.modules import work
-from barista.modules.acct import match_lines
+from barista.modules.acct.reconcile import match_lines
 from tests.conftest import Who, edge, ok, owner_val, q
 
 

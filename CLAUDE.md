@@ -48,7 +48,7 @@ Bất biến — sửa code mà phá một trong những điều này là sai, k
    trong module đầu của gói, module tự khai màn (màn việc góp vào bàn việc bằng `desk=` — `0094`) / tài nguyên cấu hình — kernel, `workspaces.py`, `presets.py`, `agent/` không
    nhắc tên gói hay module nào (`0069`, `tests/test_dummy_pack.py` là thước đo). Gọi sang gói không
    bắt buộc ⇒ `ctx.call_optional` / `call_system_optional` / `call_as_optional` (gói tắt ⇒ None) — `tests/test_meta.py` chặn gọi thẳng.
-4. **Tiền chỉ đi qua sổ cái** (`kernel/ledger.py`): ghi kép, tổng 0, chỉ thêm, sửa = bút toán đảo, khoá chống lặp.
+4. **Tiền chỉ đi qua sổ cái** (`kernel/ledger.py`): ghi kép, tổng 0, chỉ thêm, sửa = bút toán đảo, khoá chống lặp. Bất biến nào do ai giữ, kiểm ở đâu, test nào: `docs/MONEY-INVARIANTS.md` (mỗi bất biến MỘT nơi giữ — nơi gọi không so lại).
    Không UPDATE số dư ở đâu cả — số dư là tổng dòng.
 5. **Chính sách là dữ liệu.** Ma trận quyền, chuỗi duyệt, luật duyệt, chính sách hoa hồng (theo ngày hiệu lực), ánh xạ
    tài khoản MISA — quản trị sửa trong app; code chỉ kiểm hợp lệ. Không viết cứng tên người / vai trò vào code nghiệp vụ.

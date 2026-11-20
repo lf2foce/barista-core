@@ -14,7 +14,9 @@ khoá hạn mức), không biết ngành nào có tài khoản gì. Tài khoản
 ``deposit:<khoản cọc>``…) tạo bằng ``ensure_account`` lúc dùng lần đầu. Danh mục đang khai: ``ACCOUNTS``.
 """
 
+import json
 import sys
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 from uuid import UUID
@@ -22,7 +24,7 @@ from uuid import UUID
 from psycopg import errors as pg
 
 from barista.kernel.clock import today
-from barista.kernel.errors import Denied, Invalid, NotFound
+from barista.kernel.errors import Conflict, Denied, Invalid, NotFound
 from barista.kernel.executor import Ctx
 
 KINDS = ("asset", "liability", "equity", "revenue", "expense")
@@ -95,11 +97,45 @@ async def ensure_account(ctx: Ctx, code: str, name: str, kind: str, owner: UUID 
     return aid
 
 
+@dataclass(frozen=True, slots=True)
+class Posted:
+    """Kết quả MỘT lần ghi sổ (``post`` / ``reverse``): mã bút toán + lần này mới ghi (``True``) hay đọc lại bút toán đã có cùng khoá (``False``)."""
+    journal_id: UUID
+    created: bool
+
+
+def _norm(lines: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    """Hàm thuần: dòng bút toán (bỏ dòng 0) xếp theo (mã, số) — để so hai bút toán cùng khoá chống lặp. KHÔNG gộp theo tài khoản: 150 Nợ + 50 Có
+    khác 100 Nợ (phát sinh Nợ / Có khác nhau dù ròng bằng nhau). Cửa nào chỉ nhận phát sinh ròng thì tự gộp TRƯỚC khi ghi."""
+    return sorted((c, int(a)) for c, a in lines if a)
+
+
+async def replayed(ctx: Ctx, key: str, lines: list[tuple[str, int]], *, entity: UUID | None = None, reverses: UUID | None = None,
+                   day: date | None = None) -> UUID | None:
+    """MỘT nơi quyết định "gọi lại" của sổ cái: bút toán đã ghi với ``key`` (None = chưa có). Có rồi mà KHÁC nội dung ⇒ Conflict — dòng (gộp theo tài
+    khoản), bút toán gốc được đảo, và pháp nhân / ngày hạch toán khi bên gọi NÊU RÕ (``entity`` / ``day`` không None). Một khoá chống lặp chỉ mang MỘT
+    bút toán: gọi lại khác số không bao giờ được báo "đã ghi" (rà Codex 20/11 lõi tiền). ``post`` gọi hàm này cả trước khi ghi lẫn khi thua
+    yêu cầu song song; module có việc phụ trước khi ghi sổ (phân bổ dòng sao kê…) gọi nó để thoát sớm."""
+    j = await ctx.one("SELECT id, entity_id, reverses, posted_on FROM ledger.journals WHERE idempotency_key = %s", (key,))
+    if j is None:
+        return None
+    old = await ctx.all("SELECT a.code, p.amount_vnd FROM ledger.postings p JOIN ledger.accounts a ON a.id = p.account_id WHERE p.journal_id = %s",
+                        (j["id"],))
+    if _norm([(r["code"], int(r["amount_vnd"])) for r in old]) != _norm(lines) or j["reverses"] != reverses:
+        raise Conflict("IDEMPOTENCY_CONFLICT: mã chống lặp này đã ghi một bút toán khác — không ghi đè, không báo là đã ghi")
+    if entity is not None and j["entity_id"] != entity:
+        raise Conflict("IDEMPOTENCY_CONFLICT: bút toán đã ghi vào pháp nhân khác — đảo rồi ghi lại, không ghi đè")
+    if day is not None and j["posted_on"] != day:
+        raise Conflict(f"IDEMPOTENCY_CONFLICT: bút toán đã ghi ngày {j['posted_on']:%d/%m/%Y}, không phải {day:%d/%m/%Y}")
+    return j["id"]
+
+
 async def post(ctx: Ctx, *, key: str, memo: str, source: str, lines: list[tuple[str, int]], on: date, ref: str = "",
-               limits: dict[str, tuple[int | None, int | None]] | None = None, reverses: UUID | None = None,
-               entity: UUID | None = None) -> UUID:
-    """Ghi một bút toán. ``on``: NGÀY HẠCH TOÁN (0119) — bắt buộc, không sau hôm nay; kỳ của pháp nhân đã khoá tới ngày đó ⇒ DB từ chối (báo rõ,
-    không tự dời ngày). Trùng ``key`` ⇒ trả bút toán cũ, ngày đã ghi KHÔNG đổi (sửa ngày = đảo rồi ghi lại).
+                    limits: dict[str, tuple[int | None, int | None]] | None = None, reverses: UUID | None = None,
+                    entity: UUID | None = None, exact_day: bool = False) -> Posted:
+    """Ghi một bút toán — cửa DUY NHẤT của lõi vào sổ cái; trả ``Posted``. ``exact_day``: gọi lại phải đúng ngày ``on`` (bên gọi đã nêu rõ ngày). ``on``: NGÀY HẠCH TOÁN (0119) — bắt buộc, không sau hôm nay; kỳ của pháp nhân đã khoá tới ngày đó ⇒ DB từ chối (báo rõ,
+    không tự dời ngày). Trùng ``key`` CÙNG nội dung (``replayed``) ⇒ trả bút toán cũ, ``False``; ngày đã ghi KHÔNG đổi (sửa ngày
+    = đảo rồi ghi lại). Trùng ``key`` KHÁC nội dung ⇒ Conflict — kể cả hai yêu cầu đồng thời: bên thua đọc lại bút toán bên thắng rồi so.
     ``limits``: {mã tài khoản: (số dư tối thiểu, tối đa) SAU khi ghi} — chặn rút quá / vượt hạn mức,
     kiểm dưới khoá theo tài khoản nên hai yêu cầu đồng thời không cùng lọt (số dư CẢ CÔNG TY — mọi pháp nhân).
     ``entity``: PHÁP NHÂN của bút toán (0099) — trống = pháp nhân mặc định; cả bút toán thuộc MỘT pháp nhân ⇒ sổ từng pháp nhân tự cân."""
@@ -109,9 +145,9 @@ async def post(ctx: Ctx, *, key: str, memo: str, source: str, lines: list[tuple[
     lines = [(c, a) for c, a in lines if a != 0]
     if len(lines) < 2 or sum(a for _, a in lines) != 0:
         raise Invalid(f"Bút toán “{memo}” lệch nợ / có")
-    existing = await ctx.val("SELECT id FROM ledger.journals WHERE idempotency_key = %s", (key,))
-    if existing:
-        return existing
+    day = on if exact_day else None
+    if (existing := await replayed(ctx, key, lines, entity=entity, reverses=reverses, day=day)) is not None:
+        return Posted(existing, False)
     codes = sorted({c for c, _ in lines})
     for c in codes:
         if c in ACCOUNTS:
@@ -126,25 +162,28 @@ async def post(ctx: Ctx, *, key: str, memo: str, source: str, lines: list[tuple[
         after = int(bal) + sum(a for c, a in lines if c == code)
         if (lo is not None and after < lo) or (hi is not None and after > hi):
             raise Invalid(f"Vượt hạn mức tài khoản {code}")
+    payload = json.dumps([{"account": str(accounts[c]), "amount": int(a)} for c, a in lines])
     try:
-        jid = await ctx.val(
-            "INSERT INTO ledger.journals (memo, source, source_ref, idempotency_key, reverses, created_by, entity_id, posted_on)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"   # pháp nhân trống ⇒ trigger điền mặc định của công ty; rồi trigger khoá kỳ kiểm ngày
-            " ON CONFLICT (tenant_id, idempotency_key) DO NOTHING RETURNING id",
-            (memo, source, ref, key, reverses, ctx.p.user_id, entity, on))
-    except pg.RaiseException as e:   # kỳ đã khoá (trigger) ⇒ lỗi nghiệp vụ, nói rõ mốc
+        async with ctx.conn.transaction():   # điểm lưu: vi phạm "đảo một lần" không làm hỏng giao dịch của bên gọi
+            jid = await ctx.val("SELECT ledger.write_journal(%s, %s, %s, %s, %s, %s, %s, %s::jsonb)",   # MỘT cửa ghi nguyên khối (base/104)
+                                (key, memo, source, ref, reverses, entity, on, payload))
+    except pg.RaiseException as e:   # kỳ đã khoá (trigger) / bút toán không đủ dòng ⇒ lỗi nghiệp vụ, nói rõ
         raise Invalid(e.diag.message_primary or str(e)) from e
-    if jid is None:  # yêu cầu song song cùng key vừa ghi xong
-        return await ctx.val("SELECT id FROM ledger.journals WHERE idempotency_key = %s", (key,))
-    async with ctx.conn.cursor() as cur:
-        await cur.executemany(
-            "INSERT INTO ledger.postings (journal_id, account_id, amount_vnd, memo) VALUES (%s, %s, %s, %s)",
-            [(jid, accounts[c], a, memo) for c, a in lines])
-    return jid
+    except pg.UniqueViolation as e:   # base/104: bút toán gốc đã có bút toán đảo (yêu cầu song song cùng key ⇒ đọc lại bên dưới)
+        if (same := await replayed(ctx, key, lines, entity=entity, reverses=reverses, day=day)) is not None:
+            return Posted(same, False)
+        raise Conflict("Bút toán gốc đã được đảo — mỗi bút toán chỉ đảo một lần (muốn huỷ lần đảo: ghi lại bút toán mới có tham chiếu)") from e
+    if jid is None:  # yêu cầu song song cùng key vừa ghi xong ⇒ so với bút toán bên thắng
+        if (same := await replayed(ctx, key, lines, entity=entity, reverses=reverses, day=day)) is None:
+            raise Conflict("Bút toán cùng mã đang được ghi ở yêu cầu khác — thử lại")
+        return Posted(same, False)
+    return Posted(jid, True)
 
 
-async def reverse(ctx: Ctx, *, original_key: str, key: str, memo: str, source: str, on: date | None = None) -> UUID | None:
-    """Bút toán đảo của bút toán ``original_key`` (không có ⇒ None). Đảo hai lần cùng ``key`` ⇒ một lần. ``on``: ngày hạch toán của bút toán
+async def reverse(ctx: Ctx, *, original_key: str, key: str, memo: str, source: str, on: date | None = None,
+                  exact_day: bool = False) -> Posted | None:
+    """Bút toán đảo của bút toán ``original_key`` (không có ⇒ None); trả ``Posted``. Đảo hai lần cùng ``key`` ⇒ một lần.
+    MỖI bút toán gốc chỉ đảo được MỘT lần — chỉ mục duy nhất base/104 giữ (cả khi hai yêu cầu đồng thời); đã có bút toán đảo với ``key`` khác ⇒ Conflict. ``on``: ngày hạch toán của bút toán
     đảo — trống = HÔM NAY (kỳ gốc đã khoá vẫn đảo được, số nằm ở kỳ hiện tại); được chọn ngày của bút toán gốc nếu kỳ đó còn mở, không trước ngày gốc."""
     _need_writer(ctx)
     orig = await ctx.one("SELECT id, source_ref, entity_id, posted_on FROM ledger.journals WHERE idempotency_key = %s", (original_key,))
@@ -157,7 +196,8 @@ async def reverse(ctx: Ctx, *, original_key: str, key: str, memo: str, source: s
         "SELECT a.code, p.amount_vnd FROM ledger.postings p JOIN ledger.accounts a ON a.id = p.account_id WHERE p.journal_id = %s",
         (orig["id"],))
     return await post(ctx, key=key, memo=memo, source=source, ref=orig["source_ref"], on=day,
-                      lines=[(r["code"], -r["amount_vnd"]) for r in lines], reverses=orig["id"], entity=orig["entity_id"])   # đảo cùng pháp nhân
+                           lines=[(r["code"], -r["amount_vnd"]) for r in lines], reverses=orig["id"], entity=orig["entity_id"],   # đảo cùng pháp nhân
+                           exact_day=exact_day)
 
 
 async def journal(ctx: Ctx, key: str) -> dict[str, Any] | None:
@@ -236,6 +276,14 @@ async def journal_page(ctx: Ctx, date_from: date, date_to: date, entity: UUID | 
            FROM js JOIN ledger.journals j ON j.id = js.id JOIN ledger.postings p ON p.journal_id = j.id JOIN ledger.accounts a ON a.id = p.account_id
            ORDER BY js.posted_on, js.id, p.amount_vnd DESC, p.id""",
         {"f": date_from, "t": date_to, "e": entity, "cd": after[0] if after else None, "cj": after[1] if after else None, "n": limit})
+
+
+async def journal_count(ctx: Ctx, entity: UUID | None) -> int:
+    """Số bút toán của cả sổ (một pháp nhân, hoặc cả công ty khi ``entity`` None) — phần sổ của dấu ảnh dữ liệu trong hợp đồng đọc sổ cái (0245 bổ
+    sung, 1.70). Bút toán là một khối và chỉ thêm (base/104) ⇒ số này đứng yên khi và chỉ khi sổ không có bút toán mới. Phủ CẢ sổ, không theo kỳ đọc:
+    số dư đầu kỳ và phát sinh trong kỳ của một báo cáo dùng chung một dấu (bút toán ghi lùi vào trước kỳ cũng làm dấu đổi)."""
+    row = await ctx.one("SELECT count(*)::bigint AS n FROM ledger.journals WHERE %(e)s::uuid IS NULL OR entity_id = %(e)s", {"e": entity})
+    return int(row["n"]) if row else 0
 
 
 async def balances_on(ctx: Ctx, on: date, entity: UUID | None = None) -> list[dict[str, Any]]:

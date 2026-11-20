@@ -49,7 +49,8 @@ from barista.api import (
     ui,
 )
 from barista.kernel import ledger
-from barista.modules.acct import G_OUT, G_REPORT, G_SETUP, USE_COST_OBJECTS, _vnd, locked_message, m
+from barista.modules.acct import G_OUT, G_REPORT, G_SETUP, USE_COST_OBJECTS, m
+from barista.modules.acct.common import _vnd, locked_message
 from barista.modules.acct.corrections import _day, _need_approval, _need_books, category_of
 from barista.modules.acct.settlements import _accounts, _balances, _lock
 from barista.modules.acct.vat import LAW, VAT_ON, split
@@ -321,8 +322,8 @@ async def _record(ctx: Ctx, inp: RecordExpense, transferred_from: UUID | None) -
         credit, _, _ = await _accounts(ctx, party)
     else:
         credit = pay_account
-    jid = await ledger.post(ctx, key=f"acct.bill:{bid}", memo=f"Chi phí: {label}"[:300], source="acct.bill", ref=doc_no or ref, entity=eid, on=on,
-                            lines=[*debit.items(), (credit, -total)])
+    jid = (await ledger.post(ctx, key=f"acct.bill:{bid}", memo=f"Chi phí: {label}"[:300], source="acct.bill", ref=doc_no or ref, entity=eid, on=on,
+                            lines=[*debit.items(), (credit, -total)])).journal_id
     if inp.mode == "payable":
         assert party is not None
         from psycopg.types.json import Jsonb
@@ -381,10 +382,11 @@ async def cancel_expense(ctx: Ctx, inp: CancelExpense) -> dict[str, Any]:
         if await ctx.val("""SELECT 1 FROM acct.payout_allocations a JOIN acct.payouts x ON x.id = a.payout_id
                             WHERE a.payable_id = %s AND x.status <> 'cancelled' LIMIT 1""", (p["id"],)):
             raise Invalid("Phiếu đã có lệnh chi cho bên bán — huỷ lệnh chi chưa chuyển trước; đã chuyển thì cần thu hồi từ bên bán (chưa làm — ADR 0170)")
-    cj = await ledger.reverse(ctx, original_key=f"acct.bill:{b['id']}", key=f"acct.bill_cancel:{b['id']}",
-                              memo=f"Huỷ phiếu chi phí: {inp.reason.strip()}"[:300], source="acct.bill_cancel", on=on)
-    if cj is None:
+    undo = await ledger.reverse(ctx, original_key=f"acct.bill:{b['id']}", key=f"acct.bill_cancel:{b['id']}",
+                                memo=f"Huỷ phiếu chi phí: {inp.reason.strip()}"[:300], source="acct.bill_cancel", on=on)
+    if undo is None:
         raise NotFound("Không thấy bút toán của phiếu")
+    cj = undo.journal_id
     if b["payable_id"] is not None:
         await ctx.exec("INSERT INTO acct.payable_adjustments (payable_id, amount_vnd, action_key, reason, journal_id) VALUES (%s, %s, %s, %s, %s)",
                        (b["payable_id"], b["total_vnd"], f"cancel:{b['id']}", inp.reason.strip(), cj))

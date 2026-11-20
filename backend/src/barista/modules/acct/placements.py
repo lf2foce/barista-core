@@ -24,7 +24,10 @@ from uuid import UUID
 
 from barista.api import Conflict, Ctx, Input, Invalid, NotFound, entities, today
 from barista.kernel import ledger, registry
-from barista.modules.acct import _accept, _cash_line, _owned_accounts, _vnd, locked_message, m
+from barista.modules.acct import m
+from barista.modules.acct.cash_in import _accept, _cash_line
+from barista.modules.acct.common import _vnd, locked_message
+from barista.modules.acct.payouts import _owned_accounts
 
 ledger.declare({
     "expense:late_interest": ("Chi phí lãi chậm thanh toán", "expense"),
@@ -52,19 +55,6 @@ def _accounts(source: str, key: str) -> tuple[str, str]:
 async def _ensure(ctx: Ctx, placed: str, interest: str, label: str) -> None:
     await ledger.ensure_account(ctx, placed, f"Tiền đặt tại đối tác — {label}"[:200], "asset")
     await ledger.ensure_account(ctx, interest, f"Lãi chậm thanh toán phải trả — {label}"[:200], "liability")
-
-
-async def _replay(ctx: Ctx, key: str, lines: list[tuple[str, int]]) -> UUID | None:
-    """Bút toán đã ghi với khoá này ⇒ trả id nếu CÙNG dòng (gọi lại), khác ⇒ xung đột (không để lần gọi sau đổi số ngầm)."""
-    j = await ledger.journal(ctx, key)
-    if j is None:
-        return None
-    want: dict[str, int] = {}
-    for c, a in lines:
-        want[c] = want.get(c, 0) + a
-    if sorted(j["lines"]) != sorted((c, a) for c, a in want.items() if a):
-        raise Conflict("IDEMPOTENCY_CONFLICT: bút toán tiền đặt đã ghi với số khác")
-    return j["id"]
 
 
 class Place(Input):
@@ -127,7 +117,7 @@ async def place(ctx: Ctx, inp: Place) -> dict[str, Any]:
     if len(lines) < 2:
         raise Invalid("Bút toán không có số")
     key = f"acct.place:{inp.source}:{inp.source_ref}"
-    if (old := await _replay(ctx, key, lines)) is not None:
+    if (old := await ledger.replayed(ctx, key, lines)) is not None:
         return {"journal_id": old, "created": False}
     entity = inp.entity_id or await entities.default(ctx)
     if msg := await locked_message(ctx, entity, inp.on):
@@ -135,9 +125,10 @@ async def place(ctx: Ctx, inp: Place) -> dict[str, Any]:
     await _ensure(ctx, placed, interest, inp.label)
     if inp.kind == "open":
         await ledger.ensure_account(ctx, "equity:opening", *ledger.ACCOUNTS["equity:opening"])
-    jid = await ledger.post(ctx, key=key, memo=inp.label[:300], source="acct.place", ref=(inp.bank_ref or f"{inp.source}:{inp.source_ref}")[:200],
-                            lines=lines, on=inp.on, entity=entity, limits={c: v for c, v in limits.items() if any(c == x for x, _ in lines)})
-    return {"journal_id": jid, "created": True}
+    posted = await ledger.post(ctx, key=key, memo=inp.label[:300], source="acct.place",
+                                          ref=(inp.bank_ref or f"{inp.source}:{inp.source_ref}")[:200], lines=lines, on=inp.on, entity=entity,
+                                          limits={c: v for c, v in limits.items() if any(c == x for x, _ in lines)})
+    return {"journal_id": posted.journal_id, "created": posted.created}
 
 
 class PlaceRefund(Input):
@@ -162,7 +153,7 @@ async def place_refund(ctx: Ctx, inp: PlaceRefund) -> dict[str, Any]:
         raise Invalid("Tiền hoàn cần số dương và mã giao dịch ngân hàng")
     lines = [("unapplied:bank", inp.amount_vnd), (placed, -inp.amount_vnd)]
     key = f"acct.place:{inp.source}:{inp.source_ref}"
-    if (old := await _replay(ctx, key, lines)) is not None:
+    if (old := await ledger.replayed(ctx, key, lines)) is not None:
         return {"journal_id": old, "created": False}
     entity = inp.entity_id or await entities.default(ctx)
     if msg := await locked_message(ctx, entity, inp.received_on):
@@ -174,8 +165,11 @@ async def place_refund(ctx: Ctx, inp: PlaceRefund) -> dict[str, Any]:
     if (room := line["amount_vnd"] + line["deducted_vnd"] - line["allocated_vnd"]) < inp.amount_vnd:
         raise Conflict(f"Dòng sao kê {inp.bank_ref} chỉ còn {_vnd(room)} chưa phân bổ")
     await _ensure(ctx, placed, interest, inp.label)
-    jid = await ledger.post(ctx, key=key, memo=inp.label[:300], source="acct.place", ref=inp.bank_ref.strip()[:200], lines=lines,
-                            on=line["received_on"], entity=entity, limits={placed: (0, None)})
+    posted = await ledger.post(ctx, key=key, memo=inp.label[:300], source="acct.place", ref=inp.bank_ref.strip()[:200], lines=lines,
+                               on=line["received_on"], entity=entity, limits={placed: (0, None)})
+    if not posted.created:   # thua yêu cầu song song cùng khoá: bên thắng đã phân bổ dòng sao kê — không phân bổ lần hai
+        return {"journal_id": posted.journal_id, "line_id": line["id"], "created": False}
+    jid = posted.journal_id
     await ctx.exec("INSERT INTO acct.placement_receipts (line_id, amount_vnd, journal_id, source, source_ref) VALUES (%s, %s, %s, %s, %s)",
                    (line["id"], inp.amount_vnd, jid, inp.source, inp.source_ref))   # phần phân bổ của dòng có dòng riêng (bất biến dòng sao kê)
     await ctx.exec("""UPDATE acct.statement_lines SET allocated_vnd = allocated_vnd + %s,
@@ -208,8 +202,13 @@ async def place_reverse(ctx: Ctx, inp: PlaceReverse) -> dict[str, Any]:
         raise Invalid("Bút toán gốc không thuộc tiền đặt của khoá này")
     if msg := await locked_message(ctx, orig["entity_id"], inp.on or today()):
         raise Invalid(msg)
-    jid = await ledger.reverse(ctx, original_key=orig_key, key=f"acct.place:{inp.source}:{inp.source_ref}", memo=inp.label[:300], source="acct.place",
-                               on=inp.on)
+    undo = await ledger.reverse(ctx, original_key=orig_key, key=f"acct.place:{inp.source}:{inp.source_ref}", memo=inp.label[:300], source="acct.place",
+                                on=inp.on)
+    if undo is None:
+        raise NotFound("Không thấy bút toán gốc của nguồn này")
+    if not undo.created:   # đảo này đã ghi (gọi lại / thua đua) — phần mở lại dòng sao kê đã làm
+        return {"journal_id": undo.journal_id, "created": False}
+    jid = undo.journal_id
     receipt = await ctx.one("SELECT line_id, amount_vnd FROM acct.placement_receipts WHERE journal_id = %s", (orig["id"],))
     if receipt is not None:   # tiền hoàn bị đảo ⇒ dòng âm + phần đã phân bổ của dòng sao kê gốc mở lại (tiền vẫn ở ngân hàng — phân bổ lại ở Đối soát)
         await ctx.one("SELECT id FROM acct.statement_lines WHERE id = %s FOR UPDATE", (receipt["line_id"],))

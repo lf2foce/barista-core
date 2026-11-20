@@ -44,8 +44,10 @@ from barista.api import (
     zone,
 )
 from barista.kernel import registry
-from barista.modules.acct import FEE_TOLERANCE, G_IN, G_SETUP, _vnd, m
+from barista.modules.acct import G_IN, G_SETUP, m
 from barista.modules.acct import dossier_logic as L
+from barista.modules.acct.common import _vnd
+from barista.modules.acct.reconcile import FEE_TOLERANCE
 
 log = logging.getLogger("barista.acct.dossier")
 

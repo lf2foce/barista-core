@@ -227,11 +227,11 @@ async def test_cancel_after_partial_earn_claws_back_exactly(who: Who) -> None:
 async def test_money_drift_on_real_data_shows_in_health_and_alerts_once_a_day(who: Who, monkeypatch: pytest.MonkeyPatch) -> None:
     """Cùng bất biến chạy trên dữ liệu thật: khoản phải thu của một gói lệch phiếu thu ⇒ Sức khoẻ dữ liệu hiện mã; vòng quét báo như LỖI HỆ THỐNG một
     lần / ngày / công ty."""
-    from barista.modules import acct
+    from barista.modules.acct import integrity
 
     o = await helpers.signed(who)
     gd = await who("giamdoc")
-    monkeypatch.setattr(acct, "_drift_alerted", {})
+    monkeypatch.setattr(integrity, "_drift_alerted", {})
     await owner_val("UPDATE acct.receivables SET paid_vnd = 1000, status = 'partial' WHERE code = %s RETURNING 1", (o["inv"],))   # giả lập lỗi
     try:
         issues = (await executor.query(system_principal(gd.tenant_id), "acct.health_report", {})).output["issues"]

@@ -6,7 +6,7 @@ import uuid
 from datetime import date
 from typing import Any
 
-from barista.modules.acct import match_lines
+from barista.modules.acct.reconcile import match_lines
 
 D = date(2026, 11, 5)
 
@@ -48,7 +48,7 @@ def test_two_payments_for_one_invoice_are_counted_in_date_order() -> None:
 
 
 def test_money_text_keeps_sentence_commas() -> None:
-    from barista.modules.acct import _vnd
+    from barista.modules.acct.common import _vnd
     assert f"Ghi 2 phiếu thu, tổng {_vnd(325_200_000)}" == "Ghi 2 phiếu thu, tổng 325.200.000 đ"
 
 

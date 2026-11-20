@@ -58,8 +58,8 @@ async def entity(co: dict[str, Any]) -> tuple[str, UUID]:
 async def post(p: Principal, *, key: str | None = None, on: date, entity: UUID | None = None, amount: int = 1_000,
                lines: list[tuple[str, int]] | None = None) -> UUID:
     async with db.tenant_tx(p) as conn:
-        return await ledger.post(core_ctx(conn, p), key=key or uuid4().hex, memo="thử", source="test", on=on, entity=entity,
-                                 lines=lines or [("cash:bank", amount), ("revenue:services", -amount)])
+        return (await ledger.post(core_ctx(conn, p), key=key or uuid4().hex, memo="thử", source="test", on=on, entity=entity,
+                                 lines=lines or [("cash:bank", amount), ("revenue:services", -amount)])).journal_id
 
 
 async def posted_on(key: str) -> date:

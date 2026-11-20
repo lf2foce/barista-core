@@ -117,7 +117,7 @@ async def _offset(ctx: Ctx, payable: dict[str, Any], party: dict[str, Any], *, s
         amount = min(remaining, await _advance_left(ctx, a["id"]))
         if amount <= 0:
             continue
-        jid = await ledger.post(
+        jid = (await ledger.post(
             ctx,
             key=f"acct.offset:{payable['id']}:{a['id']}",
             memo="Cấn tiền ứng",
@@ -125,7 +125,7 @@ async def _offset(ctx: Ctx, payable: dict[str, Any], party: dict[str, Any], *, s
             entity=payable["entity_id"],
             on=on or today(),
             lines=[(liability, amount), (advance_code, -amount)],
-        )
+        )).journal_id
         await ctx.exec(
             "INSERT INTO acct.advance_offsets(payable_id,advance_id,amount_vnd,journal_id) VALUES(%s,%s,%s,%s)",
             (payable["id"], a["id"], amount, jid),
@@ -259,9 +259,9 @@ async def recognize_payable(ctx: Ctx, inp: Recognize) -> dict[str, Any]:
         lines.append(("tax:withheld", -inp.tax_vnd))
     lines += [(d.account, -d.amount_vnd) for d in inp.deductions]
     on = inp.on or today()
-    jid = await ledger.post(
+    jid = (await ledger.post(
         ctx, key=f"acct.recognize:{pid}", memo=inp.label, source="acct.payable", ref=str(pid), entity=entity, lines=lines, on=on
-    )
+    )).journal_id
     # Only immutable journal reference is filled in the INSERT transaction.
     await ctx.exec("UPDATE acct.payables SET journal_id=%s WHERE id=%s", (jid, pid))
     payable = await ctx.one("SELECT * FROM acct.payables WHERE id=%s", (pid,))
@@ -326,8 +326,8 @@ async def recognize_recovery(ctx: Ctx, inp: Claim) -> dict[str, Any]:
         (inp.party_id, party["user_id"], entity, inp.source, inp.source_ref, inp.label, inp.amount_vnd, inp.expense_account,
          Jsonb({"basis": inp.basis})),
     )
-    jid = await ledger.post(ctx, key=f"acct.recovery_claim:{pid}", memo=inp.label, source="acct.recovery_claim", ref=str(pid), entity=entity,
-                            lines=[(recovery, inp.amount_vnd), (inp.expense_account, -inp.amount_vnd)], on=_on(inp.on))
+    jid = (await ledger.post(ctx, key=f"acct.recovery_claim:{pid}", memo=inp.label, source="acct.recovery_claim", ref=str(pid), entity=entity,
+                            lines=[(recovery, inp.amount_vnd), (inp.expense_account, -inp.amount_vnd)], on=_on(inp.on))).journal_id
     await ctx.exec("UPDATE acct.payables SET journal_id=%s WHERE id=%s", (jid, pid))
     return {"payable_id": pid, "journal_id": jid, "created": True}
 
@@ -378,8 +378,8 @@ async def release_recovery(ctx: Ctx, inp: ReleaseClaim) -> dict[str, Any]:
         take = min(inp.max_vnd - total, await _advance_left(ctx, c["id"]))
         if take <= 0:
             continue
-        jid = await ledger.post(ctx, key=f"acct.recovery_release:{c['id']}:{inp.action_key}", memo=inp.reason, source="acct.recovery_release",
-                                ref=str(c["id"]), entity=c["entity_id"], lines=[(c["expense_account"], take), (recovery, -take)], on=_on(inp.on))
+        jid = (await ledger.post(ctx, key=f"acct.recovery_release:{c['id']}:{inp.action_key}", memo=inp.reason, source="acct.recovery_release",
+                                ref=str(c["id"]), entity=c["entity_id"], lines=[(c["expense_account"], take), (recovery, -take)], on=_on(inp.on))).journal_id
         await ctx.exec("INSERT INTO acct.payable_adjustments(payable_id,amount_vnd,action_key,reason,journal_id) VALUES(%s,%s,%s,%s,%s)",
                        (c["id"], take, inp.action_key, inp.reason, jid))
         total += take
@@ -560,11 +560,12 @@ async def _release_payout(ctx: Ctx, p: dict[str, Any], reason: str) -> None:
         a = allocations[0]
         if await _advance_left(ctx, a["id"]) != a["amount_vnd"] + a["fee_vnd"]:
             raise Invalid("Ứng đã được cấn/hoàn: cần phương án điều chỉnh riêng")
-        jid = await ledger.reverse(
+        undo = await ledger.reverse(
             ctx, original_key=f"acct.prepare:{p['id']}", key=f"acct.cancel:{p['id']}", memo=reason, source="acct.cancel", on=today()
         )
-        if jid is None:
+        if undo is None:
             raise Invalid("Không thấy bút toán ứng cần đảo")
+        jid = undo.journal_id
         await ctx.exec(
             "INSERT INTO acct.payable_adjustments(payable_id,amount_vnd,action_key,reason,journal_id) VALUES(%s,%s,%s,%s,%s)",
             (a["id"], a["amount_vnd"] + a["fee_vnd"], f"cancel:{p['id']}", reason, jid),
@@ -574,7 +575,7 @@ async def _release_payout(ctx: Ctx, p: dict[str, Any], reason: str) -> None:
         if (p["payload"] or {}).get("legacy_request_kind") != "payout":
             raise Invalid("Lệnh ứng lịch sử cần xử lý bằng chứng đầu kỳ")
         await ledger.ensure_account(ctx, liability, p["recipient_name"], "liability", p["user_id"])
-        jid = await ledger.post(
+        jid = (await ledger.post(
             ctx,
             key=f"acct.cancel:{p['id']}",
             memo=reason,
@@ -582,7 +583,7 @@ async def _release_payout(ctx: Ctx, p: dict[str, Any], reason: str) -> None:
             entity=p["entity_id"],
             lines=[("payout:clearing", p["amount_vnd"]), (liability, -p["amount_vnd"])],
             on=today(),
-        )
+        )).journal_id
         await ctx.exec(
             "INSERT INTO acct.payables(party_id,owner_id,entity_id,source,source_ref,label,amount_vnd,payload,journal_id) "
             "VALUES(%s,%s,%s,'acct.opening',%s,%s,%s,%s,%s)",
@@ -701,7 +702,7 @@ async def void_payables(ctx: Ctx, inp: VoidSource) -> dict[str, Any]:
         party = await ctx.call_system("parties.resolve_for_payment", party_id=p["party_id"])
         liability, advance_code, recovery = await _accounts(ctx, party)
         lines = [(liability, remaining), (advance_code, offset_amount), (recovery, spent), (p["expense_account"], -amount)]
-        jid = await ledger.post(
+        jid = (await ledger.post(
             ctx,
             key=f"acct.adjust:{p['id']}:{inp.action_key}",
             memo=inp.reason,
@@ -709,7 +710,7 @@ async def void_payables(ctx: Ctx, inp: VoidSource) -> dict[str, Any]:
             entity=p["entity_id"],
             lines=lines,
             on=_on(inp.on),
-        )
+        )).journal_id
         await ctx.exec(
             "INSERT INTO acct.payable_adjustments(payable_id,amount_vnd,action_key,reason,journal_id) VALUES(%s,%s,%s,%s,%s)",
             (p["id"], amount, inp.action_key, inp.reason, jid),
@@ -1180,7 +1181,7 @@ async def recovery_line_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
 
 @m.command("recover_payment", resource="acct", title="Ghi nhận hoàn tiền ứng / thu hồi", agent="propose")
 async def recover_payment(ctx: Ctx, inp: RecoveryReceipt) -> dict[str, Any]:
-    from barista.modules.acct import _accept
+    from barista.modules.acct.cash_in import _accept
 
     if not ctx.p.has_scope("acct", "all") or inp.amount_vnd <= 0 or not inp.reason.strip():
         raise Invalid("Cần quyền, số tiền và lý do hoàn tiền")
@@ -1200,7 +1201,7 @@ async def recover_payment(ctx: Ctx, inp: RecoveryReceipt) -> dict[str, Any]:
         raise Invalid("Tiền hoàn vượt dư cần thu hoặc phần sao kê chưa phân bổ")
     await _accept(ctx, line)
     code = ("advance:" if p["kind"] == "advance" else "recovery:") + str(p["party_id"])
-    jid = await ledger.post(
+    jid = (await ledger.post(
         ctx,
         key=f"acct.recover:{p['id']}:{line['id']}",
         memo=inp.reason,
@@ -1208,7 +1209,7 @@ async def recover_payment(ctx: Ctx, inp: RecoveryReceipt) -> dict[str, Any]:
         entity=p["entity_id"],
         lines=[("unapplied:bank", inp.amount_vnd), (code, -inp.amount_vnd)],
         on=line["received_on"],   # ngày tiền hoàn về tài khoản (dòng sao kê)
-    )
+    )).journal_id
     await ctx.exec(
         "INSERT INTO acct.recovery_receipts(payable_id,line_id,amount_vnd,journal_id) VALUES(%s,%s,%s,%s)",
         (p["id"], line["id"], inp.amount_vnd, jid),

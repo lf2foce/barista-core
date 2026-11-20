@@ -9,17 +9,28 @@ Số hiệu ``mapped`` lấy từ bảng Ánh xạ tài khoản của Kế toán
 tài khoản SỔ PHỤ ``<tiền tố>:<uuid>`` (ví nhân viên, tạm ứng, phải trả người hưởng…): ``{kind, id, name, user_id}``; tài khoản thường ⇒ ``None``.
 Đối tượng trên dòng của tài khoản chung (vd khách của một khoản phải thu) chưa có trong sổ cái — phần đó là mở rộng sau (R3), không đoán ở đây.
 
+**Dấu ảnh dữ liệu** (1.70, rà 20/11 gói kế toán pháp định): mỗi kết quả kèm ``snapshot = {token, journals, mapping}`` — ``journals`` = số bút toán
+của CẢ sổ trong phạm vi pháp nhân đọc (bút toán là một khối, chỉ thêm ⇒ đổi khi và chỉ khi có bút toán mới, kể cả ghi lùi vào trước kỳ), ``mapping``
+= dấu của bảng Ánh xạ tài khoản đã dùng để ra ``mapped``. Token không phụ thuộc kỳ / ngày đọc ⇒ MỌI lần đọc của một báo cáo (số dư đầu kỳ, các
+trang phát sinh, số dư cuối kỳ) cùng pháp nhân dùng chung một token: truyền ``snapshot=<token>`` của lần đọc đầu vào các lần sau — sổ hoặc ánh xạ
+đổi ⇒ ``Conflict``, đọc lại từ đầu; một báo cáo không bao giờ ghép hai trạng thái sổ hay hai phiên bản ánh xạ. Báo cáo lập trong MỘT lệnh thì
+khai lệnh đó ``consistent=True`` (một ảnh DB cho mọi truy vấn) — token vẫn nên lưu cùng báo cáo đã duyệt (mở lại thấy ``mapping`` khác ⇒ ánh xạ
+đã đổi sau khi duyệt). Trong một lần gọi: ánh xạ đọc một lần (dấu tính từ đúng các dòng đã dùng); số bút toán đếm trước và sau khi đọc — khác ⇒
+``Conflict`` (đang có bút toán ghi cùng lúc, gọi lại).
+
 Cả hai đều ``internal`` (gói gọi bằng ``ctx.call_system`` sau khi khai ``m.consumes("ledger_read")``), ``agent="deny"``. Bên GỌI khai
 ``min_scope="all"`` (kế toán / giám đốc cả công ty) — đây là sổ của cả công ty; acct không kiểm lại người xem.
 """
 
+import hashlib
 from datetime import date
 from typing import Any
 from uuid import UUID
 
-from barista.api import Ctx, Input, Invalid, entities
+from barista.api import Conflict, Ctx, Input, Invalid, entities
 from barista.kernel import ledger
-from barista.modules.acct import _UUID_RE, _misa_account, m
+from barista.modules.acct import m
+from barista.modules.acct.common import _UUID_RE, _misa_account
 
 PAGE = 2000   # số BÚT TOÁN tối đa một trang của acct.ledger_lines (mỗi bút toán thường 2–6 dòng)
 
@@ -37,6 +48,26 @@ def _mapped(code: str, mapping: list[dict[str, Any]]) -> str:
     return "" if got == "????" else got
 
 
+def mapping_digest(mapping: list[dict[str, Any]]) -> str:
+    """Hàm thuần: dấu của bảng Ánh xạ tài khoản (tiền tố ⇒ số hiệu), không phụ thuộc thứ tự dòng; nhãn không tính (không đổi số hiệu)."""
+    body = "\n".join(sorted(f"{r['ledger_prefix']}={r['misa_account']}" for r in mapping))
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+async def _snapshot(ctx: Ctx, mapping: list[dict[str, Any]], eid: Any, read: Any, given: str) -> tuple[Any, dict[str, Any]]:
+    """Chạy ``read()`` kẹp giữa hai lần đếm bút toán của sổ; trả (kết quả, snapshot). Đếm lệch ⇒ Conflict; ``given`` khác token ⇒ Conflict."""
+    before = await ledger.journal_count(ctx, eid)
+    got = await read()
+    after = await ledger.journal_count(ctx, eid)
+    if after != before:
+        raise Conflict("Sổ cái đang có bút toán mới ghi cùng lúc — gọi lại")
+    snap = {"journals": after, "mapping": mapping_digest(mapping)}
+    snap["token"] = f"{snap['journals']}.{snap['mapping']}"
+    if given.strip() and given.strip() != snap["token"]:
+        raise Conflict("Sổ cái hoặc bảng Ánh xạ tài khoản đã đổi kể từ lần đọc đầu của báo cáo này — đọc lại từ đầu (không ghép hai trạng thái)")
+    return got, snap
+
+
 def _cursor(after: str) -> tuple[date, UUID] | None:
     if not after.strip():
         return None
@@ -52,13 +83,15 @@ class LedgerLinesIn(Input):
     until: date                       # gồm cả ngày này
     entity_code: str = ""             # trống = mọi pháp nhân (dòng vẫn ghi pháp nhân của bút toán)
     after: str = ""                   # con trỏ trang: giá trị ``next`` của trang trước
+    snapshot: str = ""                # 1.70: token của lần đọc đầu của báo cáo (cùng pháp nhân) — sổ / ánh xạ đổi từ đó ⇒ Conflict
 
 
 @m.query("ledger_lines", resource="ledger", title="Dòng bút toán sổ cái theo kỳ", internal=True, agent="deny", family="ledger_read",
          why="Gói lập sổ / báo cáo kế toán khai consumes(\"ledger_read\") (vd kế toán pháp định: nhật ký chung, sổ cái, bảng cân đối tài khoản — ADR 0245; "
              "thao tác gọi khai min_scope=\"all\" — người xem có quyền cả công ty; bên gọi kiểm, acct không kiểm lại) đọc dòng bút toán CHỈ từ sổ cái theo "
              "ngày hạch toán, theo trang đủ bút toán: {basis, from, to, entity, rows: [{journal, posted_on, entity, account, kind, mapped, party, "
-             "amount_vnd, memo, source, source_ref}], next, accounts: {mã: {name, kind, mapped}}, entities: {mã: tên}}. amount_vnd dương = Nợ.")
+             "amount_vnd, memo, source, source_ref}], next, accounts: {mã: {name, kind, mapped}}, entities: {mã: tên}, snapshot: {token, journals, mapping}}. amount_vnd dương = Nợ. "
+             "Token chung cho mọi lần đọc cùng pháp nhân (cả ledger_balances): truyền lại snapshot=<token>; sổ / ánh xạ đổi ⇒ Conflict, đọc lại từ đầu.")
 async def ledger_lines(ctx: Ctx, inp: LedgerLinesIn) -> dict[str, Any]:
     if inp.since > inp.until:
         raise Invalid("Từ ngày sau đến ngày")
@@ -67,7 +100,7 @@ async def ledger_lines(ctx: Ctx, inp: LedgerLinesIn) -> dict[str, Any]:
     ents = await entities.names(ctx)
     code = {k: v["code"] for k, v in ents.items()}
     mapping = await ctx.all("SELECT ledger_prefix, misa_account FROM acct.account_map")
-    rows = await ledger.journal_page(ctx, inp.since, inp.until, eid, cur, PAGE + 1)
+    rows, snap = await _snapshot(ctx, mapping, eid, lambda: ledger.journal_page(ctx, inp.since, inp.until, eid, cur, PAGE + 1), inp.snapshot)
     journals = list(dict.fromkeys((r["posted_on"], r["journal_id"]) for r in rows))
     nxt = None
     if len(journals) > PAGE:   # lấy dư một bút toán để biết còn trang sau; trả đúng PAGE bút toán
@@ -84,24 +117,25 @@ async def ledger_lines(ctx: Ctx, inp: LedgerLinesIn) -> dict[str, Any]:
                     "account": r["code"], "kind": r["kind"], "mapped": mp, "party": party_of(r["code"], r["name"], r["owner_user_id"]),
                     "amount_vnd": int(r["amount_vnd"]), "memo": r["memo"], "source": r["source"], "source_ref": r["source_ref"] or ""})
     return {"basis": "ledger", "from": inp.since.isoformat(), "to": inp.until.isoformat(), "entity": code[str(eid)] if eid else "", "rows": out,
-            "next": nxt, "accounts": accounts, "entities": {v["code"]: v["name"] for v in ents.values()}}
+            "next": nxt, "accounts": accounts, "entities": {v["code"]: v["name"] for v in ents.values()}, "snapshot": snap}
 
 
 class LedgerBalancesIn(Input):
     on: date                          # số dư HẾT ngày này (gồm mọi bút toán có ngày hạch toán ≤ on)
     entity_code: str = ""             # trống = mọi pháp nhân (dòng vẫn theo từng pháp nhân)
+    snapshot: str = ""                # 1.70: token của lần đọc đầu của báo cáo (cùng pháp nhân, dùng chung với ledger_lines) — đổi ⇒ Conflict
 
 
 @m.query("ledger_balances", resource="ledger", title="Số dư sổ cái tại một ngày", internal=True, agent="deny", family="ledger_read",
          why="Gói lập sổ / báo cáo kế toán khai consumes(\"ledger_read\") (ADR 0245; thao tác gọi khai min_scope=\"all\"; bên gọi kiểm, acct không kiểm "
              "lại) lấy số dư đầu kỳ / cuối kỳ CHỈ từ sổ cái theo ngày hạch toán, không phải đọc lại sổ từ đầu: {basis, on, entity, rows: [{entity, "
-             "account, kind, mapped, party, balance_vnd}], accounts, entities}. Chỉ dòng có số dư khác 0; balance_vnd dương = dư Nợ.")
+             "account, kind, mapped, party, balance_vnd}], accounts, entities, snapshot}. Chỉ dòng có số dư khác 0; balance_vnd dương = dư Nợ.")
 async def ledger_balances(ctx: Ctx, inp: LedgerBalancesIn) -> dict[str, Any]:
     eid = await entities.resolve(ctx, inp.entity_code) if inp.entity_code.strip() else None
     ents = await entities.names(ctx)
     code = {k: v["code"] for k, v in ents.items()}
     mapping = await ctx.all("SELECT ledger_prefix, misa_account FROM acct.account_map")
-    rows = await ledger.balances_on(ctx, inp.on, eid)
+    rows, snap = await _snapshot(ctx, mapping, eid, lambda: ledger.balances_on(ctx, inp.on, eid), inp.snapshot)
     accounts: dict[str, dict[str, Any]] = {}
     out = []
     for r in rows:
@@ -110,4 +144,4 @@ async def ledger_balances(ctx: Ctx, inp: LedgerBalancesIn) -> dict[str, Any]:
         out.append({"entity": code[str(r["entity_id"])], "account": r["code"], "kind": r["kind"], "mapped": mp,
                     "party": party_of(r["code"], r["name"], r["owner_user_id"]), "balance_vnd": int(r["balance"])})
     return {"basis": "ledger", "on": inp.on.isoformat(), "entity": code[str(eid)] if eid else "", "rows": out, "accounts": accounts,
-            "entities": {v["code"]: v["name"] for v in ents.values()}}
+            "entities": {v["code"]: v["name"] for v in ents.values()}, "snapshot": snap}

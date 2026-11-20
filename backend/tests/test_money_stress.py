@@ -8,7 +8,7 @@ import pytest
 
 from barista.db import db
 from barista.kernel import events, executor
-from barista.modules import acct
+from barista.modules.acct import integrity
 from tests import money_source
 from tests.conftest import Who, ok, owner_val
 
@@ -91,7 +91,7 @@ async def test_set_based_drift_check_matches_the_per_row_definition() -> None:
 
         async def ids(sql: str) -> list[Any]:
             return sorted(str(r["id"]) for r in await (await conn.execute(sql)).fetchall())   # type: ignore[arg-type]
-        old_ar, new_ar = await ids("SELECT r.id FROM acct.receivables r WHERE " + _OLD_AR), await ids(acct._AR_DRIFT.format(cols="r.id"))
-        old_l, new_l = await ids("SELECT l.id FROM acct.statement_lines l WHERE " + _OLD_LINE), await ids(acct._LINE_DRIFT.format(cols="l.id"))
+        old_ar, new_ar = await ids("SELECT r.id FROM acct.receivables r WHERE " + _OLD_AR), await ids(integrity._AR_DRIFT.format(cols="r.id"))
+        old_l, new_l = await ids("SELECT l.id FROM acct.statement_lines l WHERE " + _OLD_LINE), await ids(integrity._LINE_DRIFT.format(cols="l.id"))
         assert old_ar == new_ar and len(new_ar) >= 2
         assert old_l == new_l

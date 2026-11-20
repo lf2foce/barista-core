@@ -14,7 +14,7 @@ from barista import seed
 from barista.db import db
 from barista.kernel import executor, registry
 from barista.kernel.clock import today
-from barista.kernel.errors import Invalid
+from barista.kernel.errors import Conflict, Invalid
 from barista.kernel.principal import system_principal
 from barista.modules.acct import ledger_read
 from barista.modules.acct.ledger_read import party_of
@@ -123,3 +123,53 @@ async def test_bad_input_and_contract_shape(co: dict[str, Any]) -> None:
         op = registry.OPS[name]
         assert op.internal and op.agent == "deny" and op.family == "ledger_read", name
     assert "ledger_read" in registry.OPEN_FAMILIES
+
+
+def test_mapping_digest_ignores_row_order_and_labels() -> None:
+    a = [{"ledger_prefix": "expense:a", "misa_account": "6422", "label": "x"}, {"ledger_prefix": "cash", "misa_account": "1111", "label": "y"}]
+    b = [{"ledger_prefix": "cash", "misa_account": "1111", "label": "khác"}, {"ledger_prefix": "expense:a", "misa_account": "6422", "label": ""}]
+    assert ledger_read.mapping_digest(a) == ledger_read.mapping_digest(b)
+    assert ledger_read.mapping_digest(a) != ledger_read.mapping_digest([{**a[0], "misa_account": "6421"}, a[1]])
+
+
+async def test_snapshot_refuses_to_mix_two_ledger_states_or_two_mappings(co: dict[str, Any]) -> None:
+    """1.70 (rà 20/11 gói kế toán pháp định): trang sau mang token của trang đầu; sổ có bút toán mới hoặc ánh xạ đổi giữa hai trang ⇒ Conflict
+    — gói đọc lại từ đầu thay vì ghép hai trạng thái thành một báo cáo."""
+    tid, kt = co["tid"], co["kt"]
+    a, b = today() - timedelta(days=400), today()
+    first = await _sys(tid, "acct.ledger_lines", since=a, until=b)
+    snap = first["snapshot"]
+    assert set(snap) == {"token", "journals", "mapping"} and snap["journals"] >= 3
+    again = await _sys(tid, "acct.ledger_lines", since=a, until=b, snapshot=snap["token"])   # chưa đổi gì ⇒ đọc tiếp được
+    assert again["snapshot"] == snap
+    bal = await _sys(tid, "acct.ledger_balances", on=b)
+    assert bal["snapshot"] == snap   # một token cho mọi lần đọc cùng pháp nhân
+    assert (await _sys(tid, "acct.ledger_balances", on=b, snapshot=bal["snapshot"]["token"]))["snapshot"] == bal["snapshot"]
+
+    await ok(kt, "acct.record_expense", category="van_phong", amount_vnd=1_000_000, ref="R" + uuid.uuid4().hex[:10].upper())   # bút toán mới
+    with pytest.raises(Conflict, match="đã đổi"):
+        await _sys(tid, "acct.ledger_lines", since=a, until=b, snapshot=snap["token"])
+    with pytest.raises(Conflict, match="đã đổi"):
+        await _sys(tid, "acct.ledger_balances", on=b, snapshot=bal["snapshot"]["token"])
+
+    fresh = (await _sys(tid, "acct.ledger_lines", since=a, until=b))["snapshot"]
+    assert fresh["journals"] == snap["journals"] + 1 and fresh["mapping"] == snap["mapping"]
+    await ok(kt, "acct.set_account_map", ledger_prefix="income:thu_khac_thu_snapshot", misa_account="711", label="Thu nhập khác")   # ánh xạ đổi
+    with pytest.raises(Conflict, match="Ánh xạ"):
+        await _sys(tid, "acct.ledger_lines", since=a, until=b, snapshot=fresh["token"])
+    now = (await _sys(tid, "acct.ledger_lines", since=a, until=b))["snapshot"]
+    assert now["journals"] == fresh["journals"] and now["mapping"] != fresh["mapping"]
+
+
+async def test_one_token_covers_opening_balances_and_period_lines(co: dict[str, Any]) -> None:
+    """Rà Codex 20/11 (greenfield): đọc số dư đầu kỳ, rồi ghi LÙI một chi phí trước kỳ, rồi đọc phát sinh trong kỳ — trước đây dấu theo từng vùng
+    đọc không đổi nên báo cáo ghép số đầu kỳ cũ với phát sinh mới. Nay token phủ cả sổ, dùng chung cho số dư lẫn dòng ⇒ Conflict."""
+    tid, kt = co["tid"], co["kt"]
+    since, until = today() - timedelta(days=30), today()
+    opening = await _sys(tid, "acct.ledger_balances", on=since - timedelta(days=1))
+    lines = await _sys(tid, "acct.ledger_lines", since=since, until=until, snapshot=opening["snapshot"]["token"])   # cùng một token
+    assert lines["snapshot"] == opening["snapshot"]
+    await ok(kt, "acct.record_expense", category="van_phong", amount_vnd=123_000, bill_on=(since - timedelta(days=10)).isoformat(),
+             ref="R" + uuid.uuid4().hex[:10].upper())   # ghi lùi vào trước kỳ
+    with pytest.raises(Conflict, match="đã đổi"):
+        await _sys(tid, "acct.ledger_lines", since=since, until=until, snapshot=opening["snapshot"]["token"])

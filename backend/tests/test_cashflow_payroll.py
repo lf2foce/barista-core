@@ -108,7 +108,8 @@ async def test_a_negative_month_is_flagged_on_the_desk_and_announced_once_a_week
     cả công ty (tin đẩy không mang số tiền, cùng tháng âm không nhắc lại trong tuần). Chưa nạp sao kê gần đây ⇒ không báo (tiền trên sổ chưa đối chiếu)."""
     from barista.kernel import executor
     from barista.kernel.principal import system_principal
-    from barista.modules.acct import _say_cashflow, bank
+    from barista.modules.acct import bank
+    from barista.modules.acct.reports import _say_cashflow
 
     co = await seed_pay.office(f"cl{uuid.uuid4().hex[:6]}.demo", "Văn phòng báo âm tiền (test)", runs=False)
     w, tid = co["who"], co["tenant_id"]

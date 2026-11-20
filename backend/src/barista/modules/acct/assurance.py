@@ -25,8 +25,9 @@ from datetime import date
 from typing import Any, LiteralString
 
 from barista.api import Ctx, Dim, Input, Measure, Ratio, Screen, add_months, field, today, ui
-from barista.modules.acct import G_REPORT, _vnd, m
+from barista.modules.acct import G_REPORT, m
 from barista.modules.acct import dossier_logic as L
+from barista.modules.acct.common import _vnd
 from barista.modules.acct.dossier import STATUS
 
 # Một dòng = một hồ sơ khoản lệch. ``source`` = phần đầu (trước dấu chấm) nguồn của khoản phải thu ĐẦU TIÊN hồ sơ nhắm tới — đọc từ ứng viên đã chụp trong hồ sơ
