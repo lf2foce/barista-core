@@ -1897,4 +1897,16 @@ m.dataset(
 m.screens("mgmt", (Screen("mgmt_cashflow", "Dòng tiền dự phóng", "chart.line.uptrend.xyaxis", "acct.cashflow", group="Dòng tiền & công nợ", tint="green", min_scope="all"),), rank=20)
 
 
-from barista.modules.acct import assurance, bank, corrections, dossier, expenses, goods, periods, placements, settlements, vat  # noqa: E402, F401 — registers bank accounts / cash in-out, payables, period locks, corrections, VAT, expenses, money placed with counterparties (0182), goods books (0217), money assurance over discrepancy dossiers (0228 §D)
+from barista.modules.acct import (  # noqa: E402, F401 — registers bank accounts / cash in-out, payables, period locks, corrections, VAT, expenses, money placed with counterparties (0182), goods books (0217), money assurance over discrepancy dossiers (0228 §D)
+    assurance,
+    bank,
+    corrections,
+    dossier,
+    expenses,
+    goods,
+    ledger_read,
+    periods,
+    placements,
+    settlements,
+    vat,
+)

@@ -210,9 +210,12 @@ REPLACED: dict[str, str] = {}
 # công ty in trên giấy). Từ 1.36 (0217): ``journal`` (bút toán KHÔNG dùng tiền giữa các tài khoản cố định do CHÍNH gói gọi khai — giá vốn, hàng đi đường, hàng
 # nhập chưa có hoá đơn, chênh lệch kiểm kê, hàng bán bị trả lại). Từ 1.64: ``sale_source`` (nguồn doanh số báo MỘT LẦN BÁN của chính module gọi cho năng lực trả theo
 # doanh số — hoa hồng: ghi nhận, huỷ, đổi người bán, mốc được hưởng; thao tác do GÓI năng lực khai, lõi chỉ mở họ để hai gói không nêu tên nhau).
+# Từ 1.68 (0245): ``ledger_read`` (ĐỌC sổ cái chi tiết cho gói lập sổ / báo cáo kế toán: dòng bút toán theo kỳ theo trang đủ bút toán, số dư tại một
+# ngày — theo pháp nhân, số hiệu đã ánh xạ, đối tượng sổ phụ; chỉ đọc, bên gọi khai ``min_scope="all"``).
 OPEN_FAMILIES = ("outreach", "doc_read", "paper_draft", "receivable", "remittance", "follow_up",
                  "identity", "consent", "booking", "work_log", "call_log",
-                 "settlement", "placement", "ledger_ref", "structure", "lead_conversion", "company_figures", "journal", "sale_source", "connector")
+                 "settlement", "placement", "ledger_ref", "structure", "lead_conversion", "company_figures", "journal", "sale_source", "connector",
+                 "ledger_read")
 # ``tenancy`` không gắn thao tác nào: là QUYỀN DÙNG ``barista.api.tenancy`` (công ty khách của công ty dịch vụ) — module khai ``consumes("tenancy")`` mới gọi được.
 FAMILIES = ("subject", "check", "metric", "work", "blockers", "plug", "tenancy", *OPEN_FAMILIES)
 FAMILY_CALLERS: dict[str, set[str]] = {f: set() for f in FAMILIES}

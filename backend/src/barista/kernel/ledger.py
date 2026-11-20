@@ -223,6 +223,31 @@ async def journal_lines(ctx: Ctx, date_from: Any, date_to: Any, entity: UUID | N
            ORDER BY j.posted_on, j.at, j.id, p.amount_vnd DESC""", {"f": date_from, "t": date_to, "e": entity})
 
 
+async def journal_page(ctx: Ctx, date_from: date, date_to: date, entity: UUID | None, after: tuple[date, UUID] | None, limit: int) -> list[dict[str, Any]]:
+    """Dòng bút toán của tối đa ``limit`` BÚT TOÁN có ngày hạch toán trong kỳ, sau con trỏ ``after`` = (ngày, mã bút toán) — trang đủ bút toán cho
+    hợp đồng đọc sổ cái của gói (0245): một bút toán không bị cắt giữa hai trang. Thứ tự (ngày hạch toán, mã bút toán)."""
+    return await ctx.all(
+        """WITH js AS (SELECT j.id, j.posted_on FROM ledger.journals j
+                       WHERE j.posted_on BETWEEN %(f)s AND %(t)s AND (%(e)s::uuid IS NULL OR j.entity_id = %(e)s)
+                         AND (%(cd)s::date IS NULL OR (j.posted_on, j.id) > (%(cd)s::date, %(cj)s::uuid))
+                       ORDER BY j.posted_on, j.id LIMIT %(n)s)
+           SELECT j.id AS journal_id, j.posted_on, j.entity_id, j.memo, j.source, j.source_ref,
+                  a.code, a.name, a.kind, a.owner_user_id, p.amount_vnd
+           FROM js JOIN ledger.journals j ON j.id = js.id JOIN ledger.postings p ON p.journal_id = j.id JOIN ledger.accounts a ON a.id = p.account_id
+           ORDER BY js.posted_on, js.id, p.amount_vnd DESC, p.id""",
+        {"f": date_from, "t": date_to, "e": entity, "cd": after[0] if after else None, "cj": after[1] if after else None, "n": limit})
+
+
+async def balances_on(ctx: Ctx, on: date, entity: UUID | None = None) -> list[dict[str, Any]]:
+    """Số dư theo (pháp nhân, tài khoản) gồm mọi bút toán có ngày hạch toán ≤ ``on``; chỉ dòng khác 0 (0245)."""
+    return await ctx.all(
+        """SELECT j.entity_id, a.code, a.name, a.kind, a.owner_user_id, sum(p.amount_vnd)::bigint AS balance
+           FROM ledger.journals j JOIN ledger.postings p ON p.journal_id = j.id JOIN ledger.accounts a ON a.id = p.account_id
+           WHERE j.posted_on <= %(on)s AND (%(e)s::uuid IS NULL OR j.entity_id = %(e)s)
+           GROUP BY j.entity_id, a.id HAVING sum(p.amount_vnd) <> 0
+           ORDER BY a.kind, a.code""", {"on": on, "e": entity})
+
+
 async def month_totals(ctx: Ctx, date_from: date, date_to: date, kinds: tuple[str, ...], entity: UUID | None = None) -> list[dict[str, Any]]:
     """Phát sinh ròng (dương = nợ) theo (pháp nhân, tháng của NGÀY HẠCH TOÁN, tài khoản) cho các loại tài khoản ``kinds`` — đầu vào báo cáo kết quả
     kinh doanh (0170): số chỉ từ sổ cái. Tháng là ``YYYY-MM`` của ``posted_on`` (ngày của công ty — 0169), không theo lúc ghi."""

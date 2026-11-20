@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-18 gói · 30 module · 1006 thao tác (274 nội bộ) · 19 bên nghe sự kiện.
+18 gói · 30 module · 1008 thao tác (276 nội bộ) · 19 bên nghe sự kiện.
 
 ## Gói
 
@@ -32,7 +32,7 @@
 
 | Module | Tên | Gói | Schema | Mã | Lệnh | Truy vấn | Nội bộ |
 |---|---|---|---|---|---|---|---|
-| `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (12 file) | 68 | 80 | 52 |
+| `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (13 file) | 68 | 82 | 54 |
 | `admin` | Quản trị | `base` | — | `modules/admin.py` | 38 | 43 | 12 |
 | `apps` | App của tôi | `base` | `apps` | `modules/apps.py` | 11 | 20 | 2 |
 | `asks` | Yêu cầu gửi bên ngoài | `base` | `asks` | `modules/asks.py` | 10 | 3 | 4 |
@@ -67,7 +67,7 @@
 
 ### `acct` — Kế toán
 
-- **Mã:** `acct/__init__.py`, `acct/assurance.py`, `acct/bank.py`, `acct/corrections.py`, `acct/dossier.py`, `acct/dossier_logic.py`, `acct/expenses.py`, `acct/goods.py`, `acct/periods.py`, `acct/placements.py`, `acct/settlements.py`, `acct/vat.py`
+- **Mã:** `acct/__init__.py`, `acct/assurance.py`, `acct/bank.py`, `acct/corrections.py`, `acct/dossier.py`, `acct/dossier_logic.py`, `acct/expenses.py`, `acct/goods.py`, `acct/ledger_read.py`, `acct/periods.py`, `acct/placements.py`, `acct/settlements.py`, `acct/vat.py`
 - **Tài nguyên quyền:** `acct`
 - **Hợp đồng quyền hệ thống** (thao tác ← module được gọi):
   - `acct.advances_left` ← `pay`
@@ -83,6 +83,8 @@
   - `acct.collections` → `company_figures`
   - `acct.cost_object` → `ledger_ref`
   - `acct.issue_receivable` → `receivable`
+  - `acct.ledger_balances` → `ledger_read`
+  - `acct.ledger_lines` → `ledger_read`
   - `acct.ledger_month_totals` → `company_figures`
   - `acct.my_settlements` → `settlement`
   - `acct.owner_positions` → `settlement`
