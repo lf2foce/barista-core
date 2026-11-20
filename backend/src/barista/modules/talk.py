@@ -1356,7 +1356,7 @@ def _attn_mine(o: Any) -> Line | None:
 
 # ---- Màn hình (0069): module tự khai phân hệ / góp màn vào phân hệ khác; workspaces.py chỉ ráp và lọc theo quyền
 m.screens("work", (
-    Screen("talk", "Trao đổi của tôi", "bubble.left.and.bubble.right", "talk.mine", desk=Desk("do", say=_attn_mine, menu=True, rank=90)),
+    Screen("talk", "Trao đổi của tôi", "bubble.left.and.bubble.right", "talk.mine", desk=Desk("do", say=_attn_mine, rank=90)),   # chỉ ở bàn việc: cột Tin nhắn của thanh bên đã là chính nó (rà menu 20/11/2026)
 ), rank=10)
 
 

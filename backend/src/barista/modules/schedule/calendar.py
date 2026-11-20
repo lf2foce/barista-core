@@ -6,6 +6,8 @@ from datetime import date, datetime, time, timedelta
 from typing import Any, Literal
 from uuid import UUID
 
+from pydantic import field_validator
+
 from barista.api import Ctx, Day, Input, Invalid, NoInput, NotFound, field, fold, today, ui, zone, zone_label
 from barista.modules.schedule import (
     BUSY,
@@ -170,6 +172,12 @@ STEP = timedelta(minutes=30)
 
 
 class FindTime(Input):
+    @field_validator("attendee_emails", "resource_ids", mode="before")
+    @classmethod
+    def _one_or_many(cls, v: Any) -> Any:
+        """Bộ lọc chọn MỘT người gửi chuỗi, không phải danh sách ("Input should be a valid list" — rà UI 20/11) ⇒ coi là danh sách một phần tử; chuỗi rỗng = không chọn."""
+        return [] if v in ("", None) else [v] if isinstance(v, str) else v
+
     attendee_emails: list[str] = field("Ai cần có mặt", [], kind="multiselect", options_query="admin.member_options")
     resource_ids: list[UUID] = field("Phòng / thiết bị", [], kind="multiselect", options_query="schedule.resource_options",
                                      help="Giữ cứng: giờ nào phòng bận / đủ lượt thì không gợi ý")

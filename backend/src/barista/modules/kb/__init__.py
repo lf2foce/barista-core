@@ -1416,7 +1416,7 @@ m.workspace(Workspace("docs", "Văn bản & tài liệu", "books.vertical.fill",
     Screen("kb", "Kho tài liệu", "books.vertical.fill", "kb.documents", tint="brown", actions=(A("kb.add_document", style="primary"),),
            row_actions=(A("kb.delete_document", bind={"document_id": "id"}, style="destructive"),),
            row_click="open", open=Open("kb.document", {"document_id": "id"}, "Đọc tài liệu")),
-    Screen("kb_shelves", "Kệ & ai được đọc", "lock.rectangle.stack", "kb.shelves", actions=(A("kb.save_shelf", "Thêm kệ", style="primary"),),
+    Screen("kb_shelves", "Kệ & ai được đọc", "lock.rectangle.stack", "kb.shelves", group="Thiết lập", actions=(A("kb.save_shelf", "Thêm kệ", style="primary"),),
            needs_action=True,   # rà vai 18/11/2026: màn THIẾT LẬP — chỉ người sửa được thấy trên menu (người đọc dùng kết quả ở màn việc)
            row_actions=(A("kb.save_shelf", "Sửa", bind={"key": "key"}, prefill={"name": "name", "everyone": "everyone", "teams": "teams",
                                                                                 "roles": "roles", "people": "people"}),)),

@@ -7,6 +7,7 @@ khách của cả đội, bắt huỷ giao dịch phải qua giám đốc… B�
 """
 
 import re
+from dataclasses import replace
 from datetime import date, timedelta
 from typing import Any, Literal
 from uuid import UUID
@@ -1167,7 +1168,7 @@ async def role_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
     return ui.options(await ctx.all("SELECT key AS value, label FROM core.roles ORDER BY label"))
 
 
-@m.query("team_options", resource=None, title="Đội")
+@m.query("team_options", resource=None, title="Đội", creates="admin.upsert_team")
 async def team_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
     # tên đội cho người đọc; mã chỉ hiện khi hai đội trùng tên (mã là khoá hệ thống, không phải thứ người dùng cần nhớ)
     return ui.options(await ctx.all(
@@ -2735,7 +2736,7 @@ async def delivery_health(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
 
 
 # ---- Màn hình (0069): module tự khai phân hệ / góp màn vào phân hệ khác; workspaces.py chỉ ráp và lọc theo quyền
-m.workspace(Workspace("store", "Gói & ứng dụng", "square.stack.3d.up.fill", (
+_STORE_SCREENS = (
     Screen("store", "Store", "square.grid.2x2.fill", "admin.pack_store"),
     Screen("packs", "Gói đang dùng", "square.stack.3d.up", "admin.packs", open=Open("admin.pack_info", {"pack": "id"}, "Trang gói")),
     Screen("profile", "Hồ sơ công ty cho trợ lý", "building.columns", "admin.profile",
@@ -2759,8 +2760,8 @@ m.workspace(Workspace("store", "Gói & ứng dụng", "square.stack.3d.up.fill",
                         A("core.delete_import_mapping", "Quên", bind={"id": "id"}, style="destructive"))),
     Screen("idempotency_retention", "Chống ghi trùng khi gửi lại", "arrow.triangle.2.circlepath", "core.idempotency_retention",
            row_actions=(A("core.set_idempotency_retention", "Đổi", style="primary"),)),
-), order=100))
-m.workspace(Workspace("admin", "Quản trị & nhập liệu", "gearshape.2.fill", (
+)
+_ADMIN_SCREENS = (
     Screen("users", "Người dùng", "person.badge.key.fill", "admin.users", tint="gray", group="Hệ thống",
            actions=(A("admin.invite_user", style="primary"),),
            row_actions=(A("admin.update_member", bind={"email": "email"}), A("admin.add_team", bind={"email": "email"}), A("admin.remove_team", bind={"email": "email"}),
@@ -2779,8 +2780,7 @@ m.workspace(Workspace("admin", "Quản trị & nhập liệu", "gearshape.2.fill
     Screen("chains", "Chuỗi & luật duyệt", "arrow.triangle.branch", "admin.chains", group="Hệ thống",
            actions=(A("admin.set_chain", style="primary"), A("admin.set_rule"))),
     # phần mặc định của gói còn thiếu sau bản cập nhật (vai / quyền / chuỗi duyệt mới) — xem + cài thêm, không ghi đè chỗ công ty đã đổi
-    Screen("defaults_drift", "Phần mặc định chưa cài", "square.stack.3d.up", "admin.defaults_drift", group="Hệ thống",
-           actions=(A("admin.install_missing_defaults", "Cài phần còn thiếu", style="primary"),)),
+    Screen("defaults_drift", "Phần mặc định chưa cài", "square.stack.3d.up", "admin.defaults_drift", group="Hệ thống"),   # nút cài nằm trong khối cảnh báo, chỉ khi có mục thiếu
     Screen("agent_groups", "Nhóm công cụ của trợ lý", "square.stack.3d.up", "admin.agent_groups", group="Hệ thống",
            row_actions=(A("admin.set_agent_group", "Đổi", bind={"group": "id"}, prefill={"mode": "mode"}),)),
     # bộ công cụ trợ lý theo vai (0218): vai mang sẵn nhóm nào mỗi lượt — gọn ⇒ ít token; không cấp quyền
@@ -2813,7 +2813,29 @@ m.workspace(Workspace("admin", "Quản trị & nhập liệu", "gearshape.2.fill
     Screen("ai_role_tiers", "Vai → hạng trợ lý AI", "person.2.badge.gearshape", "core.ai_role_tiers", group="Nhà vận hành",
            row_actions=(A("core.set_role_ai_tier", "Đổi hạng", bind={"role": "role"}, prefill={"tier": "tier"}, style="primary"),)),
     Screen("ai_tokens", "Token trợ lý AI theo người", "tablecells", "core.ai_token_report", group="Nhà vận hành"),
-), order=110))
+)
+
+# MỘT phân hệ "Quản trị" (rà menu 20/11/2026: hai phân hệ cài đặt chồng nhau, 32 màn phẳng): màn xếp theo NHÓM — việc hay dùng ở trên, kỹ thuật vào "Nâng cao"
+# (web gấp lại). Khoá màn giữ nguyên ⇒ ghim cũ vẫn trỏ đúng (``manifest`` tìm màn theo khoá khi phân hệ đổi). Màn góp từ module khác (``m.screens("admin", …)``) giữ nhóm
+# "Hệ thống" của chúng và đứng cuối.
+_GROUP_OF = {
+    **dict.fromkeys(("profile", "settings", "legal_entities"), "Công ty"),
+    **dict.fromkeys(("users", "teams", "permissions", "chains", "info_access"), "Người & quyền"),
+    **dict.fromkeys(("store", "packs"), "Gói & ứng dụng"),
+    **dict.fromkeys(("agent", "agent_actions", "ai_usage"), "Trợ lý AI"),
+    **dict.fromkeys(("vocabulary", "timezone", "country", "field_defs", "import_retention", "import_mappings", "idempotency_retention", "agent_groups",
+                     "role_hints", "role_tools", "config_questions"), "Nâng cao"),
+    **dict.fromkeys(("audit", "defaults_drift"), "Hệ thống"),
+}
+_GROUP_ORDER = ("Công ty", "Người & quyền", "Gói & ứng dụng", "Trợ lý AI", "Nâng cao", "Nhà vận hành", "Hệ thống")
+
+
+def _settings_screens() -> tuple[Screen, ...]:
+    placed = [replace(x, group=_GROUP_OF.get(x.key, x.group)) for x in (*_STORE_SCREENS, *_ADMIN_SCREENS)]
+    return tuple(sorted(placed, key=lambda x: _GROUP_ORDER.index(x.group) if x.group in _GROUP_ORDER else len(_GROUP_ORDER)))
+
+
+m.workspace(Workspace("admin", "Quản trị", "gearshape.2.fill", _settings_screens(), order=100))
 m.screens("admin", (
     Screen("deliveries", "Sự kiện lỗi", "exclamationmark.triangle.fill", "admin.deliveries", tint="red", group="Hệ thống",
            row_actions=(A("admin.retry_delivery", bind={"delivery_id": "id"}, style="primary"),

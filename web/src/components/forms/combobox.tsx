@@ -17,7 +17,7 @@ const SEARCH_FROM = 8;
  * truy vấn chọn nhận `q`); server không hỗ trợ `q` thì cửa options lọc thay (core 1.61).
  */
 export function Combobox({
-  id, value, options, onChange, onClose, placeholder = "Chọn…", invalid, disabled, optional, query, remote, search, label, className,
+  id, value, options, onChange, onClose, placeholder = "Chọn…", invalid, disabled, optional, query, remote, search, label, className, create,
 }: {
   id?: string;
   value: string;
@@ -37,6 +37,8 @@ export function Combobox({
   search?: (q: string) => Promise<Option[]>;
   label?: string;
   className?: string;
+  /** Danh sách rỗng ⇒ lối "Tạo mới" ngay trong ô (server khai `options_create`); bấm ⇒ mở form tạo, tạo xong form cha tải lại danh sách. */
+  create?: { label: string; onCreate: () => void };
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -187,7 +189,12 @@ export function Combobox({
         ) : null}
         <div ref={listRef} id={listId} role="listbox" tabIndex={searchable ? -1 : 0} aria-label={label} className="flex max-h-64 flex-col gap-0.5 overflow-y-auto outline-none">
           {items.length === 0 || (items.length === offset) ? (
-            <p className="t14 px-2 py-3 text-muted-foreground">{loading ? "Đang tìm…" : q.trim() ? `Không có “${q.trim()}”` : "Chưa có lựa chọn nào"}</p>
+            <p className="t14 px-2 py-3 text-muted-foreground">{loading ? "Đang tìm…" : q.trim() ? `Không có “${q.trim()}”` : create ? `Chưa có ${label ? label.toLowerCase() : "lựa chọn"} nào` : "Chưa có lựa chọn nào"}</p>
+          ) : null}
+          {create && !loading ? (
+            <button type="button" className="t14m flex w-full items-center gap-1.5 rounded-md px-2 py-2 text-left text-primary hover:bg-surface2" onClick={() => { setOpen(false); create.onCreate(); }}>
+              + {create.label}
+            </button>
           ) : null}
           {offset ? row(items[0], n++) : null}
           {shown.recent.length ? <p className="t12m px-2 pt-1 text-muted-foreground">Gần đây</p> : null}

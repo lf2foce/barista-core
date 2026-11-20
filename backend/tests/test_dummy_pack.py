@@ -112,7 +112,7 @@ async def test_the_store_lists_the_new_pack_and_previews_its_screens(demo_pack: 
     assert cards["Gói thử"]["badge"] == "Có sẵn" and cards["Gói thử"]["module"] == "demo"
     info = await q(admin, "admin.pack_info", pack="demo")
     lists = {b["title"]: b["items"] for b in info["blocks"] if b["type"] == "list"}
-    assert [i["title"] for i in lists["Màn hình của gói"]] == ["Thử › Danh sách", "Quản trị & nhập liệu › Nhập thử"]
+    assert [i["title"] for i in lists["Màn hình của gói"]] == ["Thử › Danh sách", "Quản trị › Nhập thử"]
     adds = next(v for k, v in lists.items() if k.startswith("Khi bật sẽ thêm"))
     assert {"Nhân viên thử", "Quy trình thử"} <= {i["title"] for i in adds}
 

@@ -205,7 +205,7 @@ def manifest(p: Principal, tenant_name: str, team_name: str = "", mine: Personal
     moved = {old: (w.key, s.key) for w in workspaces() for s in w.screens for old in s.aliases if (w.key, s.key) in by_place}
     pinned = []
     for ws, k in mine.pins:
-        place = (ws, k) if (ws, k) in by_place else moved.get(k)
+        place = (ws, k) if (ws, k) in by_place else moved.get(k) or ((visible[k], k) if k in visible else None)   # màn đổi phân hệ mà giữ khoá ⇒ ghim vẫn đúng
         if place and not any((x["workspace"], x["key"]) == place for x in pinned):
             pinned.append({"workspace": place[0], "key": place[1], "mine": True})
     for k in pins:   # ghim mặc định của vai (gói khai) — khoá đã gộp cũng trỏ sang màn thay nó

@@ -140,6 +140,11 @@ export function ScreenView({
   /** Bấm một lần (server khai `row_click`): mở chi tiết / form nút mặc định; dòng không thoả `when` của nút ⇒ chỉ chọn. */
   function activateRow(row: NonNullable<typeof selectedRow>) {
     const t = rowClick(spec, row);
+    // màn không khai row_click nhưng chỉ có MỘT nút cho dòng (và không có trang chi tiết) ⇒ bấm dòng là mở nút đó (rà UI 20/11: "Từ vựng" sửa được mà không ai thấy chỗ sửa)
+    if (!t && !spec.open && spec.row_actions.length === 1 && applies(spec.row_actions[0], row)) {
+      desk.openForm(spec.row_actions[0], { row, onDone: changed });
+      return;
+    }
     if (t?.kind === "open") openRow(row);
     else if (t?.kind === "action") desk.openForm(t.action, { row, onDone: changed });
   }
@@ -197,7 +202,12 @@ export function ScreenView({
   const askEl = showAsk && spec.ask ? (
     // nút của MÀN (vd "Tạo app" / "Sửa app" ⇒ trình tạo — 0098); đang sửa đúng app này trong trình tạo thì không cần. Trên đầu thẻ: nút phụ (viền), không giành mắt với số
     <button key="ask" type="button" className={cn(actionClass(spec.ask.app_id || tools ? "default" : "primary"), tools && !spec.ask.app_id && "[&>svg]:text-primary")}
-            onClick={() => (spec.ask!.mode === "builder" ? chat.openBuilder({ prompt: spec.ask!.prompt, appId: spec.ask!.app_id }) : desk.ask(spec.ask!.prompt))}
+            onClick={() => {
+              if (spec.ask!.mode !== "builder") return desk.ask(spec.ask!.prompt);
+              chat.openBuilder({ prompt: spec.ask!.prompt, appId: spec.ask!.app_id });
+              // mở trình tạo chuyển khung sang cột Trợ lý — nói rõ để người đang ở cột giữa không tưởng bấm không ra gì (rà UI 20/11)
+              desk.show(spec.ask!.app_id ? "Đã mở trình sửa app — nói với trợ lý điều cần đổi" : "Đã mở trình tạo app — nói với trợ lý bạn muốn xem gì, làm gì", false);
+            }}
             title={spec.ask.mode === "builder" ? "Mở trình tạo app" : "Nói với trợ lý điều bạn cần"}>
       {spec.ask.app_id ? <Pencil className="size-3.5" aria-hidden /> : <Sparkles className="size-3.5" aria-hidden />}
       {spec.ask.title}
@@ -230,12 +240,14 @@ export function ScreenView({
       <button key={a.command + a.title} type="button" className={actionClass(a.style)} onClick={() => desk.openForm(a, { onDone: changed })}>{a.title}</button>
     ),
   );
-  const exportButton = (
+  // Xuất Excel chỉ khi bảng CÓ dòng: bảng rỗng không có gì để xuất (rà UI 20/11: 20/46 màn rỗng vẫn hiện nút)
+  const canExport = !!table && table.rows.length > 0;
+  const exportButton = canExport ? (
     <button key="xlsx" type="button" className={actionClass("default")} onClick={() => void exportXlsx()} title="Xuất bảng đang xem ra tệp Excel">
       <FileSpreadsheet className="size-3.5" aria-hidden />
       Xuất Excel
     </button>
-  );
+  ) : null;
   const headTools = tools ? createPortal(<>{inHead ? primary.map((f) => renderFilter(f)) : null}{inHead ? panel : null}{askEl}{inHead ? actionEls : null}</>, tools) : null;
   // màn không có bộ lọc / nút nào (vd màn tự vẽ trọn khung) ⇒ không để một hàng trống chiếm chỗ
   const bar = !inHead && (primary.length > 0 || !!panel || (!tools && showAsk) || spec.actions.length > 0);
@@ -274,11 +286,11 @@ export function ScreenView({
         <>
           {table.header?.map((b, i) => (b.type === "picker" ? <PickerBlock key={i} block={b} onChanged={changed} /> : null))}
           <HeaderCharts page={table} />
-          <KpiRow kpis={table.kpis} inset />
+          {table.rows.length === 0 && Object.keys(filters).length === 0 && table.kpis.every((k) => k.value === 0 || k.value === null || k.value === "" || k.value === "—") ? null : <KpiRow kpis={table.kpis} inset />}
           {table.note ? <ClampNote text={table.note} /> : null}
           {/* hàng ngay TRÊN bảng: góc nhìn (nếu có) bên trái, Xuất Excel bên phải — nút thuộc về cái bảng nó xuất. Không có góc nhìn ⇒ `excelAt` */}
           {excelAt === "head" && tools ? createPortal(exportButton, tools) : null}
-          <div className={cn("flex flex-wrap items-center justify-between gap-2", excelAt !== "row" && "hidden")}>
+          <div className={cn("flex flex-wrap items-center justify-between gap-2", (excelAt !== "row" || (!table.views && !canExport)) && "hidden")}>
             {table.views ? (
               <div className="flex w-fit gap-0.5 rounded-lg bg-surface2 p-0.5" role="tablist" aria-label="Góc nhìn">
                 {([["table", "Bảng"], ...(table.views.board ? [["board", "Kanban"]] : []), ...(table.views.calendar ? [["calendar", "Lịch"]] : []), ...(table.views.timeline ? [["timeline", "Dòng thời gian"]] : [])] as [string, string][]).map(([k, label]) => (
@@ -290,7 +302,7 @@ export function ScreenView({
           </div>
           {table.rows.length === 0 ? (
             <Empty text={table.empty}>
-              {table.empty_actions?.map((a) => (
+              {(table.empty_actions?.length ? table.empty_actions : spec.actions.filter((a) => a.style === "primary").slice(0, 2)).map((a) => (
                 <button key={a.command + a.title} type="button" className={actionClass(a.style)} onClick={() => desk.openForm(a, { onDone: changed })}>{a.title}</button>
               ))}
             </Empty>
@@ -312,10 +324,13 @@ export function ScreenView({
           ) : (
             // bảng cao ít nhất ~8 dòng: ô số / bộ lọc nhiều thì THẺ cuộn, không bóp bảng còn ba bốn dòng cuộn lồng trong khung nhỏ
             <div className="min-h-[320px] flex-1 overflow-auto rounded-xl border border-hairline">
-              <DataTable page={table} selected={selected} onSelect={setSelected} onOpen={spec.open ? openRow : undefined} onActivate={spec.row_click ? activateRow : undefined}
+              <DataTable page={table} selected={selected} onSelect={setSelected} onOpen={spec.open ? openRow : undefined} onActivate={spec.row_click || (!spec.open && spec.row_actions.length === 1) ? activateRow : undefined}
                          onMore={more} />
             </div>
           )}
+          {!selectedRow && table.rows.length > 0 && spec.row_actions.length > 1 && !spec.row_click ? (
+            <p className="t12 text-muted-foreground">Bấm một dòng để xem thao tác cho dòng đó.</p>
+          ) : null}
           {selectedRow ? (
             <div className="flex flex-wrap items-center gap-2 rounded-xl bg-surface2 px-3 py-2" role="toolbar" aria-label="Thao tác cho dòng đang chọn">
               <span className="t12 text-muted-foreground">Dòng đang chọn:</span>

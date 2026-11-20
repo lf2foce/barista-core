@@ -615,7 +615,20 @@ async def form(request: Request, name: str, x_dev_user: DevUser = None, x_tenant
         raise HTTPException(404, f"Không có lệnh {name}")
     if not p.can(op.resource, op.action):
         raise HTTPException(403, f"Không có quyền {op.title}")
-    return form_spec(op, p.vocab, p.fields)
+    spec = form_spec(op, p.vocab, p.fields)
+    _options_create(spec["fields"], p)
+    return spec
+
+
+def _options_create(fields: list[dict[str, Any]], p: Any) -> None:
+    """Ô chọn có truy vấn khai ``creates=`` ⇒ thêm ``options_create`` {command, title} khi NGƯỜI XEM có quyền chạy lệnh tạo (chỉ THÊM trường — app cũ bỏ qua)."""
+    for f in fields:
+        if f.get("fields"):
+            _options_create(f["fields"], p)
+        cmd = registry.CREATES.get(f.get("options_query") or "")
+        make = registry.get(cmd) if cmd else None
+        if make is not None and make.kind == "command" and not make.internal and p.can(make.resource, make.action):
+            f["options_create"] = {"command": make.name, "title": make.title}
 
 
 @app.post("/v1/imports/{name}")

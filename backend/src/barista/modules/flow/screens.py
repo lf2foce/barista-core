@@ -15,7 +15,7 @@ m.workspace(Workspace("work", "Quy trình & kế hoạch", "rectangle.split.3x1"
            desk=Desk("do", say=lambda o: [_attn_tasks(o), _attn_tasks_2(o)], rank=120)),
     Screen("stuck", "Hồ sơ kẹt", "exclamationmark.triangle.fill", "flow.needs_action", tint="red", min_scope="team",
            desk=Desk("decide", say=_attn_needs_action, rank=110)),
-    Screen("flow_board", "Hồ sơ theo chặng", "rectangle.split.3x1.fill", "flow.board", tint="indigo"),
+    Screen("flow_board", "Quy trình đang chạy", "rectangle.split.3x1.fill", "flow.board", tint="indigo"),
     Screen("plans", "Kế hoạch", "list.bullet.clipboard.fill", "flow.plans", tint="purple", row_click="open", open=Open("flow.plan", {"plan_id": "id"}, "Kế hoạch"),
            desk=Desk("watch", say=_attn_plans, menu=True, rank=125),
            actions=(A("flow.propose_plan", "Lập kế hoạch", style="primary"), A("flow.import_plan", "Nhập kế hoạch từ Excel")),
@@ -28,12 +28,12 @@ m.workspace(Workspace("work", "Quy trình & kế hoạch", "rectangle.split.3x1"
            row_actions=(A("flow.accept_request", "Nhận & giao người", bind={"request_id": "id"}, when={"mine": ["yes"]}, style="primary"),
                         A("flow.decline_request", "Từ chối", bind={"request_id": "id"}, when={"mine": ["yes"]}, style="destructive"),
                         A("flow.send_brief", "Gửi đề bài (link)", bind={"request_id": "id"}, when={"brief": ["yes"]}, style="primary"))),
-    Screen("work_calendars", "Ngày làm việc & nghỉ lễ", "calendar", "flow.work_calendars", tint="gray", needs_action=True,   # rà vai 18/11/2026: màn THIẾT LẬP — chỉ người sửa được thấy trên menu (người đọc dùng kết quả ở màn việc)
+    Screen("work_calendars", "Ngày làm việc & nghỉ lễ", "calendar", "flow.work_calendars", tint="gray", needs_action=True, group="Thiết lập",   # rà vai 18/11/2026: màn THIẾT LẬP — chỉ người sửa được thấy trên menu (người đọc dùng kết quả ở màn việc)
            actions=(A("flow.set_work_calendar", "Đặt lịch", style="primary"),),
            row_actions=(A("flow.set_work_calendar", "Đổi lịch", bind={"team_code": "code"}),)),
 ), order=80))
 m.screens("work", (
-    Screen("flow_templates", "Mẫu quy trình", "list.bullet.rectangle", "flow.templates", needs_action=True,   # rà vai 18/11/2026: màn THIẾT LẬP — chỉ người sửa được thấy trên menu (người đọc dùng kết quả ở màn việc)
+    Screen("flow_templates", "Mẫu quy trình", "list.bullet.rectangle", "flow.templates", needs_action=True, group="Thiết lập",   # rà vai 18/11/2026: màn THIẾT LẬP — chỉ người sửa được thấy trên menu (người đọc dùng kết quả ở màn việc)
            actions=(A("flow.set_template", "Thêm quy trình", style="primary"),), open=Open("flow.template", {"key": "key"}, "Xem quy trình")),
 ), rank=20)
 # LUẬT TỰ ĐỘNG (0090: "Nếu… thì…" do quản trị đặt) — ở Quản trị › Hệ thống (anh Anh chốt 19/11/2026): luật chạy xuyên phân hệ, người đặt là quản trị; tên cũ

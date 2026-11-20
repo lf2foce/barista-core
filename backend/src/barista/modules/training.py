@@ -93,7 +93,7 @@ async def upsert_course(ctx: Ctx, inp: CourseIn) -> dict[str, Any]:
     return {"course_id": cid, "code": code}
 
 
-@m.query("course_options", resource="training.manage", title="Khoá học")
+@m.query("course_options", resource="training.manage", title="Khoá học", creates="training.upsert_course")
 async def course_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
     return ui.options(await ctx.all("SELECT code AS value, code || ' — ' || title AS label FROM training.courses WHERE status <> 'archived'"
                                     " ORDER BY code"))

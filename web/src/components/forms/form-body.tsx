@@ -16,6 +16,7 @@ import { SwitchQuestion } from "@/components/call/switch-question";
 import { startsCall, undoOf } from "@/lib/call-hub";
 import { actionClass, ErrorLine, Spinner } from "@/components/primitives";
 import { cn } from "@/lib/utils";
+import { useDesk } from "@/components/desk/desk-context";
 import { Combobox } from "./combobox";
 import { DatePicker } from "./date-picker";
 import { MonthPicker } from "./month-picker";
@@ -321,6 +322,15 @@ export function FormBody({
   }
 
   const labelOf = (k: string) => spec?.fields.find((f) => f.key === k)?.label ?? k;
+  // "Tạo mới" của ô chọn rỗng: mở form lệnh tạo (xếp chồng lên form này), tạo xong tải lại danh sách của ô
+  const desk = useDesk();
+  const createFor = (f: FieldSpec) => {
+    const make = f.options_create;
+    if (!make) return;
+    desk.openForm({ command: make.command, title: make.title, style: "primary", bind: {}, preset: {}, when: {}, importable: false } as ActionSpec, {
+      onDone: () => void fetchOptions(f, optionsParams(f, { ...fixed, ...values }, visibleKeys).params),
+    });
+  };
   const renderField = (f: FieldSpec) => {
     if (f.kind === "rows") return <RowsField key={f.key} f={f} value={values[f.key]} dyn={dyn} bad={invalid.includes(f.key)} onChange={(v) => set(f.key, v)} />;
     const { waiting } = optionsParams(f, { ...fixed, ...values }, visibleKeys);
@@ -342,6 +352,7 @@ export function FormBody({
         onChip={() => editChip(f.key)}
         onChange={(v) => set(f.key, v)}
         onBlur={() => touch(f.key)}
+        onCreate={f.options_create ? () => createFor(f) : undefined}
       />
     );
   };
@@ -584,7 +595,7 @@ function NumberInput({ id, f, value, bad, onChange, onBlur }: { id: string; f: F
 }
 
 function Field({
-  f, value, options, loading = false, waitingFor = "", remote = false, search, bad, mark, chip, onChip, onChange, onBlur,
+  f, value, options, loading = false, waitingFor = "", remote = false, search, bad, mark, chip, onChip, onChange, onBlur, onCreate,
 }: {
   f: FieldSpec;
   value: Json | undefined;
@@ -600,6 +611,8 @@ function Field({
   onChip: () => void;
   onChange: (v: Json | undefined) => void;
   onBlur: () => void;
+  /** Danh sách rỗng ⇒ mở form tạo mục mới (từ `options_create`). */
+  onCreate?: () => void;
 }) {
   const id = `f-${f.key}`;
   const str = text(value);
@@ -607,7 +620,7 @@ function Field({
   // ô chữ có danh sách chọn từ server (options_query, vd kệ tài liệu, mã dự án) ⇒ ô chọn có tìm; danh sách cố định (Literal) ⇒ select thường
   const fromQuery = !!f.options_query && !f.options && f.kind !== "multiselect" && f.kind !== "bool";
   const hasList = !!options && options.length > 0;
-  const kind = f.kind !== "multiselect" && f.kind !== "bool" && (hasList || (fromQuery && (!!waitingFor || loading))) ? "select" : f.kind;
+  const kind = f.kind !== "multiselect" && f.kind !== "bool" && (hasList || (fromQuery && (!!waitingFor || loading || !!f.options_create))) ? "select" : f.kind;
   const doneChip = chip === "guess" || chip === "ok";
   if (doneChip && chipable(f)) {
     const day = f.kind === "date" ? parseDay(value) : null;
@@ -643,6 +656,7 @@ function Field({
               remote={remote}
               search={search}
               label={f.label}
+              create={f.options_create && onCreate ? { label: f.options_create.title, onCreate } : undefined}
               invalid={bad}
               disabled={!!waitingFor || (loading && !opts.length)}
               placeholder={waitingFor || (loading ? "Đang tải…" : f.required ? "Chọn…" : "—")}

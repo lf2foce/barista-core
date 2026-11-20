@@ -348,7 +348,7 @@ async def search_parties(ctx: Ctx, inp: SearchIn) -> list[dict[str, Any]]:
              else {"query": "parties.list", "input": {"q": r["display_name"]}}} for r in rows]
 
 
-@m.query("options", resource="parties", title="Chọn cá nhân / tổ chức")
+@m.query("options", resource="parties", title="Chọn cá nhân / tổ chức", creates="parties.create")
 async def options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
     rows = await ctx.all("SELECT p.id,p.kind,p.display_name FROM parties.parties p WHERE p.listed AND " + ACTIVE + " ORDER BY p.display_name LIMIT 1000")
     return [{"value": str(r["id"]), "label": f"{r['display_name']} ({PARTY_KIND[r['kind']].lower()})"} for r in rows]

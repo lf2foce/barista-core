@@ -190,6 +190,8 @@ class Subscriber:
 
 
 OPS: dict[str, Op] = {}
+# Danh sách chọn (truy vấn) ⇒ lệnh tạo thêm một mục của nó — ô chọn rỗng hiện nút "Tạo mới" (Module.query(creates=…))
+CREATES: dict[str, str] = {}
 # Bên nghe đổi tên / chuyển module (``Module.on(..., replaces=)``): tên cũ ⇒ bên nghe mới. Việc đã giao cho tên cũ (sự kiện phát lúc bản cũ còn
 # chạy trong lúc đổi bản, hoặc đang chờ thử lại) chạy bằng bên nghe mới — không thành "không còn bên nghe" mà mất phản ứng.
 REPLACED: dict[str, str] = {}
@@ -910,12 +912,16 @@ class Module:
     def query(self, name: str, *, resource: str | None, title: str, action: str = "read", description: str = "",
               internal: bool = False, min_scope: str | None = None, agent: str = "allow", needs: tuple[str, ...] = (),
               public: str | None = None, category: str = "", callers: tuple[str, ...] = (), why: str = "", family: str = "",
-              prepare: Callable[..., Awaitable[Any]] | None = None, info: tuple[str, ...] = ()):
+              prepare: Callable[..., Awaitable[Any]] | None = None, info: tuple[str, ...] = (), creates: str = ""):
         """``min_scope="all"``: báo cáo toàn công ty — người phạm vi hẹp hơn không chạy được (thay vì ra số thiếu).
         ``info`` (1.59): nhóm thông tin nhạy cảm đầu ra có thể chứa ở phần khai ``needs=`` (khoá ``InfoGroup`` hoặc tài nguyên) — màn "Ai thấy thông
         tin gì" đọc khai này để nói bật / tắt một nhóm ảnh hưởng tới màn nào.
         ``callers`` + ``why``: hợp đồng quyền hệ thống — module được ``call_system`` tới truy vấn này, lý do + trả những trường nào.
-        ``prepare``: bước gọi mạng chạy NGOÀI giao dịch trước handler (kết quả ở ``ctx.prepared``) — không giữ kết nối DB khi chờ nhà cung cấp."""
+        ``prepare``: bước gọi mạng chạy NGOÀI giao dịch trước handler (kết quả ở ``ctx.prepared``) — không giữ kết nối DB khi chờ nhà cung cấp.
+        ``creates`` (1.71): truy vấn là danh sách CHỌN của một ô — tên lệnh tạo thêm một mục của danh sách đó (``<module>.<lệnh>``). Danh sách rỗng ⇒ ô hiện
+        "Chưa có … — Tạo mới" mở form lệnh đó (người không có quyền lệnh thì không thấy nút), tạo xong ô tải lại. Khai MỘT lần ở truy vấn chọn, mọi form dùng ô đó đều có."""
+        if creates:
+            CREATES[f"{self.key}.{name}"] = creates
         return self._register("query", name, resource, action, title, description, internal, False, min_scope, agent, needs=needs, public=public,
                               category=category, callers=callers, why=why, family=family, prepare=prepare, info=info)
 

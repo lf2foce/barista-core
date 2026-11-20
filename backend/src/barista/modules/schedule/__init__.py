@@ -88,6 +88,11 @@ m = Module("schedule", "Lịch & nguồn lực", pack="schedule",
                       "schedule.details": "Chi tiết lịch của người khác (tên việc, người tham dự, bên ngoài, ghi chú)"})
 m.consumes("plug")   # điểm cắm của chính module: schedule.markers (mốc hạn của module sở hữu)
 
+# NGHIỆP VỤ CÔNG TY CÓ DÙNG (api 1.63): đặt lịch theo NGƯỜI / PHÒNG / THIẾT BỊ (spa, phòng học, xưởng) chỉ có nghĩa khi công ty có nhiều nguồn lực để xếp.
+# Tắt ⇒ ẩn Tìm người / phòng rảnh, Tìm giờ cho nhiều người, Người & phòng, Loại lịch (Lịch và Lịch của tôi vẫn còn). Mặc định BẬT — công ty đang chạy không đổi.
+USE_RESOURCES = m.setting("use_resources", "Đặt lịch theo người / phòng / thiết bị (spa, phòng học, xưởng)", default=True,
+                          help="Tắt nếu công ty chỉ cần lịch cá nhân — các màn tìm giờ trống, người & phòng, loại lịch sẽ ẩn")
+
 NATURE = {"person": "Người", "thing": "Phòng / thiết bị"}
 STATUS = {"booked": "Đã đặt", "cancelled": "Đã huỷ", "done": "Đã xong", "busy": "Bận", "tentative": "Chờ xác nhận",
           "maybe": "Bận (chưa chắc)"}
@@ -1370,7 +1375,7 @@ async def resource(ctx: Ctx, inp: ResourceRef) -> dict[str, Any]:
                    actions=[ui.act("schedule.set_availability", "Đặt giờ rảnh", {"resource_id": str(r["id"])})])
 
 
-@m.query("resource_options", resource="schedule", title="Chọn người / phòng")
+@m.query("resource_options", resource="schedule", title="Chọn người / phòng", creates="schedule.add_resource")
 async def resource_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
     rows = await ctx.all("SELECT id, name, kind FROM schedule.resources WHERE active ORDER BY name LIMIT 1000")
     return [{"value": str(r["id"]), "label": f"{r['name']} ({r['kind']})"} for r in rows]
@@ -1389,21 +1394,21 @@ m.workspace(Workspace("schedule", "Lịch làm việc", "calendar", (
     # ghim / bộ menu theo vai không đổi; bảng "Lịch tuần" (schedule.week) vẫn là truy vấn cho trợ lý / xuất Excel.
     Screen("schedule_week", "Lịch", "calendar", "schedule.calendar", tint="orange",
            actions=(A("schedule.create", "Đặt lịch chi tiết"),)),
-    Screen("schedule_free", "Tìm người / phòng rảnh", "person.badge.clock", "schedule.find_free", tint="green", needs_action=True, pinnable=False,
+    Screen("schedule_free", "Tìm người / phòng rảnh", "person.badge.clock", "schedule.find_free", tint="green", needs_action=True, feature=USE_RESOURCES, pinnable=False,
            actions=(A("schedule.create"),),
            open=Open("schedule.resource", {"resource_id": "id"}, "Xem lịch người / phòng")),
-    Screen("schedule_time", "Tìm giờ cho nhiều người", "clock.badge.checkmark", "schedule.find_time", tint="green", needs_action=True, pinnable=False,
+    Screen("schedule_time", "Tìm giờ cho nhiều người", "clock.badge.checkmark", "schedule.find_time", tint="green", needs_action=True, feature=USE_RESOURCES, pinnable=False,
            actions=(A("schedule.create"),),
            row_actions=(A("schedule.create", "Đặt giờ này", prefill={"day": "day", "start": "start", "end": "end", "attendee_emails": "attendee_emails",
                                                                       "resource_ids": "resource_ids"}),)),
-    Screen("schedule_resources", "Người & phòng", "person.2", "schedule.resources", tint="blue", group="Thiết lập", needs_action=True, pinnable=False,
+    Screen("schedule_resources", "Người & phòng", "person.2", "schedule.resources", tint="blue", group="Thiết lập", needs_action=True, feature=USE_RESOURCES, pinnable=False,
            actions=(A("schedule.add_resource", style="primary"),),
            row_actions=(A("schedule.update_resource", "Sửa", bind={"resource_id": "id"},
                           prefill={"name": "name", "nature": "nature", "kind": "kind", "tags": "tags", "capacity": "capacity", "slots": "slots", "team_code": "team_code",
                                    "user_email": "user_email", "party_id": "party_id", "note": "note", "active": "active"}),
                         A("schedule.set_availability", "Giờ rảnh", bind={"resource_id": "id"})),
            open=Open("schedule.resource", {"resource_id": "id"}, "Xem")),
-    Screen("schedule_kinds", "Loại lịch", "tag", "schedule.kinds", tint="blue", group="Thiết lập", needs_action=True, pinnable=False,
+    Screen("schedule_kinds", "Loại lịch", "tag", "schedule.kinds", tint="blue", group="Thiết lập", needs_action=True, feature=USE_RESOURCES, pinnable=False,
            actions=(A("schedule.save_kind", style="primary"),),
            row_actions=(A("schedule.save_kind", "Sửa", prefill={"key": "key", "label": "label", "active": "active", "sort": "sort", "tone": "tone"}),)),
     Screen("schedule_agenda", "Lịch của tôi", "calendar.badge.clock", "schedule.my_agenda", tint="orange",

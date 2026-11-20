@@ -17,9 +17,15 @@ export function WorkspaceColumn({ wsKey }: { wsKey: string }) {
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <ColumnHeader title={w?.title ?? ""} subtitle={`${screens.length} màn · dữ liệu đúng quyền của bạn`} />
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
-        {groups.map((g) => (
+        {groups.map((g, gi) => {
+          // GẤP LẠI (rà menu 20/11/2026): "Nâng cao" / "Thiết lập" là màn dùng hiếm; phân hệ nhiều nhóm (> 4) chỉ mở 3 nhóm đầu. Nhóm gấp tự mở khi đang đứng
+          // ở một màn của nó, và luôn ghi số màn để người biết còn gì bên trong.
+          const fold = !!g && (g === "Nâng cao" || g === "Thiết lập" || (groups.length > 4 && gi >= 3));
+          const Wrap = fold ? "details" : "div";
+          return (
           <section key={g || "_"} aria-label={g || w?.title}>
-            {g ? <h3 className="t12m px-3 pt-3 pb-1 text-muted-foreground">{g}</h3> : null}
+            <Wrap {...(fold ? { open: screens.some((s) => s.group === g && desk.activeId === screenItemId(s)) } : {})}>
+            {g ? (fold ? <summary className="t12m cursor-pointer select-none px-3 pt-3 pb-1 text-muted-foreground">{g} · {screens.filter((s) => s.group === g).length} màn</summary> : <h3 className="t12m px-3 pt-3 pb-1 text-muted-foreground">{g}</h3>) : null}
             <ul>
               {screens
                 .filter((s) => s.group === g)
@@ -50,8 +56,10 @@ export function WorkspaceColumn({ wsKey }: { wsKey: string }) {
                   );
                 })}
             </ul>
+            </Wrap>
           </section>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

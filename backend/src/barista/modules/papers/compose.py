@@ -337,7 +337,7 @@ class OptionsOf(Input):
     subject_kind: str = ffield("Loại hồ sơ", "", hidden=True, help="Nút bấm từ một hồ sơ điền sẵn loại — danh sách mẫu chỉ còn mẫu của loại đó")
 
 
-@m.query("template_options", resource="papers", title="Mẫu văn bản đã phát hành")
+@m.query("template_options", resource="papers", title="Mẫu văn bản đã phát hành", creates="papers.create_template")
 async def template_options(ctx: Ctx, inp: OptionsOf) -> list[dict[str, Any]]:
     """Mẫu người này soạn được: đã phát hành, còn dùng, loại hồ sơ nguồn đang có gói cung cấp. Nhóm theo loại hồ sơ (``group``), trong nhóm: mẫu công ty
     dùng nhiều nhất trước — mẫu đầu danh sách mang ``suggested`` (máy đoán, người đổi được). Mỗi dòng: ``label`` = tên mẫu — loại hồ sơ nguồn."""
@@ -735,7 +735,7 @@ async def drafts(ctx: Ctx, inp: DraftFilter) -> dict[str, Any]:
 
 # Màn "Soạn theo mẫu" (``compose``) đã gộp vào "Giấy tờ & công văn" (``papers``, 19/11/2026) — truy vấn ``papers.drafts`` giữ cho trợ lý / app.
 m.screens("docs", (
-    Screen("paper_templates", "Mẫu văn bản", "doc.on.doc", "papers.templates_list", needs_action=True,   # rà vai 18/11/2026: màn THIẾT LẬP — chỉ người sửa được thấy trên menu (người đọc dùng kết quả ở màn việc)
+    Screen("paper_templates", "Mẫu văn bản", "doc.on.doc", "papers.templates_list", needs_action=True, group="Thiết lập",   # rà vai 18/11/2026: màn THIẾT LẬP — chỉ người sửa được thấy trên menu (người đọc dùng kết quả ở màn việc)
            actions=(A("papers.create_template", style="primary"),),
            row_actions=(A("papers.start_draft", "Soạn văn bản từ mẫu", bind={"template_id": "id"}, when={"state": ["published"]}, style="primary"),
                         A("papers.publish_template", bind={"template_id": "id"}, when={"has_draft": [True]}, style="primary"),

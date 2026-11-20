@@ -28,6 +28,8 @@ export type FieldSpec = {
   /** Như `options_with` nhưng đổi tên: `{tham_số_truy_vấn: trường_của_form}` (1.61). Trường đó đang hiện ⇒ danh sách tải lại + ô này bị xoá khi nó đổi. */
   options_args?: Record<string, string>;
   example?: Json;
+  /** Lệnh tạo thêm một mục của danh sách chọn (server chỉ gửi khi người xem có quyền) — danh sách rỗng ⇒ ô hiện "Tạo mới". */
+  options_create?: { command: string; title: string };
   /** Nhóm GẤP LẠI của bộ lọc / form lệnh (vd "Thêm điều kiện", "Tuỳ chọn khác"): ô cùng nhóm nằm sau một nút bấm; không có ⇒ luôn hiện. */
   group?: string;
   /** Chữ mờ của ô trống — nói trống nghĩa là gì (vd "Hôm nay"); không có ⇒ "Tất cả". */
