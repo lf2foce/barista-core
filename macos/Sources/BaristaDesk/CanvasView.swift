@@ -17,8 +17,7 @@ struct CanvasView: View {
             CanvasHeader(onBack: onBack)
                 .padding(.horizontal, edge)
                 .padding(.top, titlebarInset)
-                .padding(.bottom, 12)
-            Rectangle().fill(Color.hairline).frame(height: 1)
+                .padding(.bottom, 12)   // không đường kẻ dưới: đầu khung nổi trên nền khung (cùng web)
             if let hero = desk.active {
                 VStack(alignment: .leading, spacing: 12) {
                     CardFrame(item: hero)

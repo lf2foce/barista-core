@@ -157,7 +157,6 @@ private struct DeskHeader<Trailing: View>: View {
         .padding(.horizontal, 14)
         .padding(.top, titlebarInset)
         .padding(.bottom, 10)
-        .background(WA.bar)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color.hairline).frame(height: 1) }
+        // đầu ngăn NỔI trên nền của chính ngăn (cùng PANE_HEADER của web): không dải nền, không đường kẻ dưới — nút viên nổi như ChatGPT
     }
 }

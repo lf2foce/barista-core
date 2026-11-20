@@ -33,9 +33,9 @@ struct ChatColumn: View {
                     }
                 }
                 .clipped()
-                .background { ZStack { WA.wall; Doodles() } }
             ComposerBar(focused: $focused)
         }
+        .background { ZStack { WA.wall; Doodles() } }   // nền ngăn phủ cả đầu ngăn ⇒ đầu ngăn nổi trên nền, không thành dải riêng (cùng web)
     }
 }
 
@@ -83,8 +83,7 @@ private struct ChatHeader: View {
         .padding(.horizontal, 14)
         .padding(.top, titlebarInset)
         .padding(.bottom, 10)
-        .background(WA.bar)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color.hairline).frame(height: 1) }
+        // đầu ngăn NỔI trên nền của chính ngăn (cùng PANE_HEADER của web): không dải nền, không đường kẻ dưới — nút viên nổi như ChatGPT
     }
 }
 
