@@ -211,17 +211,20 @@ async def metric_connected(ctx: Ctx, inp: MetricIn) -> dict[str, Any]:
 m.dataset(
     "leads", "Lead", resource="crm",
     description=("Mỗi dòng gốc là một lead (một khách × một [[offering]]). Tháng / ngày = lúc lead VỀ; chặng là chặng HIỆN TẠI, không phải chặng "
-                 "lúc đó. Không có tên, SĐT của khách."),
+                 "lúc đó. Lý do mất (vì sao thua / mất khách): lý do người chọn trong danh mục của công ty khi đánh dấu lead mất — chỉ lead đang mất; "
+                 "lead mất trước khi có danh mục hiện đúng chữ người đã ghi. Không có tên, SĐT của khách."),
     base="""SELECT l.stage, coalesce(l.source, '') AS source, coalesce(l.offering_code, '') AS offering_code,
                    coalesce(s.label, l.pipeline_stage, '') AS pipeline, coalesce(tm.name, '') AS team, coalesce(u.name, u.email, '') AS owner,
                    (coalesce(l.captured_at, l.created_at) AT TIME ZONE core.tz())::date AS came_on,
-                   (l.owner_id IS NOT NULL) AS assigned, (l.last_activity_at IS NOT NULL) AS contacted
-            FROM crm.leads l LEFT JOIN crm.stages s ON s.key = l.pipeline_stage
+                   (l.owner_id IS NOT NULL) AS assigned, (l.last_activity_at IS NOT NULL) AS contacted,
+                   CASE WHEN l.stage = 'lost' THEN coalesce(r.label, nullif(btrim(l.lost_reason), ''), 'Chưa ghi lý do') ELSE '' END AS lost_reason
+            FROM crm.leads l LEFT JOIN crm.stages s ON s.key = l.pipeline_stage LEFT JOIN crm.lost_reasons r ON r.key = l.lost_reason_key
             LEFT JOIN core.teams tm ON tm.id = l.team_id LEFT JOIN core.users u ON u.id = l.owner_id""",
     dims={"stage": Dim("Chặng", "t.stage", labels=STAGES), "pipeline": Dim("Bước bán hàng", "t.pipeline"),
           "source": Dim("Nguồn", "t.source", labels=dict(SOURCES)), "offering": Dim("[[offering]]", "t.offering_code"),
           "team": Dim("Đội", "t.team"), "owner": Dim("Người giữ", "t.owner"),
-          "month": Dim("Tháng về", "to_char(t.came_on, 'YYYY-MM')", month=True)},
+          "month": Dim("Tháng về", "to_char(t.came_on, 'YYYY-MM')", month=True),
+          "lost_reason": Dim("Lý do mất", "t.lost_reason")},   # ADR 0246 — lọc lost > 0 / nhóm theo chiều này: "vì sao mình mất khách"
     measures={"count": Measure("Số lead", "count(*)"), "assigned": Measure("Đã có người giữ", "count(*) FILTER (WHERE t.assigned)"),
               "contacted": Measure("Đã liên hệ", "count(*) FILTER (WHERE t.contacted)"),
               "won": Measure("Thành giao dịch", "count(*) FILTER (WHERE t.stage = 'deal')"),

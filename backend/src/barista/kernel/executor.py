@@ -69,6 +69,8 @@ FROM_FILE: ContextVar[bool] = ContextVar("barista_from_file", default=False)
 # dấu) — không phải ô đầu vào, không có ở cửa HTTP / trợ lý; NGOẠI LỆ DUY NHẤT: app từ xa người vận hành đặt CHỈ GHI NHẬN (0207 — cột core.remote_apps.shadow, app không
 # tự đổi được) ⇒ cửa /v1/commands chạy lệnh của app đó ở chế độ này. Gói chỉ đọc ``ctx.historical``.
 HISTORICAL: ContextVar[bool] = ContextVar("barista_historical", default=False)
+# LỆNH đang chạy (tên thao tác — lõi đặt ở ``run`` / gọi lồng) — lịch sử thay đổi theo trường (ADR 0246) ghi "đổi qua lệnh nào"; gói không đặt
+_COMMAND: ContextVar[str] = ContextVar("barista_command", default="")
 _SEALED = ("conn", "p", "module", "caller", "readonly", "background")
 _CTXS: dict[int, tuple[weakref.ref[Ctx], Any, Principal, str, str, bool, Any]] = {}
 # QUYẾT ĐỊNH DUYỆT chỉ từ người bấm ở cửa HTTP (tay cầm EDGE còn hạn — 0144): không gọi lồng, không qua trợ lý / app / việc nền / ``call_as``
@@ -84,6 +86,21 @@ def historical(on: bool = True) -> Iterator[None]:
         yield
     finally:
         HISTORICAL.reset(token)
+
+
+# ĐỘ SÂU CHUỖI PHẢN ỨNG TỰ ĐỘNG (ADR 0246): hành động của luật "Nếu… thì…" chạy trong ``chained(n)`` ⇒ mọi sự kiện lệnh đó phát mang ``_chain = n``
+# trong payload; động cơ luật đọc lại để chặn vòng lặp (luật A kích luật B kích luật A…). Lõi không biết luật nào — chỉ giữ con số.
+CHAIN: ContextVar[int] = ContextVar("barista_chain", default=0)
+CHAIN_KEY = "_chain"
+
+
+@contextmanager
+def chained(depth: int) -> Iterator[None]:
+    token = CHAIN.set(depth)
+    try:
+        yield
+    finally:
+        CHAIN.reset(token)
 
 
 def _drop_ctx(key: int) -> None:
@@ -325,6 +342,13 @@ class Ctx:
         if HISTORICAL.get():
             return 0
         return await notify.send(self.conn, users, kind=kind, title=title, body=body, push=push, open=open, key=key, actor=self.p.user_id)
+
+    async def track(self, kind: str, subject_id: Any, field_key: str, old: Any, new: Any) -> bool:
+        """Ghi LỊCH SỬ THAY ĐỔI một trường đã khai (``Module.tracks`` — ADR 0246, api 1.69) trong CÙNG giao dịch: lệnh hoàn ⇒ lịch sử cũng mất. Cũ = mới ⇒
+        không ghi; nạp lịch sử / chỉ ghi nhận (0185) ⇒ không ghi (dữ liệu tham chiếu không thành "vừa đổi"). Chỉ trường của đối tượng thuộc module đang chạy.
+        Trả True nếu đã ghi."""
+        from barista.kernel import history
+        return await history.record(self, kind, subject_id, field_key, old, new)
 
     async def company(self) -> str:
         """Tên công ty đang chạy (giấy tờ, tin nhắn gửi khách, trang link công khai)."""
@@ -748,11 +772,14 @@ async def invoke(parent: Ctx, name: str, inp: dict[str, Any] | BaseModel, *, ele
             # Invalid (không phải Denied): gọi sang gói không bắt buộc nuốt Denied thành None — ở đây phải hiện ra, không im lặng bỏ qua
             raise Invalid(f"“{op.title}” phải qua duyệt ở công ty này — không chạy kèm trong thao tác khác; làm riêng lệnh đó để gửi phiếu duyệt")
         t1, t2 = ui._PARTS.set(None), ui._PAGING.set(None)   # gọi lồng luôn nhận thẻ / bảng đủ — phần tải sau và trang chỉ của lượt ngoài cùng
+        t3 = _COMMAND.set(op.name) if op.kind == "command" else None   # truy vấn lồng không đổi "lệnh đang chạy"
         try:
             out = await op.handler(child, model)
         finally:
             ui._PARTS.reset(t1)
             ui._PAGING.reset(t2)
+            if t3 is not None:
+                _COMMAND.reset(t3)
     finally:
         if switched and parent.conn.info.transaction_status != pq.TransactionStatus.INERROR:
             await set_session(parent.conn, pp)
@@ -850,7 +877,10 @@ async def flush_events(conn: Conn, p: Principal, events: list[tuple[str, dict[st
     admin.set_pack); xảy ra khi gói tắt thì không có phản ứng, bật lại không chạy bù."""
     on = await packs.enabled(conn, p.tenant_id) if events else frozenset()
     past = HISTORICAL.get()   # sự kiện của lần nạp lịch sử (0185): đánh dấu ⇒ bên nghe chạy cũng ở chế độ đó (``events._deliver``); không gửi app từ xa
+    depth = CHAIN.get()   # phát trong hành động của luật tự động (ADR 0246) ⇒ ghi độ sâu chuỗi để luật kế tiếp chặn vòng lặp
     for event_type, payload in events:
+        if depth:
+            payload = {**payload, CHAIN_KEY: depth}
         cur = await conn.execute("INSERT INTO core.events (type, payload, actor, historical) VALUES (%s, %s, %s, %s) RETURNING id",
                                  (event_type, Jsonb(payload), p.user_id, past))
         row = await cur.fetchone()
@@ -917,6 +947,11 @@ def _loggable(command: str, inp: Any) -> Any:
 # "morning:<đề xuất>", "work:<việc>". Đặt một lần ở chỗ khởi động (``with tracing(...)``); mọi lệnh chạy bên trong — kể cả gọi lồng — tự mang vào
 # nhật ký thao tác. '' = người làm trực tiếp.
 _trace: ContextVar[str] = ContextVar("barista_trace", default="")
+
+
+def current_command() -> str:
+    """Lệnh đang chạy (gọi lồng: lệnh trong cùng) — rỗng ngoài một lệnh (bên nghe sự kiện tự ghi SQL)."""
+    return _COMMAND.get()
 
 
 def current_trace() -> str:
@@ -1117,11 +1152,13 @@ async def run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None =
         return Result("denied", error="Quyết định duyệt chỉ do người bấm trong app (phiên đăng nhập của chính request này) — 0144")
     lease = principal.Lease() if background else None
     token = HISTORICAL.set(True) if historical else None   # chỉ BẬT: lệnh chạy bên trong một lần nạp lịch sử thừa hưởng, không tắt được
+    command = _COMMAND.set(name)
     try:
         with timing.span("executor"):
             return localized(p, await _run(p, name, inp, key=key, quiet=quiet, expect_basis=expect_basis, edited=edited, files=files, attended=attended,
                                            background=lease, keep_output=keep_output, dry_run=dry_run))
     finally:
+        _COMMAND.reset(command)
         if token is not None:
             HISTORICAL.reset(token)
         if lease is not None:

@@ -28,6 +28,7 @@ from barista.api import (
     extra_fields,
     files,
     findings,
+    history,
     inbound,
     lead_labels,
     ledger,
@@ -67,6 +68,7 @@ from barista.kernel.fields import (
 from barista.kernel.principal import Principal as _Principal
 from barista.kernel.registry import (
     CheckIn,
+    DateIn,
     Event,
     Flow,
     Hints,
@@ -97,7 +99,7 @@ type Ctx = _Ctx
 # gọi model NGOÀI giao dịch.
 type Prep = _Prep
 
-__version__ = "1.68.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
+__version__ = "1.69.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
 #                         1.7: gộp ba nhánh cùng mang 1.6 — regulations.declare / compare / known_codes (0154) · Module.inbound (webhook VÀO từ nhà cung cấp) · Pack(records=…) cấu hình mặc định qua lệnh của module sở hữu (0153)
 #                              · Module.consumes nhận thêm họ outreach / doc_read / paper_draft — dịch vụ lõi mở cho gói ngoài (0155)
 #                         1.8: NeedsConfirmation — lệnh tự biết việc trợ lý định làm chạm lịch / dữ liệu của NGƯỜI KHÁC ⇒ cả lệnh thành thẻ đề xuất (0158)
@@ -210,6 +212,10 @@ __version__ = "1.68.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                         1.66: webhook CHUNG theo bộ nối — ``Connector.shared_hook`` + ``claims`` / ``shared_check`` / ``shared_verify`` / ``route_keys``, ``Batch.claimed``; cửa ``/v1/hooks/shared/<bộ nối>`` chỉ đánh thức kết nối sở hữu khoá đã xác minh (Meta: một webhook / app) — chỉ thêm
 #                         1.67: ``web.app_url(path)`` — địa chỉ web của bản cài; trang web chung ``/oauth/<module>`` (nhà cung cấp OAuth trả về ⇒ gọi ``<module>.finish_<…>`` bằng quyền người đang đăng nhập — gói không cần đường công khai) — chỉ thêm
 #                         1.68: họ mở ``ledger_read`` (0245) — ``acct.ledger_lines`` (dòng bút toán theo kỳ, trang đủ bút toán) và ``acct.ledger_balances`` (số dư tại một ngày): gói kế toán đọc sổ cái chi tiết không qua màn xuất MISA — chỉ thêm, không migration
+#                         1.69 (ADR 0246 — chung số với phiên tự động hoá; phần LỊCH SỬ THAY ĐỔI): ``Module.tracks(loại, trường, nhãn, fmt=, choices=, needs=, empty=)``
+#                              khai trường có lịch sử của đối tượng CỦA CHÍNH module; ``Ctx.track(loại, id, trường, cũ, mới)`` ghi trong cùng giao dịch (nạp lịch sử ⇒ im);
+#                              ``history.block(ctx, loại, id)`` khối "Lịch sử thay đổi" cho thẻ; truy vấn ``core.history`` (trợ lý). Migration base/102 — bảng mới, không bảo trì.
+#                         1.69: (ADR 0246, luật tự động) ``Module.date_source`` + ``DateIn`` — nguồn ngày cho luật theo thời gian ("N ngày trước / sau <ngày> của bản ghi") · ``Module.trigger(ids=, owner=)`` khoá mã làm đầu vào lệnh + người phụ trách bản ghi · ``Module.command(auto=True)`` lệnh luật tự động được chạy — chỉ thêm
 
 __all__ = [
     "VN",
@@ -218,6 +224,7 @@ __all__ = [
     "CheckIn",
     "Conflict",
     "Ctx",
+    "DateIn",
     "Day",
     "Denied",
     "Desk",
@@ -281,6 +288,7 @@ __all__ = [
     "findings",
     "flagged",
     "fold",
+    "history",
     "inbound",
     "kpi",
     "lead_labels",

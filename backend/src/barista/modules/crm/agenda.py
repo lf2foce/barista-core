@@ -107,10 +107,13 @@ async def close_appointment(ctx: Ctx, inp: CloseAppt) -> dict[str, Any]:
         kind = "visit" if a["kind"] == "visit" else ("call" if a["kind"] == "call" else "meet")
         await ctx.exec("INSERT INTO crm.activities (lead_id, kind, outcome, note, by_user) VALUES (%s, %s, %s, %s, %s)",
                        (a["lead_id"], kind, "connected" if kind == "call" else "", inp.note or APPT_KIND[a["kind"]], ctx.p.user_id))
-        await ctx.exec("UPDATE crm.leads SET last_activity_at = now(), next_follow_up = %s, updated_at = now() WHERE id = %s",
-                       (inp.next_follow_up, a["lead_id"]))
+        was = await ctx.val("UPDATE crm.leads SET last_activity_at = now(), next_follow_up = %s, updated_at = now() WHERE id = %s"
+                            " RETURNING old.next_follow_up", (inp.next_follow_up, a["lead_id"]))
+        await ctx.track("crm.lead", a["lead_id"], "next_follow_up", was, inp.next_follow_up)   # lịch sử thay đổi (ADR 0246)
     elif inp.next_follow_up:
-        await ctx.exec("UPDATE crm.leads SET next_follow_up = %s, updated_at = now() WHERE id = %s", (inp.next_follow_up, a["lead_id"]))
+        was = await ctx.val("UPDATE crm.leads SET next_follow_up = %s, updated_at = now() WHERE id = %s RETURNING old.next_follow_up",
+                            (inp.next_follow_up, a["lead_id"]))
+        await ctx.track("crm.lead", a["lead_id"], "next_follow_up", was, inp.next_follow_up)
     return {"appointment_id": a["id"], "status": inp.status}
 
 

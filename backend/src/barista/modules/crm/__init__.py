@@ -10,7 +10,8 @@ tìm nhanh) · ``leads`` (thêm lead, danh sách, chăm sóc, nhu cầu, chặng
 ``routing`` (hợp đồng cho chia lead) · ``reports`` (số đếm cho marketing / điều hành / sức khoẻ dữ liệu, chỉ số mục tiêu) · ``journey`` (thẻ khách:
 hành trình, liên hệ, đồng ý) · ``morning`` (thẻ buổi sáng) · ``agenda`` (lịch hẹn, nhắc hẹn, gợi ý đặt lịch) · ``screens`` (màn hình) · ``calls``
 (hợp đồng cho tổng đài: SĐT → lead, cuộc gọi thật thành chăm sóc — 0149) · ``imported`` (nạp chăm sóc từ hệ khác giữ giờ gốc — 0174) · ``my_month``
-(tổng kết tháng của chính người hỏi — công cụ của kỹ năng trợ lý, 0198).
+(tổng kết tháng của chính người hỏi — công cụ của kỹ năng trợ lý, 0198) · ``lost_reasons`` (danh mục lý do mất khách — ADR 0246) · ``idle`` (lead nằm im quá
+ngưỡng của chặng: một công thức cho danh sách, thẻ, báo cáo — ADR 0246).
 """
 
 from datetime import UTC, datetime, timedelta
@@ -93,6 +94,12 @@ Pack("crm", "Khách hàng",
          ("new", "Mới", "lead", 10), ("contacting", "Đang liên hệ", "lead", 20), ("interested", "Quan tâm", "prospect", 30),
          ("met", "Đã gặp / tư vấn", "prospect", 40), ("negotiating", "Đang thương lượng", "prospect", 60), ("won", "Đã chốt giao dịch", "deal", 90),
          ("lost", "Mất", "lost", 100), ("unreachable", "Không liên lạc được", "lost", 110), ("not_interested", "Không còn nhu cầu", "lost", 120)))
+     # lý do mất khách mặc định (ADR 0246) — TRUNG TÍNH, ngành nào cũng có; công ty đổi tên / thêm / tắt ở Quản trị › Lý do mất khách. Lý do "cần ghi chú" là ngăn
+     # cho chữ không khớp lý do nào (nhập Excel, trợ lý)
+     + tuple(("crm.save_lost_reason", k, {"key": k, "label": label, "sort": sort, "needs_note": note, "only_new": True}) for k, label, sort, note in (
+         ("price", "Giá / tài chính chưa phù hợp", 10, False), ("bought_elsewhere", "Đã mua chỗ khác", 20, False),
+         ("unreachable", "Không liên lạc được", 30, False), ("just_browsing", "Chỉ tham khảo", 40, False), ("wrong_need", "Sai nhu cầu", 50, False),
+         ("no_longer_needed", "Không còn nhu cầu", 60, False), ("duplicate", "Trùng khách / trùng lead", 70, False), ("other", "Lý do khác", 900, True)))
      # loại lịch của hẹn khách (0158) — công ty đổi tên / tắt ở Lịch › Loại lịch
      + tuple(("schedule.save_kind", k, {"key": k, "label": label, "sort": sort, "tone": tone, "only_new": True}) for k, label, sort, tone in (
          ("customer_meeting", "Hẹn khách", 20, "blue"), ("site_visit", "Tham quan", 30, "green"), ("callback", "Hẹn gọi", 35, "orange"))),
@@ -105,7 +112,18 @@ m = Module("crm", "Khách hàng", pack="crm", resources={"crm": "Khách hàng & 
 m.consumes("plug")
 # Từ vựng (0124): MỘT khái niệm cho "thứ khách quan tâm" — chữ hiện ra do công ty đặt (gói ngành mang nhãn mặc định). Cột / khoá vẫn tên cũ (N2 mới đổi).
 m.term("offering", "Sản phẩm", "thứ khách quan tâm và công ty bán")
+# Lịch sử thay đổi theo trường (ADR 0246): chặng đã có crm.stage_events; đây là các trường hay bị hỏi "ai đổi, khi nào"
+LEAD = "crm.lead"
+m.tracks(LEAD, "owner", "Người phụ trách", fmt="person", empty="Hàng chờ (chưa giao)")
+m.tracks(LEAD, "next_follow_up", "Hẹn chăm sóc lại", fmt="date", empty="chưa hẹn")
+m.tracks(LEAD, "budget", "Ngân sách", fmt="money", empty="chưa ghi")
 m.trigger("crm.lead_created", "Có lead mới", {"source": "Nguồn", "offering_code": "[[offering]] quan tâm"}, open=("crm.journey", {"lead_id": "lead_id"}))
+# ADR 0246: hai sự kiện đã phát (mọi đường giao / đổi chặng đi qua ``_stage_event``) thành cò — trường an toàn: giai đoạn / chặng (mã), tên đội, tên người
+# phụ trách (người trong công ty, không phải khách); ``owner_id`` ⇒ luật gửi được cho "người phụ trách"
+m.trigger("crm.lead_stage_changed", "Lead đổi chặng", {"from_stage": "Từ giai đoạn", "to_stage": "Sang giai đoạn", "pipeline": "Chặng", "team": "Đội",
+                                                      "owner": "Người phụ trách"}, open=("crm.journey", {"lead_id": "lead_id"}), owner="owner_id")
+m.trigger("crm.lead_assigned", "Lead được giao người phụ trách", {"owner": "Người phụ trách", "team": "Đội", "stage": "Giai đoạn"},
+          open=("crm.journey", {"lead_id": "lead_id"}), owner="owner_id")
 # Sự kiện công bố cho app từ xa (0140): chỉ mang mã lead — app gọi crm.lead_status bằng quyền của nó để đọc
 m.webhook("lead.assigned", "crm.lead_assigned", ids=("lead_id",), resource="crm", label="Lead được giao người phụ trách")
 m.webhook("lead.stage_changed", "crm.lead_stage_changed", ids=("lead_id",), resource="crm", label="Lead đổi chặng")
@@ -159,9 +177,20 @@ async def _stage_event(ctx: Ctx, lead_id: Any, kind: str, frm: str | None = None
     if kind == "assigned":   # khách đổi người phụ trách ⇒ thứ gắn vào khách (hồ sơ quy trình, mục nhớ — 0091) cập nhật theo (quy ước m.subject)
         ctx.emit("subject.changed", kind="crm.lead", id=lead_id)
         if (data or {}).get("to"):   # có người nhận (về hàng chờ thì không) — MỘT chỗ ghi lịch sử giao ⇒ mọi đường giao đều phát
-            ctx.emit("crm.lead_assigned", lead_id=lead_id, owner_id=(data or {})["to"])
-    elif kind == "stage":
-        ctx.emit("crm.lead_stage_changed", lead_id=lead_id, from_stage=frm, to_stage=to)
+            now = await _lead_now(ctx, lead_id)
+            ctx.emit("crm.lead_assigned", lead_id=lead_id, owner_id=(data or {})["to"], owner=now["owner"], team=now["team"], stage=now["stage"])
+    elif kind in ("stage", "pipeline"):
+        # đổi CHẶNG trong cùng giai đoạn (Quan tâm → Đã gặp) cũng là "lead đổi chặng" (cò tự động hoá, ADR 0246): từ / sang giai đoạn giữ nguyên
+        now = await _lead_now(ctx, lead_id)
+        ctx.emit("crm.lead_stage_changed", lead_id=lead_id, from_stage=frm if kind == "stage" else now["stage"], to_stage=to if kind == "stage" else now["stage"],
+                 pipeline=now["pipeline"], owner_id=now["owner_id"], owner=now["owner"], team=now["team"])
+
+
+async def _lead_now(ctx: Ctx, lead_id: Any) -> dict[str, Any]:
+    """Trường AN TOÀN của lead lúc phát sự kiện (cò tự động hoá — ADR 0246): giai đoạn, chặng, người phụ trách (mã + tên), tên đội — không gì của khách."""
+    return await ctx.one("""SELECT l.stage, l.pipeline_stage AS pipeline, l.owner_id, u.name AS owner, t.name AS team FROM crm.leads l
+                            LEFT JOIN core.users u ON u.id = l.owner_id LEFT JOIN core.teams t ON t.id = l.team_id WHERE l.id = %s""", (lead_id,)) \
+        or {"stage": None, "pipeline": None, "owner_id": None, "owner": None, "team": None}
 
 
 async def _set_owner(ctx: Ctx, lead_id: Any, owner: UUID | None, *, team: UUID | None = None, reason: str = "",
@@ -190,6 +219,7 @@ async def _set_owner(ctx: Ctx, lead_id: Any, owner: UUID | None, *, team: UUID |
                 await book_appointment(ctx, a, t["starts_at"], t["ends_at"])
     await _stage_event(ctx, lead_id, "assigned", reason=reason,
                        data={"from": str(was) if was else None, "to": str(owner) if owner else None, **(data or {})})
+    await ctx.track(LEAD, lead_id, "owner", was, owner)
     return was
 
 
@@ -209,6 +239,6 @@ def interest_text(i: dict[str, Any]) -> str:
 
 # Thứ tự nạp = thứ tự thao tác trong sổ đăng ký (danh mục công cụ trợ lý / app giữ như khi crm còn là một file) — không sắp lại
 # isort: off
-from barista.modules.crm import identity, leads, deal_link, routing, reports, journey, morning, agenda, screens, calls, stages, imported, my_month, findings  # noqa: E402, F401
+from barista.modules.crm import identity, leads, deal_link, routing, reports, journey, morning, agenda, screens, calls, stages, imported, my_month, findings, lost_reasons, idle  # noqa: E402, F401
 # isort: on
 from barista.modules import leadflow  # noqa: E402, F401 — module thứ hai của gói crm (điểm vào gói — 0130)

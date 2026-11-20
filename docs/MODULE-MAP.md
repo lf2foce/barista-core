@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-18 gói · 30 module · 1008 thao tác (276 nội bộ) · 19 bên nghe sự kiện.
+18 gói · 30 module · 1019 thao tác (280 nội bộ) · 20 bên nghe sự kiện.
 
 ## Gói
 
@@ -32,7 +32,7 @@
 
 | Module | Tên | Gói | Schema | Mã | Lệnh | Truy vấn | Nội bộ |
 |---|---|---|---|---|---|---|---|
-| `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (13 file) | 68 | 82 | 54 |
+| `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (13 file) | 68 | 83 | 55 |
 | `admin` | Quản trị | `base` | — | `modules/admin.py` | 38 | 43 | 12 |
 | `apps` | App của tôi | `base` | `apps` | `modules/apps.py` | 11 | 20 | 2 |
 | `asks` | Yêu cầu gửi bên ngoài | `base` | `asks` | `modules/asks.py` | 10 | 3 | 4 |
@@ -40,10 +40,10 @@
 | `compose` | Soạn với AI | `compose` | `compose` | `modules/compose/` (7 file) | 20 | 6 | 1 |
 | `connect` | Ứng dụng kết nối | `base` | — | `modules/connect.py` | 9 | 3 | 4 |
 | `connectors` | Kết nối ngoài | `base` | `connectors` | `modules/connectors.py` | 10 | 6 | 6 |
-| `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/idempotency_log.py`, `kernel/import_log.py` | 32 | 27 | 9 |
-| `crm` | Khách hàng | `crm` | `crm` | `modules/crm/` (16 file) | 23 | 45 | 41 |
+| `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py` | 32 | 28 | 9 |
+| `crm` | Khách hàng | `crm` | `crm` | `modules/crm/` (18 file) | 24 | 49 | 42 |
 | `findings` | Báo cáo chạy song song | `findings` | — | `modules/findings.py` | 0 | 7 | 1 |
-| `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (15 file) | 36 | 46 | 31 |
+| `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (15 file) | 37 | 49 | 33 |
 | `health` | Sức khoẻ dữ liệu | `base` | — | `modules/health.py` | 0 | 1 | 0 |
 | `hr` | Hồ sơ làm việc | `hr` | `hr` | `modules/hr/` (2 file) | 13 | 14 | 4 |
 | `kb` | Tài liệu | `base` | `kb` | `modules/kb/` (4 file) | 15 | 23 | 12 |
@@ -76,6 +76,7 @@
   - `acct.party_open_vnd` ← `parties`
   - `acct.payable_states` ← `pay`
   - `acct.period_open` ← `pay`
+  - `acct.receivable_due` ← `flow`
   - `acct.recognize_payable` ← `pay`
 - **Mở cho gói ngoài** (thao tác → họ; gói khai `consumes`):
   - `acct.balances_for` → `remittance`
@@ -197,13 +198,14 @@
 
 ### `crm` — Khách hàng
 
-- **Mã:** `crm/__init__.py`, `crm/agenda.py`, `crm/calls.py`, `crm/deal_link.py`, `crm/findings.py`, `crm/identity.py`, `crm/imported.py`, `crm/journey.py`, `crm/leads.py`, `crm/morning.py`, `crm/my_month.py`, `crm/reports.py`, `crm/reveal.py`, `crm/routing.py`, `crm/screens.py`, `crm/stages.py`
+- **Mã:** `crm/__init__.py`, `crm/agenda.py`, `crm/calls.py`, `crm/deal_link.py`, `crm/findings.py`, `crm/identity.py`, `crm/idle.py`, `crm/imported.py`, `crm/journey.py`, `crm/leads.py`, `crm/lost_reasons.py`, `crm/morning.py`, `crm/my_month.py`, `crm/reports.py`, `crm/reveal.py`, `crm/routing.py`, `crm/screens.py`, `crm/stages.py`
 - **Tài nguyên quyền:** `crm`
 - **Hợp đồng quyền hệ thống** (thao tác ← module được gọi):
   - `crm.campaign_leads` ← `mkt`
   - `crm.contact_info` ← `leadflow`
   - `crm.departed_leads` ← `leadflow`
   - `crm.findings_report` ← `findings`
+  - `crm.follow_up_due` ← `flow`
   - `crm.health_report` ← `health`
   - `crm.intake_lead` ← `leadflow`
   - `crm.lead_ad_of` ← `mkt`
@@ -239,7 +241,7 @@
 - **Cắm vào:** `schedule.calendar_items`, `schedule.markers`, `schedule.quick_add`
 - **Sự kiện phát:** `crm.lead_assigned`, `crm.lead_created`, `crm.lead_outcome_recorded`, `crm.lead_stage_changed`, `subject.changed`
 - **Nghe sự kiện:** `parties.party_renamed` → `crm.follow_party_name`, `schedule.booking_changed` → `crm.on_booking_changed`
-- **Cò tự động hoá:** `crm.lead_created`
+- **Cò tự động hoá:** `crm.lead_assigned`, `crm.lead_created`, `crm.lead_stage_changed`
 - **Chỉ số:** `crm.metric_appointments`, `crm.metric_calls`, `crm.metric_connected`, `crm.metric_leads`
 - **Tìm nhanh:** `crm.search_customers`
 - **Đối tượng:** `crm.lead`
@@ -267,6 +269,7 @@
   - `flow.plan_tasks` ← `flow`
   - `flow.remind_plan_tasks` ← `flow`
   - `flow.sync` ← `flow`
+  - `flow.task_due` ← `flow`
   - `flow.workload` ← `flow`
 - **Mở cho gói ngoài** (thao tác → họ; gói khai `consumes`):
   - `flow.module_task` → `follow_up`
@@ -274,12 +277,12 @@
 - **Gọi họ thao tác bằng quyền hệ thống:** `check`, `metric`, `subject`
 - **Cắm vào:** `schedule.markers`, `talk.message_actions`
 - **Sự kiện phát:** `flow.plan_closed`, `flow.plan_created`, `flow.plan_reopened`, `flow.task_cancelled`, `flow.task_done`, `flow.task_reopened`
-- **Nghe sự kiện:** `asks.item_answered` → `flow.brief_answered`, `subject.changed` → `flow.on_subject_changed`, `subject.created` → `flow.on_subject_created`, `(mọi cò)` → `flow.run_automations`, `subject.changed` → `flow.wake_checked_tasks`
+- **Nghe sự kiện:** `asks.item_answered` → `flow.brief_answered`, `subject.changed` → `flow.on_subject_changed`, `subject.created` → `flow.on_subject_created`, `(mọi cò)` → `flow.run_automations`, `flow.automation_due` → `flow.run_dated_automation`, `subject.changed` → `flow.wake_checked_tasks`
 - **Cò tự động hoá:** `flow.plan_closed`
 - **Tìm nhanh:** `flow.search_plans`, `flow.search_tasks`
 - **Đối tượng:** `flow.case`, `flow.plan`, `flow.request`, `flow.task`
 - **Việc theo dõi:** `case`
-- **Vòng quét:** `flow.check_goals`, `flow.check_tasks`, `flow.escalate_requests`, `flow.escalate_stuck`, `flow.remind_due`
+- **Vòng quét:** `flow.check_goals`, `flow.check_tasks`, `flow.escalate_requests`, `flow.escalate_stuck`, `flow.remind_due`, `flow.sweep_dated_automations`
 
 ### `health` — Sức khoẻ dữ liệu
 

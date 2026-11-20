@@ -53,6 +53,9 @@ class SaveStage(Input):
     sort: int = field("Thứ tự", 100, ge=0, le=999, help="Chặng thứ tự nhỏ nhất của giai đoạn là chặng mặc định khi lead vào giai đoạn đó")
     tone: Literal["", "blue", "purple", "green", "gray", "orange", "red", "teal"] = field("Màu", "", options=TONES)
     active: bool = field("Đang dùng", True, help="Tắt = không chọn được nữa; lead đang ở chặng này giữ nguyên")
+    # ADR 0246: lead nằm ở chặng quá ngần này ngày (không chuyển chặng, không chăm sóc) ⇒ "nằm im" trên danh sách / thẻ / Báo cáo chạy song song
+    idle_days: int | None = field("Nằm im tối đa (ngày)", None, ge=0, le=365, placeholder="Giữ nguyên",
+                                  help="Lead ở chặng này quá ngần này ngày mà không chuyển chặng, không được chăm sóc ⇒ báo \"nằm im\". 0 = bỏ ngưỡng; trống = giữ nguyên")
     only_new: bool = field("Chỉ thêm nếu chưa có", False, hidden=True)
 
 
@@ -76,27 +79,30 @@ async def save_stage(ctx: Ctx, inp: SaveStage) -> dict[str, Any]:
             "SELECT 1 FROM crm.stages WHERE phase = %s AND active AND key <> %s", (have["phase"], inp.key)):
         raise Invalid(f"Giai đoạn {PHASES[have['phase']]} cần ít nhất một chặng đang dùng")
     await ctx.exec(
-        """INSERT INTO crm.stages (key, label, phase, sort, tone, active, updated_by) VALUES (%s, %s, %s, %s, %s, %s, core.me())
+        """INSERT INTO crm.stages (key, label, phase, sort, tone, active, idle_days, updated_by) VALUES (%(k)s, %(l)s, %(p)s, %(s)s, %(t)s, %(a)s, nullif(%(i)s::int, 0), core.me())
            ON CONFLICT (tenant_id, key) DO UPDATE SET label = EXCLUDED.label, sort = EXCLUDED.sort, tone = EXCLUDED.tone, active = EXCLUDED.active,
+               idle_days = CASE WHEN %(i)s::int IS NULL THEN crm.stages.idle_days ELSE EXCLUDED.idle_days END,
                updated_by = EXCLUDED.updated_by, updated_at = now()""",
-        (inp.key, inp.label.strip(), inp.phase, inp.sort, inp.tone, inp.active))
-    return {"key": inp.key, "added": have is None, "summary": f"Chặng “{inp.label.strip()}” · giai đoạn {PHASES[inp.phase]}"}
+        {"k": inp.key, "l": inp.label.strip(), "p": inp.phase, "s": inp.sort, "t": inp.tone, "a": inp.active, "i": inp.idle_days})
+    idle = f" · nằm im tối đa {inp.idle_days} ngày" if inp.idle_days else (" · bỏ ngưỡng nằm im" if inp.idle_days == 0 else "")
+    return {"key": inp.key, "added": have is None, "summary": f"Chặng “{inp.label.strip()}” · giai đoạn {PHASES[inp.phase]}{idle}"}
 
 
 @m.query("stages", resource="crm", title="Chặng của lead")
 async def stages(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
-    rows = await ctx.all("""SELECT s.key AS id, s.key, s.label, s.phase, s.sort, CASE WHEN s.active THEN 'on' ELSE 'off' END AS state,
+    rows = await ctx.all("""SELECT s.key AS id, s.key, s.label, s.phase, s.sort, s.tone, s.active, s.idle_days, CASE WHEN s.active THEN 'on' ELSE 'off' END AS state,
                                    (SELECT count(*) FROM crm.leads l WHERE l.pipeline_stage = s.key) AS leads
                             FROM crm.stages s ORDER BY array_position(ARRAY['lead', 'prospect', 'deal', 'lost'], s.phase), s.sort, s.key""")
     return ui.table(rows, [
         ui.col("label", "Chặng"), ui.col("phase", "Giai đoạn", "badge", labels=PHASES, tones=STAGE_TONES), ui.col("sort", "Thứ tự", "number"),
-        ui.col("state", "", "badge", labels={"on": "Đang dùng", "off": "Đã tắt"}, tones={"on": "green", "off": "gray"}), ui.col("leads", "Lead đang ở", "number"), ui.col("key", "Mã"),
+        ui.col("state", "", "badge", labels={"on": "Đang dùng", "off": "Đã tắt"}, tones={"on": "green", "off": "gray"}), ui.col("leads", "Lead đang ở", "number"),
+        ui.col("idle_days", "Nằm im tối đa (ngày)", "number"), ui.col("key", "Mã"),
     ], title="Chặng của lead", empty="Chưa có chặng — lead hiện theo giai đoạn (Lead / Tiềm năng / Giao dịch / Mất)",
         empty_actions=[ui.act("crm.save_stage", "Thêm chặng", style="primary")])
 
 
 async def stage_rows(ctx: Ctx) -> list[dict[str, Any]]:
-    return await ctx.all("SELECT key, label, phase, sort, tone, active FROM crm.stages ORDER BY array_position(ARRAY['lead', 'prospect', 'deal', 'lost'], phase), sort, key")
+    return await ctx.all("SELECT key, label, phase, sort, tone, active, idle_days FROM crm.stages ORDER BY array_position(ARRAY['lead', 'prospect', 'deal', 'lost'], phase), sort, key")
 
 
 @m.query("stage_options", resource="crm", title="Chặng chuyển được")

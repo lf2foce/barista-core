@@ -1,11 +1,12 @@
 {
- "version": "1.68.0",
+ "version": "1.69.0",
  "names": [
   "Action",
   "Ask",
   "CheckIn",
   "Conflict",
   "Ctx",
+  "DateIn",
   "Day",
   "Denied",
   "Desk",
@@ -70,6 +71,7 @@
   "findings",
   "flagged",
   "fold",
+  "history",
   "inbound",
   "kpi",
   "lead_labels",
@@ -193,6 +195,9 @@
    "parse",
    "pct_text",
    "unmeasured"
+  ],
+  "history": [
+   "block"
   ],
   "inbound": [
    "REASONS",

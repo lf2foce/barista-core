@@ -90,7 +90,8 @@ class ReopenIn(Input):
                "reopened}."
                " [id: module gọi tự có — lead_id do crm.intake_lead trả về (khớp theo liên hệ khách trên toàn công ty), không do người dùng gõ]")
 async def revive_lost(ctx: Ctx, inp: ReopenIn) -> dict[str, Any]:
-    owner = await ctx.one("UPDATE crm.leads SET stage = 'lead', lost_reason = '', next_follow_up = core.today(), updated_at = now()"
+    # lý do của lần mất gần nhất (danh mục + ghi chú) ở lại trên lead — mở lại không xoá "vì sao từng mất" (ADR 0246)
+    owner = await ctx.one("UPDATE crm.leads SET stage = 'lead', next_follow_up = core.today(), updated_at = now()"
                           " WHERE id = %s AND stage = 'lost' RETURNING owner_id", (inp.lead_id,))
     if owner is None:
         return {"lead_id": inp.lead_id, "owner_id": None, "reopened": False}

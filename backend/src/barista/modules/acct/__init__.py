@@ -20,6 +20,7 @@ from barista.api import Action as A
 from barista.api import (
     Conflict,
     Ctx,
+    DateIn,
     Day,
     Denied,
     Desk,
@@ -133,9 +134,22 @@ ledger.declare({
     "expense:other": ("Chi phí khác", "expense"),   # 0119: huỷ khoản phải thu đầu kỳ ghi vào kỳ hiện tại   # 0119: đối ứng của mọi dòng đầu kỳ; ánh xạ sang hệ thống tài khoản khách: còn mở
 }, mechanism=("revenue:advance_charge", "revenue:opening_adjustment"))   # 0189: tài khoản cơ chế — không vào danh mục khoản thu / chi
 m.trigger("acct.receivable_overdue", "Khoản phải thu quá hạn", {"code": "Mã thanh toán", "label": "Nội dung", "rest": "Còn phải thu (đồng)"},
-          open=("acct.receivables", {}))
+          open=("acct.receivables", {}), owner="owner_id")
 m.trigger("acct.payment_received", "Có tiền về", {"code": "Mã thanh toán", "payment_vnd": "Số tiền vừa thu (đồng)", "amount_vnd": "Phải thu (đồng)"},
           open=("acct.receivables", {}))
+
+# Nguồn ngày cho luật tự động theo thời gian (ADR 0246): "3 ngày trước hạn khoản phải thu ⇒ nhắc người phụ trách" — cùng trường an toàn như cò quá hạn
+@m.date_source("receivable_due", "Khoản phải thu — hạn thu", date_label="hạn thu", resource="acct",
+               fields={"code": "Mã thanh toán", "label": "Nội dung", "rest": "Còn phải thu (đồng)"}, ids=("receivable_id",), open=("acct.receivables", {}),
+               why="Động cơ luật tự động (flow, ADR 0246) xét luật theo ngày bằng quyền hệ thống: khoản phải thu CHƯA THU ĐỦ (mở / thu một phần) có hạn "
+                   "trong khoảng được hỏi — trả mã khoản, hạn, người phụ trách (mã), mã thanh toán, nội dung, số còn phải thu (cùng trường cò "
+                   "acct.receivable_overdue); không tên bên trả. Hành động của luật chạy bằng quyền người đặt luật (nạp lại mỗi lần)")
+async def receivable_due(ctx: Ctx, inp: DateIn) -> list[dict[str, Any]]:
+    return await ctx.all(
+        """SELECT id::text AS ref, id AS receivable_id, due_on AS "on", owner_id, code, label, amount_vnd - paid_vnd AS rest
+           FROM acct.receivables WHERE status IN ('open', 'partial') AND due_on BETWEEN %s AND %s ORDER BY due_on, id LIMIT 2000""",
+        (inp.since, inp.until))
+
 
 PAYOUT_STATUS = {"pending_transfer": "Chờ chuyển khoản", "transferred": "Đã chuyển", "cancelled": "Đã huỷ", "unknown": "Cần tra soát"}
 

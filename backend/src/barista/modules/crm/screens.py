@@ -20,6 +20,17 @@ m.workspace(Workspace("sales", "Kinh doanh", "person.2.fill", (
            actions=(A("crm.create_lead", style="primary", slot="crm.add_lead"),), row_actions=LEAD_ROW_ACTIONS,
            row_click="open", open=Open("crm.journey", {"lead_id": "id"}, "Hành trình khách")),
 ), order=10))
+# cấu hình phễu của công ty (0153, ADR 0246): chặng (kèm ngưỡng nằm im) và lý do mất khách — chỉ người sửa được thấy trên menu
+m.screens("sales", (
+    Screen("lead_stages", "Chặng của lead", "list.number", "crm.stages", needs_action=True, pinnable=False,
+           actions=(A("crm.save_stage", "Thêm chặng", style="primary"),),
+           row_actions=(A("crm.save_stage", "Sửa", prefill={"key": "key", "label": "label", "phase": "phase", "sort": "sort", "tone": "tone",
+                                                            "active": "active", "idle_days": "idle_days"}),)),
+    Screen("lost_reasons", "Lý do mất khách", "tag", "crm.lost_reasons", needs_action=True, pinnable=False,
+           actions=(A("crm.save_lost_reason", "Thêm lý do", style="primary"),),
+           row_actions=(A("crm.save_lost_reason", "Sửa", prefill={"key": "key", "label": "label", "sort": "sort", "needs_note": "needs_note",
+                                                                  "active": "active"}),)),
+), rank=90)
 m.screens("admin", (
     Screen("leads_entry", "Khách / lead", "person.crop.rectangle.stack.fill", "crm.leads", tint="blue", min_scope="all", needs_action=True, group="Nhập liệu",
            actions=(A("crm.create_lead", style="primary"), A("leadflow.intake")), row_actions=LEAD_ROW_ACTIONS),

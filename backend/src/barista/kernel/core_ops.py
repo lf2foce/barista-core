@@ -144,6 +144,9 @@ Pack("base", "Nền",
   đạt ⇒ nói thiếu gì theo thẻ. Đóng không cần bằng chứng là việc của người (tự xin, có lý do, qua duyệt) — trợ lý không xin thay.
 - PHIẾU DUYỆT cụ thể ⇒ core__approvals tìm mã rồi core__approval (MỘT phiếu: trạng thái, bước, nút Duyệt / Từ chối cho người duyệt bước hiện tại;
   chia sẻ vào trao đổi được). Trợ lý KHÔNG tự duyệt.
+- AI ĐỔI GÌ, KHI NÀO ("ai dời hạn việc này?", "ai chuyển khách này cho Lan?", "ngân sách khách đổi lúc nào?") ⇒ core__history (subject_kind + subject_id
+  của thẻ đang mở; which = tên trường người hỏi nêu, trống = mọi trường): trả lời theo đúng dòng trên thẻ (người, lúc, qua trợ lý / luật tự động), giá trị
+  bị che thì nói không xem được — không đoán.
 """,
      # HẠNG TRỢ LÝ AI mặc định (ADR 0193, quyết định chủ sản phẩm 12/11/2026) — DỮ LIỆU, của NHÀ VẬN HÀNH (``core.ai_policy`` — khách không thấy / sửa);
      # vai khai hạng của mình bằng ``Role(ai_tier=…)``, vai không khai ⇒ hạng mặc định ("Cơ bản" — rẻ nhất, không giọng nói: thận trọng cho vai của gói
@@ -693,4 +696,14 @@ m.dataset(
 
 # Nhật ký nhập file (0168 §2) + hạn giữ khoá chống lặp (0177 §2) + hạng trợ lý AI (0193) + kỹ năng trợ lý (0198) — đăng ký thao tác vào module ``core``;
 # nạp sau cùng vì chúng dùng ``m`` ở trên
-from barista.kernel import ai_hints, ai_skills, ai_tiers, ai_tools, docread_policy, embed_policy, idempotency_log, import_log  # noqa: E402, F401
+from barista.kernel import (  # noqa: E402, F401
+    ai_hints,
+    ai_skills,
+    ai_tiers,
+    ai_tools,
+    docread_policy,
+    embed_policy,
+    history,
+    idempotency_log,
+    import_log,
+)

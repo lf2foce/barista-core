@@ -11,6 +11,7 @@ from psycopg.types.json import Jsonb
 from barista.api import (
     Conflict,
     Ctx,
+    DateIn,
     Day,
     Denied,
     Input,
@@ -21,6 +22,7 @@ from barista.api import (
     business_calendar,
     field,
     fold,
+    history,
     kpi,
     line,
     notify,
@@ -50,6 +52,11 @@ REMIND_FROM_HOUR = 8   # nhắc việc đến hạn từ 8 giờ sáng (giờ c�
 
 class TaskRef(Input):
     task_id: UUID = field("Việc", hidden=True)
+
+
+# Lịch sử thay đổi theo trường (ADR 0246): "ai đổi hạn / giao lại việc này"
+m.tracks(TASK_SUBJECT, "assignee", "Người làm", fmt="person", empty="Đội (chưa ai nhận)")
+m.tracks(TASK_SUBJECT, "due_on", "Hạn", fmt="date", empty="không hạn")
 
 
 @m.subject(TASK_SUBJECT, "Việc")
@@ -151,6 +158,8 @@ async def task(ctx: Ctx, inp: TaskRef) -> dict[str, Any]:
             opens.append({"title": f"Tin nhắn gốc ({src['author']})", **src["open"]})
     if talk := await ctx.call_as_optional("talk.block", ctx.p, subject_kind=TASK_SUBJECT, subject_id=t["id"]):   # gói Trao đổi (0046, 0117)
         blocks.append(talk)
+    if changes := await history.block(ctx, TASK_SUBJECT, t["id"]):   # lịch sử thay đổi theo trường (ADR 0246)
+        blocks.append(changes)
     by = f"Giao bởi {t['by_name']} · " if t["by_name"] else ""
     return ui.card(t["title"], blocks, subtitle=f"{by}tạo {t['created_at'].astimezone(zone()):%d/%m/%Y}", icon="checklist", actions=acts, open=opens,
                    ask={"title": "Hỏi trợ lý về việc này", "prompt": f"Việc “{t['title']}”: "})
@@ -496,7 +505,9 @@ class SetTask(Input):
                                                 help="Hoàn tác (0144): việc đã được sửa sau mốc này ⇒ từ chối, không đè lên thay đổi mới")
 
 
-@m.command("set_task", resource="flow", title="Đổi trạng thái việc")
+# auto=True (ADR 0246): luật tự động được đổi trạng thái việc (vd quá hạn 14 ngày ⇒ Kẹt / Huỷ) — rủi ro thấp, người đảo được bằng chính lệnh này;
+# việc có bộ kiểm vẫn không đóng tay được (chặn ở dưới + DB)
+@m.command("set_task", resource="flow", title="Đổi trạng thái việc", risk="low", auto=True)
 async def set_task(ctx: Ctx, inp: SetTask) -> dict[str, Any]:
     """Kéo thẻ trên bảng = lệnh này. Chỉ thấy (nên chỉ đổi được) việc trong phạm vi của mình — RLS."""
     t = await _task_for_change(ctx, inp.task_id)
@@ -514,6 +525,7 @@ async def set_task(ctx: Ctx, inp: SetTask) -> dict[str, Any]:
         """UPDATE flow.tasks SET status = %s, blocked_reason = %s, assignee_id = %s, updated_at = now(),
                done_at = CASE WHEN %s = 'done' THEN coalesce(done_at, now()) ELSE NULL END WHERE id = %s""",
         (inp.status, inp.blocked_reason.strip() if inp.status == "blocked" else "", assignee, inp.status, inp.task_id))
+    await ctx.track(TASK_SUBJECT, inp.task_id, "assignee", t["assignee_id"], assignee)
     return {"task_id": inp.task_id, "status": inp.status, "summary": f"{t['title']} → {TASK_STATUS[inp.status]}"}
 
 
@@ -863,6 +875,8 @@ async def adjust_task(ctx: Ctx, inp: AdjustTask) -> dict[str, Any]:
             raise Invalid(f"Hạn mới {due:%d/%m/%Y} trước ngày bắt đầu {t['start_on']:%d/%m/%Y} — đổi ngày bắt đầu trước (Lịch của việc)")
     stamp = await ctx.val("UPDATE flow.tasks SET assignee_id = %s, team_id = %s, due_on = %s, updated_at = now() WHERE id = %s RETURNING updated_at",
                           (who, team, due, inp.task_id))
+    await ctx.track(TASK_SUBJECT, inp.task_id, "assignee", t["assignee_id"], who)
+    await ctx.track(TASK_SUBJECT, inp.task_id, "due_on", t["due_on"], due)
     see = _plan_open(t["plan_id"]) if t["plan_id"] else TASKS_OPEN
     when = f", hạn {due:%d/%m}" if due else ""
     body = ctx.p.name + (f": {inp.note.strip()}" if inp.note.strip() else "")
@@ -899,3 +913,15 @@ async def plug_markers(ctx: Ctx, inp: MarkersIn) -> list[dict[str, Any]]:
                                       WHERE t.status IN ('todo', 'doing', 'blocked') AND t.due_on >= %s AND t.due_on < %s
                                         AND (NOT %s OR t.assignee_id = core.me()) ORDER BY t.due_on LIMIT 1000""", (inp.since, inp.until, inp.mine))]
 
+
+# ── Nguồn ngày cho luật tự động theo thời gian (ADR 0246) ──
+@m.date_source("task_due", "Việc — hạn việc", date_label="hạn việc", resource="flow",
+               fields={"status": "Trạng thái", "origin": "Nguồn việc", "team": "Đội", "owner": "Người làm"}, ids=("task_id",), open=("flow.task", {"task_id": "task_id"}),
+               why="Động cơ luật tự động (flow, ADR 0246) xét luật theo ngày bằng quyền hệ thống: việc CHƯA XONG (cần làm / đang làm / kẹt) có hạn trong "
+                   "khoảng được hỏi — trả mã việc, hạn, người làm (mã + tên), trạng thái, nguồn việc, tên đội; không tiêu đề / ghi chú việc. Hành động của luật "
+                   "chạy bằng quyền người đặt luật (nạp lại mỗi lần)")
+async def task_due(ctx: Ctx, inp: DateIn) -> list[dict[str, Any]]:
+    return await ctx.all(
+        """SELECT t.id::text AS ref, t.id AS task_id, t.due_on AS "on", t.assignee_id AS owner_id, u.name AS owner, t.status, t.origin, tm.name AS team
+           FROM flow.tasks t LEFT JOIN core.teams tm ON tm.id = t.team_id LEFT JOIN core.users u ON u.id = t.assignee_id
+           WHERE t.status IN ('todo', 'doing', 'blocked') AND t.due_on BETWEEN %s AND %s ORDER BY t.due_on, t.id LIMIT 2000""", (inp.since, inp.until))

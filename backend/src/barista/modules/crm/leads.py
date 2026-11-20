@@ -11,6 +11,7 @@ from psycopg.types.json import Jsonb
 from barista.api import (
     Conflict,
     Ctx,
+    DateIn,
     Day,
     ImportKey,
     Input,
@@ -199,6 +200,8 @@ async def leads(ctx: Ctx, inp: LeadFilter) -> dict[str, Any]:
         raise NotFound(f"Không có đội / khu vực “{team}” — xem mã trong danh sách đội")   # không trả 0 khách như thể hết khách
     # Lọc + sắp + LIMIT trên crm.leads TRƯỚC, nối tên khách / người / đội SAU (N11 — F6): dưới RLS planner ước core.users / core.teams 1 dòng
     # nên nối trước thì so từng lead với từng người. Lead thấy được ⇒ khách của nó thấy được (chính sách crm.customers) ⇒ nối sau không rơi dòng.
+    from barista.modules.crm import idle  # nạp muộn: giữ thứ tự thao tác trong sổ đăng ký
+
     find = SearchTerms(inp.q)   # cùng cách khớp với ⌘K (0087): có dấu hay không, từng từ; SĐT khi gõ toàn số
     rows = await ctx.all(
         """WITH RECURSIVE tree AS (SELECT id FROM core.teams WHERE %(team)s <> ''
@@ -207,7 +210,7 @@ async def leads(ctx: Ctx, inp: LeadFilter) -> dict[str, Any]:
            pick AS MATERIALIZED (
                SELECT l.id, l.customer_id, l.offering_code, l.stage, coalesce(l.pipeline_stage, l.stage) AS pipeline, l.source, l.interest, l.owner_id,
                       l.team_id, l.next_follow_up,
-                      l.last_activity_at, l.created_at,
+                      l.last_activity_at, l.created_at, l.captured_at, l.pipeline_stage AS pipeline_key,
                       (l.next_follow_up IS NOT NULL AND l.next_follow_up <= core.today() AND l.stage IN ('lead','prospect')) AS due,
                       -- ô đếm trên CẢ tập đã lọc (cửa sổ tính trước LIMIT), không phải 1.000 dòng hiển thị
                       count(*) OVER () AS n_all,
@@ -219,9 +222,12 @@ async def leads(ctx: Ctx, inp: LeadFilter) -> dict[str, Any]:
                  AND (%(own)s = '' OR l.owner_id = (SELECT u.id FROM core.users u WHERE lower(u.email) = lower(%(own)s)))
                ORDER BY due DESC, l.next_follow_up NULLS LAST, l.created_at DESC LIMIT 1000)
            SELECT l.id, c.name AS customer, c.phone, l.offering_code, l.stage, l.pipeline, l.source, l.interest, coalesce(u.name, 'Chưa chia') AS owner,
-                  tm.name AS team, l.next_follow_up, l.last_activity_at, l.created_at, l.due, l.n_all, l.n_due
+                  tm.name AS team, l.next_follow_up, l.last_activity_at, l.created_at, l.due, l.n_all, l.n_due,
+                  -- nằm im (ADR 0246): chỉ cho 1.000 dòng đã chọn, chỉ lead đang theo ở chặng có ngưỡng — công thức một nguồn ở crm/idle.py
+                  st.idle_days AS idle_limit, CASE WHEN st.idle_days IS NOT NULL THEN """ + idle.IDLE_FOR + """ END AS idle_for
            FROM pick l JOIN crm.customers c ON c.id = l.customer_id LEFT JOIN core.users u ON u.id = l.owner_id
                 LEFT JOIN core.teams tm ON tm.id = l.team_id
+                LEFT JOIN crm.stages st ON st.key = l.pipeline_key AND st.idle_days IS NOT NULL AND l.stage IN ('lead', 'prospect')
            ORDER BY l.due DESC, l.next_follow_up NULLS LAST, l.created_at DESC""",
         {**find.params, "st": inp.stage, "q": find.q, "team": team, "own": inp.owner.strip()})
     total, due = (int(rows[0]["n_all"]), int(rows[0]["n_due"])) if rows else (0, 0)
@@ -229,19 +235,27 @@ async def leads(ctx: Ctx, inp: LeadFilter) -> dict[str, Any]:
     for r in rows:
         r["interest_text"] = interest_text(r.pop("interest"))
         r["due_flag"] = "Đến hạn gọi" if r.pop("due") else ""
+        limit_days, days = r.pop("idle_limit"), r.pop("idle_for")
+        r["idle_flag"] = idle.flag(days, limit_days)
+        r["idle_days"] = days if r["idle_flag"] else None
         del r["n_all"], r["n_due"]
     from barista.modules.crm import stages as pipeline  # nạp muộn: giữ thứ tự thao tác trong sổ đăng ký
 
     names, colors = await pipeline.labels(ctx), await pipeline.tones(ctx)
-    lost_keys = ["lost", *(r["key"] for r in await pipeline.stage_rows(ctx) if r["phase"] == "lost")]
+    stage_list = await pipeline.stage_rows(ctx)
+    lost_keys = ["lost", *(r["key"] for r in stage_list if r["phase"] == "lost")]
+    idle_n = sum(1 for r in rows if r["idle_flag"])
+    idle_kpi = [ui.kpi("Nằm im quá lâu", idle_n, tone="orange" if idle_n else None)] if any(r["idle_days"] for r in stage_list) else []
     return ui.table(rows, [
         ui.col("due_flag", "", "badge", tones={"Đến hạn gọi": "orange"}),
+        ui.col("idle_flag", "", "badge", tones={f: "orange" for f in {r["idle_flag"] for r in rows if r["idle_flag"]}}),
         ui.col("customer", "Khách"), ui.col("phone", "SĐT", "phone"), ui.col("offering_code", "[[offering]]"),
         ui.col("pipeline", "Chặng", "badge", labels=names, tones=colors), ui.col("stage", "Giai đoạn", "badge", labels=STAGES, tones=STAGE_TONES),
         ui.col("interest_text", "Nhu cầu"),
         ui.col("source", "Nguồn", "badge", labels=SOURCES), ui.col("owner", "Phụ trách"), ui.col("team", "Đội"),
         ui.col("next_follow_up", "Hẹn gọi", "date"), ui.col("last_activity_at", "Chăm sóc gần nhất", "datetime"),
-    ], title="Khách & lead", limit=1000, kpis=[ui.kpi("Đang theo" if inp.stage == "open" else "Số lead", total), ui.kpi("Đến hạn gọi", due, tone="orange" if due else None)],
+    ], title="Khách & lead", limit=1000, kpis=[ui.kpi("Đang theo" if inp.stage == "open" else "Số lead", total), ui.kpi("Đến hạn gọi", due, tone="orange" if due else None),
+                                                          *idle_kpi],
         # Kanban theo chặng của công ty: kéo = crm.set_stage (chặng giai đoạn "Mất" cần lý do ⇒ form; "Giao dịch" chỉ do bước tạo giao dịch — server từ chối)
         views=ui.views(board=ui.board_view("pipeline", "customer", "offering_code",
                                            move={"command": "crm.set_stage", "id_key": "lead_id", "column_key": "stage", "form_columns": lost_keys}),
@@ -270,8 +284,9 @@ async def log_activity(ctx: Ctx, inp: LogActivity) -> dict[str, Any]:
     if follow is None and inp.outcome in ("no_answer", "busy"):
         follow = today()
     # "Đã liên hệ" có MỘT định nghĩa (chia lead, trần lead chưa gọi, hạn gọi, thẻ buổi sáng): mọi hình thức trừ ghi chú nội bộ
-    await ctx.exec("UPDATE crm.leads SET last_activity_at = CASE WHEN %s THEN last_activity_at ELSE now() END, next_follow_up = %s,"
-                   " updated_at = now() WHERE id = %s", (inp.kind == "note", follow, inp.lead_id))
+    was = await ctx.val("UPDATE crm.leads SET last_activity_at = CASE WHEN %s THEN last_activity_at ELSE now() END, next_follow_up = %s,"
+                        " updated_at = now() WHERE id = %s RETURNING old.next_follow_up", (inp.kind == "note", follow, inp.lead_id))
+    await ctx.track("crm.lead", inp.lead_id, "next_follow_up", was, follow)   # lịch sử thay đổi (ADR 0246)
     return {"lead_id": inp.lead_id}
 
 
@@ -303,6 +318,7 @@ async def _merge_interest(ctx: Ctx, lead_id: UUID, patch: dict[str, Any]) -> dic
     if new == old:
         raise Invalid("Không có gì mới để cập nhật")
     await ctx.exec("UPDATE crm.leads SET interest = %s, updated_at = now() WHERE id = %s", (Jsonb(new), lead_id))
+    await ctx.track("crm.lead", lead_id, "budget", old.get("budget_vnd"), new.get("budget_vnd"))   # lịch sử thay đổi (ADR 0246)
     before, after = interest_text(old) or "chưa ghi", interest_text(new)
     await ctx.exec("INSERT INTO crm.activities (lead_id, kind, note, by_user) VALUES (%s, 'note', %s, %s)",
                    (lead_id, f"Nhu cầu: {before} → {after}", ctx.p.user_id))
@@ -355,30 +371,41 @@ class SetStage(Input):
     lead_id: UUID = field("Lead", hidden=True)
     stage: str = field("Chặng", "prospect", options_query="crm.stage_options",
                        help="Chặng của công ty (Quan tâm, Đã gặp…) hoặc giai đoạn Lead / Tiềm năng / Mất")
-    lost_reason: str = field("Lý do mất", "", max_length=500)
+    # ADR 0246: lý do mất CHỌN trong danh mục của công ty (Quản trị › Lý do mất khách); ghi chú ngắn tuỳ chọn. Gửi chữ không chọn mã (nhập Excel, trợ lý, gói
+    # ngành) ⇒ máy đoán lý do từ chữ, chữ gốc giữ làm ghi chú
+    lost_reason_key: str = field("Lý do mất", "", options_query="crm.lost_reason_options", help="Chỉ khi chuyển sang chặng Mất")
+    lost_reason: str = field("Ghi chú lý do", "", max_length=500, help="Tuỳ chọn — vài chữ thêm cho lý do đã chọn")
 
 
-@m.command("set_stage", resource="crm", title="Chuyển chặng")
+# auto=True (ADR 0246): luật tự động của công ty được chuyển chặng (vd hẹn chăm sóc lại quá 7 ngày ⇒ "Không liên lạc được") — việc ghi rủi ro thấp, người
+# đảo được bằng chính lệnh này; giai đoạn Giao dịch vẫn không đặt tay được, sang "Mất" vẫn cần lý do (giá trị cố định của luật)
+@m.command("set_stage", resource="crm", title="Chuyển chặng", risk="low", auto=True)
 async def set_stage(ctx: Ctx, inp: SetStage) -> dict[str, Any]:
     """Chặng là dữ liệu công ty (0153), giai đoạn do code ép: giai đoạn "Giao dịch" chỉ đến từ việc tạo giao dịch thật (module Giao dịch) — không
-    đánh dấu tay; sang "Mất" cần lý do. Chọn lại đúng chặng đang có ⇒ không ghi gì."""
-    from barista.modules.crm.stages import resolve  # nạp muộn: giữ thứ tự thao tác trong sổ đăng ký
+    đánh dấu tay; sang "Mất" cần lý do (chọn trong danh mục — ADR 0246). Chọn lại đúng chặng đang có ⇒ không ghi gì. Lý do của lần mất gần nhất ở lại
+    trên lead khi lead quay lại theo; mỗi lần mất có trong lịch sử chặng."""
+    from barista.modules.crm import lost_reasons  # nạp muộn: giữ thứ tự thao tác trong sổ đăng ký
+    from barista.modules.crm.stages import resolve
 
     phase, pipeline = await resolve(ctx, inp.stage)
-    if phase == "lost" and not inp.lost_reason:
-        raise Invalid("Cần lý do mất khách")
+    note = inp.lost_reason.strip()
+    key, label = await lost_reasons.pick(ctx, inp.lost_reason_key, note) if phase == "lost" else (None, "")
     before = await ctx.one("SELECT stage, pipeline_stage FROM crm.leads WHERE id = %s AND stage <> 'deal' FOR UPDATE", (inp.lead_id,))
     if before is None:
         raise NotFound("Không thấy lead (hoặc lead đã thành giao dịch)")
     if before["stage"] == phase and before["pipeline_stage"] == pipeline and phase != "lost":
         return {"lead_id": inp.lead_id, "stage": phase, "pipeline_stage": pipeline, "unchanged": True}
-    await ctx.exec("UPDATE crm.leads SET stage = %s, pipeline_stage = %s, lost_reason = %s, updated_at = now() WHERE id = %s",
-                   (phase, pipeline, inp.lost_reason if phase == "lost" else "", inp.lead_id))
+    if phase == "lost":
+        await ctx.exec("UPDATE crm.leads SET stage = %s, pipeline_stage = %s, lost_reason = %s, lost_reason_key = %s, updated_at = now() WHERE id = %s",
+                       (phase, pipeline, note, key, inp.lead_id))
+    else:   # rời Mất: lý do lần mất gần nhất ở lại (ADR 0246 — không mất khi lead quay lại theo)
+        await ctx.exec("UPDATE crm.leads SET stage = %s, pipeline_stage = %s, updated_at = now() WHERE id = %s", (phase, pipeline, inp.lead_id))
+    lost = {"lost_reason_key": key, "lost_reason_label": label} if phase == "lost" else {}
     if before["stage"] != phase:
-        await _stage_event(ctx, inp.lead_id, "stage", before["stage"], phase, inp.lost_reason, data={"pipeline": pipeline})
-    elif before["pipeline_stage"] != pipeline:
-        await _stage_event(ctx, inp.lead_id, "pipeline", before["pipeline_stage"], pipeline)
-    return {"lead_id": inp.lead_id, "stage": phase, "pipeline_stage": pipeline}
+        await _stage_event(ctx, inp.lead_id, "stage", before["stage"], phase, note or label, data={"pipeline": pipeline, **lost})
+    elif before["pipeline_stage"] != pipeline or lost:   # Mất → Mất (đổi chặng mất / ghi lại lý do): vẫn để lại dấu lý do trong lịch sử
+        await _stage_event(ctx, inp.lead_id, "pipeline", before["pipeline_stage"], pipeline, note or label, data=lost)
+    return {"lead_id": inp.lead_id, "stage": phase, "pipeline_stage": pipeline, **({"lost_reason_key": key} if phase == "lost" else {})}
 
 
 class Assign(Input):
@@ -459,3 +486,21 @@ async def lead_status(ctx: Ctx, inp: LeadRef) -> dict[str, Any]:
     if row is None:
         raise NotFound("Không thấy lead (không có hoặc ngoài phạm vi xem)")
     return row
+
+
+# ── Nguồn ngày cho luật tự động theo thời gian (ADR 0246) ──
+# Chỗ cắm sẵn: khi crm có phép tính "lead nằm yên ở một chặng bao lâu" (ADR 0246 phần lead đứng yên), khai thêm MỘT nguồn ``stage_idle`` cùng
+# hình (ngày = lần đổi chặng gần nhất trong crm.stage_events) — động cơ luật không đổi gì.
+@m.date_source("follow_up_due", "Lead — hẹn chăm sóc lại", date_label="hẹn chăm sóc lại", resource="crm",
+               fields={"source": "Nguồn", "offering_code": "[[offering]] quan tâm", "stage": "Giai đoạn", "pipeline": "Chặng", "team": "Đội",
+                       "owner": "Người phụ trách"}, ids=("lead_id",), open=("crm.journey", {"lead_id": "lead_id"}),
+               why="Động cơ luật tự động (flow, ADR 0246) xét luật theo ngày bằng quyền hệ thống: lead CÒN MỞ (giai đoạn lead / tiềm năng) có ngày hẹn "
+                   "chăm sóc lại trong khoảng được hỏi — trả mã lead, ngày hẹn, người phụ trách (mã + tên), nguồn, sản phẩm quan tâm, giai đoạn / chặng, tên đội; "
+                   "KHÔNG tên / SĐT khách. Hành động của luật chạy bằng quyền người đặt luật (nạp lại mỗi lần), không bằng quyền hệ thống")
+async def follow_up_due(ctx: Ctx, inp: DateIn) -> list[dict[str, Any]]:
+    return await ctx.all(
+        """SELECT l.id::text AS ref, l.id AS lead_id, l.next_follow_up AS "on", l.owner_id, l.source, l.offering_code, l.stage,
+                  l.pipeline_stage AS pipeline, t.name AS team, u.name AS owner
+           FROM crm.leads l LEFT JOIN core.teams t ON t.id = l.team_id LEFT JOIN core.users u ON u.id = l.owner_id
+           WHERE l.stage IN ('lead', 'prospect') AND l.next_follow_up BETWEEN %s AND %s ORDER BY l.next_follow_up, l.id LIMIT 2000""",
+        (inp.since, inp.until))

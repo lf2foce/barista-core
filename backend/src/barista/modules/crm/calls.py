@@ -79,8 +79,11 @@ async def record_call(ctx: Ctx, inp: RecordCallIn) -> dict[str, Any]:
     if not inp.missed_in:
         await ctx.exec("UPDATE crm.leads SET last_activity_at = greatest(last_activity_at, %s), updated_at = now() WHERE id = %s", (inp.at, inp.lead_id))
     if inp.callback or inp.missed_in:   # cùng luật với crm.log_activity: không nghe máy / máy bận mà chưa hẹn ⇒ hẹn gọi lại hôm nay — sale không phải gõ để khỏi quên khách
-        await ctx.exec("UPDATE crm.leads SET next_follow_up = core.today(), updated_at = now() WHERE id = %s AND stage IN ('lead', 'prospect')"
-                       " AND (next_follow_up IS NULL OR next_follow_up < core.today())", (inp.lead_id,))
+        moved = await ctx.one("UPDATE crm.leads SET next_follow_up = core.today(), updated_at = now() WHERE id = %s AND stage IN ('lead', 'prospect')"
+                              " AND (next_follow_up IS NULL OR next_follow_up < core.today()) RETURNING old.next_follow_up AS was, new.next_follow_up AS now",
+                              (inp.lead_id,))
+        if moved:   # lịch sử thay đổi (ADR 0246)
+            await ctx.track("crm.lead", inp.lead_id, "next_follow_up", moved["was"], moved["now"])
     return {"activity_id": aid}
 
 

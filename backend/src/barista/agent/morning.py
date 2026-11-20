@@ -93,6 +93,7 @@ async def file_cards(p: Principal, prefix: str, cards: list[dict[str, Any]], rea
 
 
 OUTSIDE = "mcp"          # tiền tố khoá của thẻ do ứng dụng AI ngoài soạn (0228)
+AUTO = "auto"            # tiền tố khoá của thẻ do LUẬT TỰ ĐỘNG soạn (ADR 0246 — hành động "đề xuất")
 OUTSIDE_PER_DAY = 20     # trần thẻ một người nhận từ ứng dụng AI ngoài mỗi ngày — app bị dẫn dắt sai không làm ngập bàn việc
 
 
@@ -180,7 +181,8 @@ async def cards(p: Principal) -> list[dict[str, Any]]:
     async with db.tenant_tx(p, read_only=True) as conn:
         day = today()   # trong giao dịch: múi giờ công ty (0169)
         # chỉ đếm thẻ của chính buổi sáng: ứng dụng ngoài soạn thẻ trước 6 giờ không được làm mất lượt soạn buổi sáng (0228)
-        cur = await conn.execute("SELECT count(*) AS n FROM core.proposals WHERE day = %s AND key NOT LIKE %s", (day, OUTSIDE + ":%"))
+        cur = await conn.execute("SELECT count(*) AS n FROM core.proposals WHERE day = %s AND key NOT LIKE %s AND key NOT LIKE %s",
+                                 (day, OUTSIDE + ":%", AUTO + ":%"))   # thẻ luật tự động (0246) cũng không thay lượt soạn buổi sáng
         row = await cur.fetchone()
     if not row or not row["n"]:
         await prepare(p, day)

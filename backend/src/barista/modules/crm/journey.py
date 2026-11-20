@@ -6,7 +6,7 @@ from uuid import UUID
 
 from psycopg import errors as pg
 
-from barista.api import Conflict, Ctx, Input, NotFound, SubjectRef, extra_fields, field, phone_display, today, ui, zone
+from barista.api import Conflict, Ctx, Input, NotFound, SubjectRef, extra_fields, field, history, phone_display, today, ui, zone
 from barista.api.lead_labels import SOURCES
 from barista.modules.crm import ACTIVITY, APPT_KIND, APPT_STATUS, OUTCOMES, STAGES, appointment_times, interest_text, m, reveal
 from barista.modules.crm.identity import _party_of_lead
@@ -53,7 +53,8 @@ def _journey_steps(lead: dict[str, Any], evs: list[dict[str, Any]], acts: list[d
             st["state"], cur_set = "current", True
         else:
             st["state"] = "todo"
-    stop = lead["lost_reason"] or "Đã mất" if lead["stage"] == "lost" else next((p["stop"] for p in parts if p.get("stop")), None)
+    stop = _lost_text(lead.get("lost_reason_label"), lead["lost_reason"]) or "Đã mất" if lead["stage"] == "lost" else \
+        next((p["stop"] for p in parts if p.get("stop")), None)
     if stop:
         for st in steps:
             if st["state"] == "current":
@@ -61,8 +62,16 @@ def _journey_steps(lead: dict[str, Any], evs: list[dict[str, Any]], acts: list[d
     return steps
 
 
-def _blocker(lead: dict[str, Any], acts: list[dict[str, Any]], parts: list[dict[str, Any]]) -> tuple[str, str] | None:
-    """Cái đang KẸT, ai cần làm, từ khi nào — luật đầu tiên khớp thắng; chưa kẹt ở chăm sóc thì hỏi gói ngành."""
+def _lost_text(label: str | None, note: str | None) -> str:
+    """Lý do mất cho người đọc: tên lý do trong danh mục + ghi chú (ADR 0246); lead mất trước khi có danh mục chỉ có chữ người đã gõ."""
+    label, note = (label or "").strip(), (note or "").strip()
+    return " — ".join(x for x in (label, note if note.lower() != label.lower() else "") if x)
+
+
+def _blocker(lead: dict[str, Any], acts: list[dict[str, Any]], parts: list[dict[str, Any]],
+             idle: dict[str, Any] | None = None) -> tuple[str, str] | None:
+    """Cái đang KẸT, ai cần làm, từ khi nào — luật đầu tiên khớp thắng; chưa kẹt ở chăm sóc thì hỏi gói ngành. ``idle``: dòng nằm im của lead
+    (``idle.idle_rows`` — ADR 0246), quá ngưỡng của chặng thì là chỗ kẹt."""
     t = today()
     if lead["stage"] == "lost":
         return None
@@ -71,6 +80,9 @@ def _blocker(lead: dict[str, Any], acts: list[dict[str, Any]], parts: list[dict[
             return "Quá hạn gọi lại", f"Hẹn gọi từ {lead['next_follow_up']:%d/%m} ({(t - lead['next_follow_up']).days} ngày) — {lead['owner']} cần gọi."
         if not acts and (t - _day(lead["created_at"])).days >= 1:
             return "Chưa ai gọi", f"Lead về {_day(lead['created_at']):%d/%m} mà chưa có lần chăm sóc nào — {lead['owner']} cần gọi."
+        if idle and idle["over"]:
+            return (f"Nằm im {idle['days']} ngày", f"Ở chặng “{idle['stage_label']}” từ {_day(idle['since']):%d/%m} không chuyển chặng, không chăm sóc "
+                                                    f"(ngưỡng {idle['limit_days']} ngày) — {lead['owner']} cần chăm sóc hoặc chuyển chặng.")
         if acts and (t - _day(acts[-1]["at"])).days >= 14:
             return "Khách đang nguội", f"Lần chăm sóc cuối {_day(acts[-1]['at']):%d/%m} ({(t - _day(acts[-1]['at'])).days} ngày trước)."
     return next((tuple(p["blocker"]) for p in parts if p.get("blocker")), None)
@@ -123,8 +135,13 @@ async def journey(ctx: Ctx, inp: JourneyIn) -> dict[str, Any]:
     evs = await ctx.all("SELECT e.*, u.name AS by_name FROM crm.stage_events e LEFT JOIN core.users u ON u.id = e.by_user WHERE e.lead_id = %s ORDER BY e.at, e.id", (inp.lead_id,))
     acts = await ctx.all("SELECT a.*, u.name AS by_name FROM crm.activities a LEFT JOIN core.users u ON u.id = a.by_user WHERE a.lead_id = %s ORDER BY a.at", (inp.lead_id,))
     parts: list[dict[str, Any]] = await ctx.plugs("crm.lead_story", lead_id=inp.lead_id)   # bằng quyền người xem: phần nào không được xem thì tự bỏ
+    from barista.modules.crm import idle as idle_mod  # nạp muộn: giữ thứ tự thao tác trong sổ đăng ký
+    from barista.modules.crm.lost_reasons import label_of
+
+    lead["lost_reason_label"] = await label_of(ctx, lead.get("lost_reason_key"))
+    idle = next(iter(await idle_mod.idle_rows(ctx, lead_ids=[lead["id"]], over_only=False)), None)
     steps = _journey_steps(lead, evs, acts, parts)
-    blocker = _blocker(lead, acts, parts)
+    blocker = _blocker(lead, acts, parts, idle)
     temp = temperature(lead, acts)
     t = today()
 
@@ -134,12 +151,15 @@ async def journey(ctx: Ctx, inp: JourneyIn) -> dict[str, Any]:
         if e["kind"] == "created":
             rows.append({"at": e["at"], "title": "Lead về", "subtitle": SOURCES.get((e["data"] or {}).get("source", ""), ""), "tone": "accent"})
         elif e["kind"] == "stage":
+            why = _lost_text((e["data"] or {}).get("lost_reason_label"), e["reason"]) if e["to_stage"] == "lost" else e["reason"]
             rows.append({"at": e["at"], "title": f"Chuyển chặng: {STAGES[e['from_stage']]} → {STAGES[e['to_stage']]}",
-                         "subtitle": " · ".join(x for x in (e["reason"], e["by_name"] or "") if x), "tone": "muted" if e["to_stage"] == "lost" else "accent"})
-        elif e["kind"] == "pipeline":   # chặng của công ty trong cùng giai đoạn (0153)
-            rows.append({"at": e["at"], "title": f"Chuyển chặng: {names.get(e['from_stage'] or '', e['from_stage'] or '—')} → "
-                                                 f"{names.get(e['to_stage'] or '', e['to_stage'] or '—')}",
-                         "subtitle": e["by_name"] or "", "tone": "accent"})
+                         "subtitle": " · ".join(x for x in (why, e["by_name"] or "") if x), "tone": "muted" if e["to_stage"] == "lost" else "accent"})
+        elif e["kind"] == "pipeline":   # chặng của công ty trong cùng giai đoạn (0153); Mất → Mất có lý do = ghi lại lý do mất (ADR 0246)
+            lost = "lost_reason_label" in (e["data"] or {})
+            why = _lost_text(e["data"]["lost_reason_label"], e["reason"]) if lost else ""
+            title = "Ghi lại lý do mất" if lost and e["from_stage"] == e["to_stage"] else \
+                f"Chuyển chặng: {names.get(e['from_stage'] or '', e['from_stage'] or '—')} → {names.get(e['to_stage'] or '', e['to_stage'] or '—')}"
+            rows.append({"at": e["at"], "title": title, "subtitle": " · ".join(x for x in (why, e["by_name"] or "") if x), "tone": "muted" if lost else "accent"})
         elif e["kind"] == "assigned":
             rows.append({"at": e["at"], "title": "Đổi người phụ trách", "subtitle": " · ".join(x for x in (e["reason"], e["by_name"] or "") if x),
                          "tone": "muted"})
@@ -161,7 +181,10 @@ async def journey(ctx: Ctx, inp: JourneyIn) -> dict[str, Any]:
         ui.kpi("Độ nóng", TEMP[temp], "text", tone=TEMP_TONE[temp] if temp in ("hot", "warm") else None),
         ui.kpi("Tuổi lead", f"{(t - _day(lead['created_at'])).days} ngày", "text"),
         ui.kpi("Hẹn gọi", lead["next_follow_up"].strftime("%d/%m") if lead["next_follow_up"] else "Chưa hẹn", "text",
-               tone="bad" if lead["next_follow_up"] and lead["next_follow_up"] < t else None)])]
+               tone="bad" if lead["next_follow_up"] and lead["next_follow_up"] < t else None),
+        # ADR 0246: chỉ khi chặng hiện tại có ngưỡng nằm im
+        *([ui.kpi("Nằm im", f"{idle['days']} ngày", "text", tone="bad" if idle["over"] else None, hint=f"Ngưỡng của chặng: {idle['limit_days']} ngày")]
+          if idle else [])])]
     if hidden:
         mine = lead["owner_id"] == ctx.p.user_id
         blocks.append(ui.b_callout("accent", "Chưa nhận lead — số khách đang che",
@@ -195,6 +218,8 @@ async def journey(ctx: Ctx, inp: JourneyIn) -> dict[str, Any]:
     blocks += [b for p in parts for b in p.get("blocks", ())]   # khối riêng của gói cắm vào (vd cuộc gọi tổng đài — 0149)
     if talk := await ctx.call_as_optional("talk.block", ctx.p, subject_kind="crm.lead", subject_id=lead["id"]):   # gói Trao đổi (0046)
         blocks.append(talk)
+    if changes := await history.block(ctx, "crm.lead", lead["id"]):   # lịch sử thay đổi theo trường (ADR 0246)
+        blocks.append(changes)
     actions = []
     if lead["stage"] in ("lead", "prospect"):
         actions.append(ui.act("crm.log_activity", "Ghi chăm sóc", {"lead_id": str(lead["id"])}, "primary"))

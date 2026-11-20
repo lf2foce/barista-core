@@ -24,6 +24,7 @@ import re
 import typing
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Literal, LiteralString
 from uuid import UUID
 
@@ -162,6 +163,10 @@ class Op:
     # QUYỀN THEO KHỐI (lớp 3, 1.59): nhóm thông tin nhạy cảm (khoá ``InfoGroup`` / tài nguyên) mà đầu ra của truy vấn này CÓ THỂ chứa trong các phần
     # khai ``needs=`` — màn "Ai thấy thông tin gì" liệt kê màn theo khai này; test quét đỏ khi đầu ra có ``needs`` mà truy vấn không khai.
     info: tuple[str, ...] = ()
+    # AN TOÀN CHO LUẬT TỰ ĐỘNG (ADR 0246, 1.69): lệnh module CHỌN CÓ CHỦ ĐÍCH cho hành động "chạy lệnh" của luật "Nếu… thì…" — chạy không người
+    # bấm, bằng quyền người đặt luật (nạp lại mỗi lần), khoá chống lặp theo (luật, sự kiện / bản ghi + ngày). Chỉ lệnh ghi rủi ro thấp khai
+    # ``risk="low"`` tường minh, không nội bộ, trợ lý không bị cấm — chặn lúc khai.
+    auto: bool = False
 
 
 @dataclass(frozen=True)
@@ -281,9 +286,39 @@ class Trigger:
     module: str
     fields: dict[str, str]
     open: tuple[str, dict[str, str]] | None
+    # (ADR 0246) khoá MÃ trong sự kiện dùng làm đầu vào cho hành động "chạy lệnh" / "đề xuất" (khớp theo tên ô của lệnh, vd ``lead_id``) — mặc
+    # định = các trường ``open`` trỏ tới; ``owner``: khoá mang NGƯỜI PHỤ TRÁCH bản ghi (hành động gửi được cho "người phụ trách")
+    ids: tuple[str, ...] = ()
+    owner: str = ""
 
 
 TRIGGERS: dict[str, Trigger] = {}
+
+
+class DateIn(BaseModel):
+    """Đầu vào của NGUỒN NGÀY (``Module.date_source``, ADR 0246): bản ghi có ngày nằm trong [since, until] (cả hai đầu)."""
+    model_config = ConfigDict(extra="forbid")
+    since: date
+    until: date
+
+
+@dataclass(frozen=True)
+class DateSource:
+    """NGUỒN NGÀY cho luật tự động theo thời gian (ADR 0246) — module tự khai: truy vấn NỘI BỘ của chính module (``callers=("flow",)`` + ``why=``)
+    nhận ``DateIn`` và trả các bản ghi còn mở có ngày trong khoảng: ``{ref, on, owner_id, <fields…>, <ids…>}`` — ``ref`` mã bản ghi (chuỗi), ``on``
+    ngày của bản ghi, ``owner_id`` người phụ trách (hoặc None). ``fields``: trường AN TOÀN cho điều kiện / lời báo như ``Trigger`` (không tên khách);
+    ``ids``: khoá mã làm đầu vào cho lệnh; ``date_label``: tên ngày ("hạn việc", "hẹn chăm sóc lại") để kể luật thành câu."""
+    key: str
+    label: str
+    module: str
+    date_label: str
+    fields: dict[str, str]
+    ids: tuple[str, ...]
+    open: tuple[str, dict[str, str]] | None
+
+
+DATE_SOURCES: dict[str, DateSource] = {}
+DATE_RESERVED = frozenset({"ref", "on", "owner_id", "team_id"})
 
 
 @dataclass(frozen=True)
@@ -319,6 +354,24 @@ SUBSCRIBERS: dict[str, Subscriber] = {}
 #   CHECKERS["<module>.<bộ kiểm>"] = (nhãn, loại đối tượng, gợi ý tham số) — thao tác nội bộ trả {status, value?, at?}
 SUBJECTS: dict[str, tuple[str, str]] = {}
 CHECKERS: dict[str, tuple[str, str, str]] = {}
+# TRƯỜNG CÓ LỊCH SỬ THAY ĐỔI (ADR 0246, api 1.69): (loại đối tượng, khoá trường) ⇒ khai của module sở hữu đối tượng (``Module.tracks``); lệnh đổi trường
+# gọi ``ctx.track`` — lõi ghi ``core.field_changes`` (kernel/history.py), không biết module nào.
+HISTORY_FORMATS = ("text", "person", "date", "money", "number", "choice")
+
+
+@dataclass(frozen=True)
+class Tracked:
+    kind: str
+    field: str
+    label: str
+    module: str
+    fmt: str = "text"
+    choices: tuple[tuple[str, str], ...] = ()
+    needs: tuple[str, ...] = ()     # nhóm thông tin / tài nguyên người xem phải có để thấy GIÁ TRỊ (0239) — thiếu ⇒ chỉ thấy "đã đổi"
+    empty: str = "chưa có"          # chữ cho giá trị trống (vd "Hàng chờ" cho người phụ trách)
+
+
+TRACKED: dict[tuple[str, str], Tracked] = {}
 # Loại CHỨNG TỪ để trích trường có nguồn (0070) — gói khai bằng ``Module.doc_type``; ``kb.extract`` đọc khuôn ở đây, không biết gói nào.
 DOC_TYPES: dict[str, DocType] = {}
 # Vòng quét định kỳ (sweeps.py): lệnh nội bộ khai ``sweep=`` = câu SQL trả cột ``tenant_id`` của các công ty đang có việc tới hạn cho lệnh đó.
@@ -750,7 +803,7 @@ class Module:
                   import_rows: Callable[..., Awaitable[list[dict[str, Any]]]] | None = None,
                   pin: Pin | None = None, consistent: bool = False, import_key: ImportKey | None = None,
                   import_table: ImportTable | None = None, extra: str = "",
-                  info: tuple[str, ...] = ()) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+                  info: tuple[str, ...] = (), auto: bool = False) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
         full = f"{self.key}.{name}"
         if extra and not (kind == "command" and extra in extra_fields.SUBJECTS and extra_fields.SUBJECTS[extra].module == self.key):
             raise ValueError(f"{full}: extra={extra!r} chỉ cho lệnh của module đã khai đối tượng đó (Module.extensible)")
@@ -790,6 +843,9 @@ class Module:
         if promotable and not risk:
             raise ValueError(f"{full}: promotable (0143) phải khai risk=\"low\" tường minh — lệnh nới được cho trợ lý tự làm không được dựa vào suy diễn "
                              f"(agent_policy.risk_of đoán \"low\" cho mọi lệnh không có ô tiền ngoài module quản trị / lõi)")
+        if auto and not (kind == "command" and not internal and public is None and agent != "deny" and risk == "low"):
+            raise ValueError(f"{full}: auto=True (lệnh luật tự động được chạy — ADR 0246) chỉ cho lệnh ghi không nội bộ, không link công khai, trợ lý không bị "
+                             f"cấm, khai risk=\"low\" tường minh")
         if promotable and risk != "low":
             raise ValueError(f"{full}: chỉ lệnh rủi ro low mới nới được (0144)")
 
@@ -802,7 +858,7 @@ class Module:
             OPS[full] = Op(full, kind, self.key, resource, action, fn, _input_model(fn), title,
                            description or (fn.__doc__ or "").strip(), internal, importable, min_scope, agent, shows, needs, category, public,
                            basis, callers, why, family, description, aside, sensitive, apps, prepare, promotable, target, undone_by, risk,
-                           import_rows, pin, consistent, import_key, import_table, extra, info)
+                           import_rows, pin, consistent, import_key, import_table, extra, info, auto)
             if sweep:
                 SWEEPS[full] = sweep
             return fn
@@ -817,8 +873,11 @@ class Module:
                 undone_by: tuple[str, ...] = (), risk: str = "", min_scope: str | None = None,
                 import_rows: Callable[..., Awaitable[list[dict[str, Any]]]] | None = None, pin: Pin | None = None,
                 prepare: Callable[..., Awaitable[Any]] | None = None, consistent: bool = False, import_key: ImportKey | None = None,
-                import_table: ImportTable | None = None, extra: str = ""):
-        """``import_table``: nhập CẢ BẢNG làm một lần gọi (1.48) — xem ``ImportTable``.
+                import_table: ImportTable | None = None, extra: str = "", auto: bool = False):
+        """``auto`` (ADR 0246, 1.69): luật tự động hoá của công ty được CHẠY lệnh này (hành động "chạy lệnh") — không người bấm, bằng quyền người
+        đặt luật nạp lại mỗi lần, khoá chống lặp theo (luật, sự kiện / bản ghi + ngày). Chọn có chủ đích: chỉ việc ghi rủi ro thấp, đảo được
+        (``risk="low"`` tường minh); lệnh tiền / quyền / duyệt không bao giờ.
+        ``import_table``: nhập CẢ BẢNG làm một lần gọi (1.48) — xem ``ImportTable``.
         ``import_key``: khoá tự nhiên khi nhập Excel (0226, 1.46) — màn nhập báo "cập nhật / thêm mới / trùng" thay vì chạy mù; xem ``ImportKey``.
         ``consistent``: chạy cả lệnh trong MỘT ảnh dữ liệu (REPEATABLE READ — 1.35) — xem ``Op.consistent``.
         ``agent``: trần khi trợ lý làm thay. Mặc định ``propose`` — lệnh ghi do agent chỉ thành đề xuất, người bấm mới chạy.
@@ -845,7 +904,8 @@ class Module:
         return self._register("command", name, resource, action, title, description, internal, importable, agent=agent,
                               shows=shows, needs=needs, public=public, category=category, sweep=sweep, basis=basis, callers=callers, why=why,
                               family=family, aside=aside, sensitive=sensitive, apps=apps, promotable=promotable, target=target, undone_by=undone_by, risk=risk,
-                              import_rows=import_rows, pin=pin, min_scope=min_scope, prepare=prepare, consistent=consistent, import_key=import_key, import_table=import_table, extra=extra)
+                              import_rows=import_rows, pin=pin, min_scope=min_scope, prepare=prepare, consistent=consistent, import_key=import_key, import_table=import_table, extra=extra,
+                              auto=auto)
 
     def query(self, name: str, *, resource: str | None, title: str, action: str = "read", description: str = "",
               internal: bool = False, min_scope: str | None = None, agent: str = "allow", needs: tuple[str, ...] = (),
@@ -864,6 +924,22 @@ class Module:
         trả ``{title, owner_id, team_id, state, open}``. Module phát ``subject.created`` / ``subject.changed`` khi dữ kiện đổi."""
         SUBJECTS[kind] = (label, f"{self.key}.subject_{kind.split('.')[-1]}")
         return self.query(f"subject_{kind.split('.')[-1]}", resource=None, title=f"Đối tượng quy trình: {label}", internal=True, family="subject")
+
+    def tracks(self, kind: str, field: str, label: str, *, fmt: str = "text", choices: dict[str, str] | None = None,
+               needs: str | tuple[str, ...] | list[str] | None = None, empty: str = "chưa có") -> str:
+        """Khai một TRƯỜNG CÓ LỊCH SỬ THAY ĐỔI của đối tượng ``kind`` (ADR 0246, api 1.69) — chỉ đối tượng của chính module (``<module>.<loại>``, đã khai
+        ``m.subject``). Lệnh đổi trường gọi ``await ctx.track(kind, id, field, cũ, mới)`` trong CÙNG giao dịch; lõi ghi ai / lúc nào / qua lệnh nào / người
+        hay trợ lý hay luật tự động, ai thấy đối tượng thì thấy lịch sử. ``fmt``: cách hiện giá trị (text · person = mã người · date · money = đồng ·
+        number · choice + ``choices`` mã ⇒ nhãn). ``needs``: nhóm thông tin nhạy cảm (0239) — người xem thiếu quyền chỉ thấy "đã đổi", không thấy giá trị."""
+        if kind.split(".")[0] != self.key:
+            raise ValueError(f"module {self.key}: chỉ khai lịch sử cho đối tượng của chính mình ({self.key}.<loại>), không cho {kind}")
+        if not KEY.fullmatch(field) or fmt not in HISTORY_FORMATS or bool(choices) != (fmt == "choice"):
+            raise ValueError(f"lịch sử {kind}.{field}: khoá chữ thường_gạch_dưới, kiểu một trong {HISTORY_FORMATS}, ``choices`` đi cùng kiểu choice")
+        if (kind, field) in TRACKED:
+            raise ValueError(f"lịch sử {kind}.{field} khai hai lần")
+        TRACKED[(kind, field)] = Tracked(kind, field, label, self.key, fmt, tuple((choices or {}).items()),
+                                         (needs,) if isinstance(needs, str) else tuple(needs or ()), empty)
+        return field
 
     def checker(self, name: str, label: str, subject: str, args: str = ""):
         """Khai một BỘ KIỂM mục hồ sơ bằng dữ kiện thật (đợt đã thu, hợp đồng đã ký…): thao tác nội bộ nhận ``{subject_id, args}``,
@@ -1027,13 +1103,36 @@ class Module:
             return self.query("current_titles", resource=resource, title="Chức danh hiện tại", internal=True, agent="deny", family="titles")(fn)
         return deco
 
-    def trigger(self, event_type: str, label: str, fields: dict[str, str], *, open: tuple[str, dict[str, str]] | None = None) -> None:
-        """Khai một sự kiện của CHÍNH module này làm CÒ tự động hoá (0090) — chỉ các ``fields`` khai ở đây mới dùng được trong điều kiện / lời báo."""
+    def trigger(self, event_type: str, label: str, fields: dict[str, str], *, open: tuple[str, dict[str, str]] | None = None,
+                ids: tuple[str, ...] | None = None, owner: str = "") -> None:
+        """Khai một sự kiện của CHÍNH module này làm CÒ tự động hoá (0090) — chỉ các ``fields`` khai ở đây mới dùng được trong điều kiện / lời báo.
+        ``ids`` (ADR 0246, 1.69): khoá MÃ trong sự kiện được làm đầu vào cho lệnh của luật (mặc định: các khoá ``open`` trỏ tới); ``owner``: khoá mang
+        người phụ trách bản ghi (luật gửi được cho "người phụ trách")."""
         if not event_type.startswith(self.key + "."):
             raise ValueError(f"module {self.key} chỉ khai cò cho sự kiện của chính nó: {event_type}")
         if event_type in TRIGGERS:
             raise ValueError(f"cò {event_type} khai hai lần")
-        TRIGGERS[event_type] = Trigger(event_type, label, self.key, dict(fields), open)
+        keys = tuple(ids) if ids is not None else tuple(k for k in dict.fromkeys((open or ("", {}))[1].values()) if k == "id" or k.endswith("_id"))
+        if bad := [k for k in (*keys, *([owner] if owner else [])) if not (k == "id" or k.endswith("_id"))]:
+            raise ValueError(f"cò {event_type}: ids / owner chỉ là khoá mã (*_id): {bad}")
+        TRIGGERS[event_type] = Trigger(event_type, label, self.key, dict(fields), open, keys, owner)
+
+    def date_source(self, name: str, label: str, *, date_label: str, fields: dict[str, str], resource: str, why: str,
+                    ids: tuple[str, ...] = (), open: tuple[str, dict[str, str]] | None = None):
+        """Khai một NGUỒN NGÀY cho luật tự động theo thời gian (ADR 0246, 1.69): "N ngày trước / sau <ngày> của bản ghi" ⇒ báo / tạo việc / đề xuất /
+        chạy lệnh. Hàm được khai là truy vấn NỘI BỘ ``<module>.<name>`` (đầu vào ``DateIn``) chỉ động cơ luật (module ``flow``) gọi bằng quyền hệ thống
+        — ``why=`` nêu bản ghi nào, trả trường nào (như mọi hợp đồng ``callers=``, 0083). Trả ``[{ref, on, owner_id, <fields>, <ids>}]`` của bản ghi CÒN
+        MỞ (xong / huỷ thì không trả) có ``on`` trong khoảng. ``fields``: trường an toàn (không tên khách — lời báo có thể tới người không xem được
+        bản ghi); ``ids``: khoá mã (``*_id``) làm đầu vào cho lệnh; ``open``: (truy vấn, {tham số: khoá}) để người nhận mở đúng thẻ."""
+        full = f"{self.key}.{name}"
+        if full in DATE_SOURCES:
+            raise ValueError(f"nguồn ngày {full} khai hai lần")
+        if bad := sorted(DATE_RESERVED & set(fields)):
+            raise ValueError(f"nguồn ngày {full}: trường {bad} là khoá dành riêng (ref / on / owner_id / team_id)")
+        if bad := [k for k in ids if not (k == "id" or k.endswith("_id"))]:
+            raise ValueError(f"nguồn ngày {full}: ids chỉ là khoá mã (*_id): {bad}")
+        DATE_SOURCES[full] = DateSource(full, label, self.key, date_label, dict(fields), tuple(ids), open)
+        return self.query(name, resource=resource, title=f"Nguồn ngày: {label}", internal=True, agent="deny", callers=("flow",), why=why)
 
     def webhook(self, name: str, event_type: str, *, ids: tuple[str, ...], resource: str, label: str) -> None:
         """Công bố sự kiện ``event_type`` của module này cho app từ xa dưới tên ``name`` (0140). Thân webhook chỉ mang các khoá ``ids`` (mã), loại,

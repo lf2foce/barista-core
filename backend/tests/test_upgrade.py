@@ -204,6 +204,12 @@ NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | {"word/001_documents.sql",   # 0227
                                               "base/099_audit_partial_indexes.sql",   # quét màn 18/11: hai chỉ mục từng phần trên core.audit_log — chỉ THÊM, lock_timeout 10s ⇒ không bảo trì
                                               "base/100_connectors.sql",   # khung kết nối chung (0244): schema MỚI connectors — chỉ THÊM, bản cũ không đọc ⇒ không bảo trì
                                               "base/101_connector_routes.sql",   # webhook chung (1.66): bảng MỚI connectors.routes — chỉ THÊM ⇒ không bảo trì
+                                              "base/102_field_changes.sql",   # ADR 0246: bảng MỚI core.field_changes (lịch sử thay đổi theo trường) — chỉ THÊM, bản cũ không đọc / ghi ⇒ không bảo trì
+                                              "crm/088_lost_reasons.sql",   # ADR 0246: bảng MỚI crm.lost_reasons + cột crm.leads.lost_reason_key trống được — bản cũ không đọc / ghi ⇒ không bảo trì
+                                              "crm/089_stage_idle_days.sql",   # ADR 0246: cột crm.stages.idle_days trống được — bản cũ không đọc / ghi ⇒ không bảo trì
+                                              # 103 (ADR 0246): luật tự động theo ngày + hành động chạy lệnh / đề xuất — cột mới có mặc định / trống được, nới CHECK
+                                              # (bản cũ chỉ ghi luật theo sự kiện, hành động báo / tạo việc — vẫn thoả ràng buộc mới) ⇒ không bảo trì
+                                              "base/103_automation_dates_actions.sql",
                                               # 084 (0209): bảng MỚI của điều khiển quảng cáo (chính sách, phát hiện, sổ thay đổi, chuyển đổi) — bản cũ không đọc ⇒ không bảo trì
                                               "marketing/084_ad_control.sql",
                                               # 085 (0209 §đội): cột người phụ trách / đội trống được trên phát hiện / sổ thay đổi / chuyển đổi + đặt lại RLS cùng tài

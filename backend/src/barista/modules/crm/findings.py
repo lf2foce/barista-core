@@ -118,6 +118,9 @@ async def findings_report(ctx: Ctx, inp: WindowIn) -> dict[str, Any]:
                      "Lead chưa có người nhận có thể đang được xử lý ở hệ đang dùng song song; con số cho biết hệ thống mới CHƯA thấy ai nhận."],
             drill=_drill("unowned_leads", inp)))
 
+    # 1b — lead nằm im quá ngưỡng của chặng (ADR 0246): một định nghĩa ở crm/idle.py
+    out.append(await _idle_finding(ctx, inp))
+
     # 2 — khách để lại thông tin nhiều lần
     dups = await _duplicates(ctx, inp)
     ad_leads = int(await ctx.val(f"SELECT count(*) FROM crm.leads l WHERE l.source = 'ads' AND {ARRIVED} BETWEEN %(f)s AND %(t)s", {"f": inp.date_from, "t": inp.date_to}))
@@ -193,6 +196,35 @@ async def findings_report(ctx: Ctx, inp: WindowIn) -> dict[str, Any]:
     return {"findings": out, "context": ctxk, "notes": []}
 
 
+async def _idle_finding(ctx: Ctx, inp: WindowIn) -> dict[str, Any]:
+    from barista.modules.crm import idle  # nạp muộn: giữ thứ tự thao tác trong sổ đăng ký
+
+    if not await ctx.val("SELECT 1 FROM crm.stages WHERE idle_days IS NOT NULL AND active AND phase IN ('lead', 'prospect') LIMIT 1"):
+        return fd.unmeasured("crm.idle_leads", "Lead nằm im quá lâu ở một chặng", "process",
+                             why_not="công ty chưa đặt ngưỡng nằm im cho chặng nào của lead",
+                             unlock="quản trị đặt số ngày “Nằm im tối đa” cho các chặng (Quản trị › Chặng của lead)")
+    rows = await idle.idle_rows(ctx, over_only=False, arrived=(inp.date_from, inp.date_to))
+    over = [r for r in rows if r["over"]]
+    by_stage: dict[str, int] = {}
+    for r in over:
+        by_stage[r["stage_label"]] = by_stage.get(r["stage_label"], 0) + 1
+    worst = max(by_stage.items(), key=lambda kv: kv[1]) if by_stage else None
+    groups = _drill("idle_groups", inp, "n")
+    return fd.finding(
+        "crm.idle_leads", "Lead nằm im quá lâu ở một chặng", "process",
+        summary=(f"{fd.n_text(len(over))} trong {fd.n_text(len(rows))} lead đang theo ở chặng có ngưỡng ({fd.pct_text(len(over), len(rows)) or '0%'}) đã nằm im quá ngưỡng"
+                 + (f"; nhiều nhất ở chặng “{worst[0]}” ({fd.n_text(worst[1])} lead)." if worst else ".")),
+        formula=("Nằm im = số ngày từ lần gần nhất lead có chuyển động (lead về, vào chặng hiện tại, hoặc được chăm sóc — ghi chú nội bộ không tính) tới hôm nay; "
+                 "quá ngưỡng khi lớn hơn số ngày công ty đặt cho chặng. Chỉ tính lead đang theo, về trong kỳ, ở chặng có đặt ngưỡng."),
+        impact=fd.impact_count(len(over), "lead nằm im quá ngưỡng", groups),
+        metrics=[fd.metric("Lead nằm im quá ngưỡng", len(over), drill=groups), fd.metric("Lead đang theo ở chặng có ngưỡng", len(rows)),
+                 *([fd.metric("Nằm im lâu nhất (ngày)", max(int(r["days"]) for r in over))] if over else [])],
+        confidence="medium",
+        caveats=["Chỉ thấy chuyển động được ghi trong hệ thống này — lead đang được chăm ở hệ dùng song song vẫn hiện là nằm im.",
+                 "Chặng chưa đặt ngưỡng không được tính."],
+        drill=_drill("idle_leads", inp))
+
+
 @m.query("finding_rows", resource="crm", title="Dòng gốc của phát hiện (khách / lead)", min_scope="all", agent="deny")
 async def finding_rows(ctx: Ctx, inp: RowsIn) -> dict[str, Any]:
     """Các dòng tạo nên con số của một phát hiện (lead chưa có người nhận, khách trùng, lead chưa gọi) — bằng quyền người xem."""
@@ -224,6 +256,25 @@ async def finding_rows(ctx: Ctx, inp: RowsIn) -> dict[str, Any]:
             ui.col("name", "Khách", width=200), ui.col("offering_code", "Sản phẩm quan tâm"), ui.col("source", "Nguồn", "badge", labels=dict(SOURCES)),
             ui.col("arrived", "Ngày về", "date"), ui.col("age_days", "Đã nằm (ngày)", "number")],
             title="Lead chưa có người nhận", empty="Không có lead nào chưa có người nhận", limit=500)
+    if inp.key in ("idle_groups", "idle_leads"):
+        from barista.modules.crm import idle  # nạp muộn: giữ thứ tự thao tác trong sổ đăng ký
+
+        got = [r for r in await idle.idle_rows(ctx, arrived=(inp.date_from, inp.date_to)) if r["over"]]
+        if inp.key == "idle_groups":
+            groups: dict[str, dict[str, Any]] = {}
+            for r in got:
+                g = groups.setdefault(r["stage_key"], {"id": r["stage_key"], "stage": r["stage_label"], "limit_days": r["limit_days"], "n": 0, "max_days": 0})
+                g["n"] += 1
+                g["max_days"] = max(g["max_days"], int(r["days"]))
+            return ui.table(sorted(groups.values(), key=lambda g: -g["n"]), [
+                ui.col("stage", "Chặng"), ui.col("limit_days", "Ngưỡng (ngày)", "number"), ui.col("n", "Lead nằm im quá ngưỡng", "number"),
+                ui.col("max_days", "Lâu nhất (ngày)", "number")], title="Lead nằm im quá ngưỡng (gộp theo chặng)", empty="Không có lead nào nằm im quá ngưỡng")
+        names = {r["id"]: r["name"] for r in await ctx.all("SELECT l.id, c.name FROM crm.leads l JOIN crm.customers c ON c.id = l.customer_id WHERE l.id = ANY(%s)",
+                                                         ([r["lead_id"] for r in got[:500]],))} if got else {}
+        return ui.table([{"id": str(r["lead_id"]), "name": names.get(r["lead_id"], ""), "stage": r["stage_label"], "days": r["days"], "limit_days": r["limit_days"]}
+                         for r in got[:500]], [
+            ui.col("name", "Khách", width=200), ui.col("stage", "Chặng"), ui.col("days", "Nằm im (ngày)", "number"), ui.col("limit_days", "Ngưỡng (ngày)", "number")],
+            title="Lead nằm im quá ngưỡng", empty="Không có lead nào nằm im quá ngưỡng", limit=500)
     if inp.key == "duplicate_leads":
         rows = await _duplicates(ctx, inp)
         return ui.table([{"id": str(d["customer_id"]), "name": d["name"], "leads": d["leads"], "extra": d["extra"], "campaigns": d["campaigns"],
