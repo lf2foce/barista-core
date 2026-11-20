@@ -135,7 +135,7 @@ def test_edu_demo_install_pins_the_pack_that_brings_its_seed_profile():
     stack = json.loads(ops.render((REPO / "deploy/stack.json").read_text(), inst, json_text=True))
     if "edu" not in inst["packs"]:   # file bản cài ở repo barista-ops còn ở trạng thái trước khi gói rời lõi — phát hành kế tiếp cần ghim trước
         pytest.skip("barista-ops/instances/edu.json chưa ghim gói edu: hồ sơ edu-demo nay đi cùng gói — thêm \"packs\": {\"edu\": …} trước lần phát hành tới")
-    assert set(inst["packs"]) == {"edu"} and inst["env"] == "demo" and inst["seed_profile"] == "edu-demo" not in seed.BUILTIN_PROFILES
+    assert "edu" in inst["packs"] and inst["env"] == "demo"   # gói khác (vd. gói đối tác) được ghim thêm cạnh gói edu and inst["seed_profile"] == "edu-demo" not in seed.BUILTIN_PROFILES
     assert inst["files_store"] == "local"
     if (prof := seed.pack_profile("edu-demo")) is not None:   # gói đang cài ở môi trường test: tên công ty khớp công ty hồ sơ dựng
         assert prof.PACK == "edu" and inst["demo_company"] == prof.NAME and "edu-demo" in seed.profiles()
