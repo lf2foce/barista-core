@@ -14,6 +14,9 @@ dependencies = ["barista"]   # lõi; cài bằng `uv pip install --no-deps -e` v
 # Hợp đồng với lõi: khoảng phiên bản BỀ MẶT `barista.api.__version__` (semver) gói chạy được. Dùng thứ mới của lõi ⇒ nâng số dưới.
 [tool.barista]
 requires-core = ">=@@API_MINOR@@,<2"
+# Quyền dùng phần NHẠY CẢM của barista.api (ADR 0247): ai, network, files, notify, public, client_companies — `pack.sh check` đọc mã, dùng mà
+# chưa khai ⇒ lỗi; người review soi đúng các chỗ này. Không cần quyền nào ⇒ để [].
+permissions = ["network"]   # khung kết nối (barista.api.connectors) nói chuyện với hệ ngoài
 
 [build-system]
 requires = ["uv_build>=0.9.9,<0.10.0"]

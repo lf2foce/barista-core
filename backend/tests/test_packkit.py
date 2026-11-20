@@ -7,6 +7,7 @@ import ast
 import importlib.util
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -101,3 +102,58 @@ def test_a_pack_that_opens_its_own_webhook_door_is_told_to_use_the_connector_fra
     r = packkit.Report()
     packkit.static_check(made, barista.api.__version__, r)
     assert any("Module.inbound" in f and "runbook 22" in f for f in r.fails), r.fails
+
+
+def _perm_report(made: Path, code: str, permissions: str | None = None) -> Any:
+    init = made / "src/barista_pack_kho_lanh/__init__.py"
+    init.write_text(init.read_text(encoding="utf-8") + "\n" + code + "\n", encoding="utf-8")
+    if permissions is not None:
+        py = made / "pyproject.toml"
+        py.write_text(py.read_text(encoding="utf-8").replace("permissions = []", f"permissions = {permissions}"), encoding="utf-8")
+    r = packkit.Report()
+    packkit.static_check(made, barista.api.__version__, r)
+    return r
+
+
+def test_the_templates_declare_exactly_the_permissions_their_code_uses(made: Path, made_connector: Path) -> None:
+    """Khuôn thường không cần quyền nào; khuôn kết nối khai ``network`` (dùng ``barista.api.connectors``) — ADR 0247."""
+    for pack, want in ((made, []), (made_connector, ["network"])):
+        meta = tomllib.loads((pack / "pyproject.toml").read_text(encoding="utf-8"))
+        assert meta["tool"]["barista"]["permissions"] == want
+        r = packkit.Report()
+        packkit.static_check(pack, barista.api.__version__, r)
+        assert not r.fails and not r.warns, (r.fails, r.warns)
+
+
+def test_a_sensitive_part_of_the_surface_used_without_declaring_it_fails(made: Path) -> None:
+    r = _perm_report(made, "from barista.api import ai\nimport barista.api as api\nX = api.notify\n\n@m.route('/x')\nasync def x(): ...")
+    joined = " | ".join(r.fails)
+    assert "'ai'" in joined and "'notify'" in joined and "'public'" in joined, r.fails
+
+
+def test_declared_permissions_pass_unknown_ones_fail_and_unused_ones_warn(made: Path) -> None:
+    r = _perm_report(made, "from barista.api import ai", '["ai", "files", "root"]')
+    assert any("'root'" in f for f in r.fails) and not any("'ai'" in f for f in r.fails), r.fails
+    assert any("'files'" in w for w in r.warns), r.warns
+
+
+@pytest.mark.parametrize("code", ["import os", "import httpx", "from psycopg import connect", "from urllib.request import urlopen", "import subprocess",
+                                  "eval('1')", "X = (1).__class__.__subclasses__", "import asyncio\nasyncio.create_subprocess_exec('ls')"])
+def test_runtime_code_cannot_reach_past_the_surface(made: Path, code: str) -> None:
+    """Mạng qua khung kết nối, tệp qua sổ tệp, DB qua executor: thư viện ngoài danh sách, mã động, lách nội bộ ⇒ lỗi, không quyền nào mở."""
+    assert _perm_report(made, code).fails
+
+
+def test_harmless_libraries_the_packs_need_are_allowed(made: Path) -> None:
+    code = ("from psycopg.types.json import Jsonb\nfrom psycopg import errors as pg\nfrom pydantic import BaseModel\nfrom urllib.parse import quote\n"
+            "import asyncio, time, decimal, struct\nasyncio.sleep(0)")
+    r = _perm_report(made, code)
+    assert not r.fails, r.fails
+
+
+def test_a_pack_using_a_name_marked_for_removal_is_told_what_to_use(made: Path) -> None:
+    init = made / "src/barista_pack_kho_lanh/__init__.py"
+    init.write_text(init.read_text(encoding="utf-8") + "\nfrom barista.api import fold\n", encoding="utf-8")
+    surface = {"deprecated": {"fold": {"since": "1.70.0", "since_day": "2026-11-20", "use": "ui.fold", "remove_after": "2027-02-18", "remove_in": "2.0.0"}}}
+    out = packkit.deprecated_names(made / "src/barista_pack_kho_lanh", surface)
+    assert len(out) == 1 and "ui.fold" in out[0] and "2.0.0" in out[0]

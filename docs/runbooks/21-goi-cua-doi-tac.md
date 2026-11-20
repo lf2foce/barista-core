@@ -12,6 +12,10 @@ Gói chạy CHUNG tiến trình với lõi và có cùng kết nối DB. Các lu
 bằng test và quét mã, không có hộp cát nào cô lập gói. Vì vậy mọi mã chạy trong lõi đều qua review trước khi lên bản cài: mã của lõi, gói chính thức
 và gói của đối tác. `pack.sh check` ĐẠT là điều kiện để bắt đầu review. Những luật máy đọc được đã đúng, nên người review chỉ còn đọc phần nghiệp vụ.
 
+Gói khai trước nó cần quyền gì (mục "Quyền của gói" dưới), `pack.sh check` đọc mã và so với phần khai. Đây là kiểm tĩnh: nó bắt chỗ dùng vô ý và chỉ cho
+người review chỗ cần soi, không ngăn được mã cố tình phá. Khi chợ gói mở cho bên ngoài, lớp cách ly (gói chạy tiến trình riêng) sẽ chặn theo đúng danh
+sách quyền này (ADR 0247).
+
 Không muốn chạy mã trong lõi (chỉ cần đọc / ghi dữ liệu Barista từ hệ thống của bạn)? Dùng **app ngoài**: hệ thống của bạn gọi API bằng token ứng dụng
 (ADR 0140). Quyền theo vai của app, quản trị công ty tự cài và gỡ app, không cần bước review mã. Đổi lại, app chỉ chạy được các lệnh mở cho app (`apps=True`) và không
 thêm bảng hay màn vào Barista được.
@@ -57,13 +61,45 @@ Lệnh không sửa gì ở máy bạn: nó dựng lõi sạch (`git archive`) t
 
 | Bước | Kiểm |
 |---|---|
-| 1. Đọc tĩnh | `pyproject.toml`: tên `barista-pack-*`, version `X.Y.Z`, đúng MỘT điểm vào `barista.packs`, `requires-core` chứa `barista.api` của lõi, có `-p tests.conftest`; `Pack("<khoá>", tên, mô tả, kind=…)` viết bằng chuỗi chữ; migration nằm trong `migrations/<khoá>/` và dòng đầu là `-- module: …`; có `tests/test_*.py` |
+| 1. Đọc tĩnh | `pyproject.toml`: tên `barista-pack-*`, version `X.Y.Z`, đúng MỘT điểm vào `barista.packs`, `requires-core` chứa `barista.api` của lõi, có `-p tests.conftest`; quyền khai khớp quyền mã dùng, mã chạy chỉ dùng thư viện cho phép (mục dưới); tên `barista.api` sắp bỏ (chú ý); `Pack("<khoá>", tên, mô tả, kind=…)` viết bằng chuỗi chữ; migration nằm trong `migrations/<khoá>/` và dòng đầu là `-- module: …`; có `tests/test_*.py` |
 | 2. Nạp | cài gói vào môi trường lõi sạch, nạp bằng loader của lõi, import mọi module con. Tên ngoài `barista.api`, hay `Pack` / `Module` khai sai, đều lỗi ở bước này |
 | 3. Gói | ruff, pyright, pytest của gói |
 | 4. Luật của lõi | các test cấu trúc của lõi (`backend/tests/pack_guards.txt`) chạy lại với gói đã cài: không SQL sang schema khác, gọi gói khác đúng cách, múi giờ, mã người, hợp đồng quyền hệ thống, chỉ import bề mặt công bố |
 
 Kết quả cuối là `ĐẠT` (thoát 0) hoặc `KHÔNG ĐẠT` (thoát 1, kèm từng lỗi). Gói khuôn ĐẠT trong khoảng 75 giây trên máy 8 GB. Ngoại lệ có lý do của một gói
 (vd một truy vấn mở đầu bằng động từ ghi) khai ở `<package>/core_guards.json`, mỗi dòng kèm lý do (README của repo gói chính thức, mục test cấu trúc).
+
+## Quyền của gói
+
+Khai trong `pyproject.toml`:
+
+```toml
+[tool.barista]
+requires-core = ">=1.69,<2"
+permissions = ["network"]   # [] nếu không cần quyền nào
+```
+
+| Quyền | Mở phần nào của `barista.api` | Vì sao phải khai |
+|---|---|---|
+| `ai` | `ai`, `docread` | tốn hạn mức AI của công ty, gửi dữ liệu cho nhà cung cấp model |
+| `network` | `connectors`, `inbound` | gửi dữ liệu ra hệ ngoài, giữ khoá của hệ ngoài (runbook 22) |
+| `files` | `files`, `convert` | lưu / đọc / đổi tệp ở sổ tệp của lõi |
+| `notify` | `notify` | gửi thông báo tới người dùng |
+| `public` | `links`, `web`, `Module.route` | mở dữ liệu ra ngoài: link công khai, cửa HTTP riêng |
+| `client_companies` | `tenancy` | chạy lệnh / truy vấn trong công ty khách của công ty dịch vụ |
+
+- Phần còn lại của `barista.api` (màn, lệnh, truy vấn, quy định, pháp nhân, sổ cái chỉ khai tài khoản…) không cần khai.
+- Họ thao tác hệ thống gói gọi (`m.consumes("ledger_read")`…) đã khai trong mã; `pack.sh check` in ra cho người review, không khai lại ở đây.
+- Mã dùng quyền chưa khai ⇒ lỗi. Khai mà không dùng ⇒ chú ý (bỏ đi cho người review khỏi soi thừa).
+- Mã chạy (`src/`) chỉ import `barista.api`, gói khác nó cần, thư viện chuẩn cho chữ / số / ngày / cấu trúc dữ liệu, `pydantic` và `Jsonb` / mã lỗi của
+  `psycopg` (danh sách đủ: `IMPORTS_OK` trong `scripts/packkit/packkit.py`). Không quyền nào mở `os`, `subprocess`, `socket`, `urllib.request`, `httpx`,
+  kết nối DB riêng, `eval` / `exec`: mạng đi qua khung kết nối, tệp qua sổ tệp, DB qua executor. Test của gói (`tests/`) không bị giới hạn.
+
+## Lõi đổi `barista.api` thế nào
+
+- Chỉ thêm ⇒ tăng số giữa (`1.69` → `1.70`). Gói khai `requires-core = ">=1.69,<2"` chạy tiếp trên mọi bản `1.x` sau.
+- Bỏ hay đổi tên một thứ: đánh dấu trước ở `backend/tests/api_surface.json` → `deprecated` (dùng gì thay, ngày sớm nhất bị bỏ). Tên vẫn chạy ít nhất
+  **90 ngày** và chỉ bị bỏ ở **bản lớn kế tiếp** (`2.0.0`). `pack.sh check` báo chú ý khi gói còn dùng tên đã đánh dấu, kèm thứ thay.
 
 ## 5. Gửi lên bản cài
 
@@ -81,6 +117,7 @@ Tag trỏ commit khác commit đã ghim thì lượt phát hành dừng. Gói c�
 ## Luật hay quên
 
 - Mã chạy chỉ import `barista.api`. Thiếu thứ gì thì xin thêm vào lõi (mở issue / MR ở `barista-core`), không import `barista.kernel`.
+- Dùng thêm phần nhạy cảm của `barista.api` (AI, mạng, tệp, thông báo, link công khai) ⇒ thêm quyền vào `permissions` cùng commit.
 - Migration đã chạy ở bất kỳ DB nào thì không sửa nữa: thay đổi viết vào file số tiếp theo. Lõi chặn khi checksum lệch.
 - Không đưa tên khách, email hay số điện thoại thật, khoá API vào mã, test hay dữ liệu mẫu. Repo lõi có thể được công khai; gói của bạn sẽ được người
   khác đọc.

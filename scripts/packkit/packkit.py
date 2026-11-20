@@ -8,7 +8,8 @@
 (mặc định chỉ file đã commit nếu gói nằm trong repo git; ``--worktree`` lấy cả thay đổi chưa commit), rồi lần lượt:
 
   1. đọc tĩnh ``pyproject.toml`` + mã (không import): tên bản phân phối, phiên bản, đúng MỘT điểm vào ``barista.packs``, ``requires-core`` chứa
-     ``barista.api`` của lõi, ``Pack("<khoá>", tên, mô tả, kind=…)`` bằng chữ, migration nằm ở ``migrations/<khoá>/`` và mở đầu ``-- module:``, có test;
+     ``barista.api`` của lõi, quyền khai (``permissions``) khớp quyền mã dùng và mã chạy chỉ dùng thư viện cho phép (ADR 0247), tên ``barista.api``
+     sắp bỏ (chú ý), ``Pack("<khoá>", tên, mô tả, kind=…)`` bằng chữ, migration nằm ở ``migrations/<khoá>/`` và mở đầu ``-- module:``, có test;
   2. ``uv sync --frozen`` môi trường lõi, cài gói editable, nạp bằng loader của lõi + import mọi module con của gói (tên ngoài ``barista.api`` ⇒ lỗi);
   3. ruff, pyright, pytest của gói (từ ``backend/`` của lõi, ``-p tests.conftest``);
   4. test CẤU TRÚC của lõi (``backend/tests/pack_guards.txt``) chạy lại với gói đã cài — gói chịu cùng luật ranh giới như mã lõi.
@@ -20,7 +21,9 @@ Cần Postgres local như bộ test của lõi (``BARISTA_TEST_ADMIN_URL``); DB 
 from __future__ import annotations
 
 import argparse
+import ast
 import io
+import json
 import os
 import re
 import shutil
@@ -42,6 +45,145 @@ KEY_RE = re.compile(r"[a-z][a-z0-9_]{1,30}\Z")
 VERSION_RE = re.compile(r"\d+\.\d+\.\d+\Z")
 # Khoá không được dùng: schema / module của lõi đọc lúc chạy ``new`` (``_core_keys``) + tên Postgres hay dùng.
 RESERVED = {"public", "pg_catalog", "information_schema", "core", "tests", "barista", "base", "sample"}
+
+
+# ───────────────────────────────────────────────────────────── quyền gói khai (ADR 0247)
+
+# Quyền = phần NHẠY CẢM của ``barista.api`` mà mã chạy của gói (``src/``) dùng: lộ dữ liệu ra ngoài, tốn tiền, gửi cho người, chạy trong công ty khác.
+# Gói khai ``[tool.barista] permissions = [...]``; ``pack.sh check`` đọc mã (không import) suy ra quyền đang dùng: dùng mà không khai ⇒ LỖI, khai mà
+# không dùng ⇒ CHÚ Ý. Phần còn lại của ``barista.api`` (màn, lệnh, quy định, pháp nhân…) không cần khai. Họ thao tác hệ thống (``m.consumes``) đã
+# khai trong mã — chỉ in ra cho người review, không khai lại. Đây là kiểm TĨNH (bắt dùng vô ý, chỉ chỗ cho người review soi), không phải hộp cát:
+# gói vẫn chạy chung tiến trình với lõi (runbook 21 "Vì sao có bước review mã"); lớp cách ly sau này chặn theo đúng danh sách này.
+PERMISSIONS: dict[str, tuple[str, frozenset[str]]] = {
+    "ai": ("gọi model / đọc tài liệu bằng AI — tốn hạn mức AI của công ty, gửi dữ liệu cho nhà cung cấp model", frozenset({"ai", "docread"})),
+    "network": ("nói chuyện với hệ ngoài qua khung kết nối — gửi dữ liệu ra ngoài, giữ khoá của hệ ngoài", frozenset({"connectors", "inbound"})),
+    "files": ("lưu / đọc / đổi tệp ở sổ tệp của lõi", frozenset({"files", "convert"})),
+    "notify": ("gửi thông báo tới người dùng", frozenset({"notify"})),
+    "public": ("mở dữ liệu ra ngoài: link công khai, cửa HTTP riêng của module (Module.route)", frozenset({"links", "web"})),
+    "client_companies": ("chạy lệnh / truy vấn TRONG công ty khách do công ty dịch vụ tạo", frozenset({"tenancy"})),
+}
+API_TO_PERMISSION = {sub: perm for perm, (_, subs) in PERMISSIONS.items() for sub in subs}
+# Thư viện mã chạy của gói (``src/``) được import: thư viện chuẩn cho chữ, số, ngày, cấu trúc dữ liệu + vài phần thư viện lõi gói cần thật (khuôn
+# ``Input`` của pydantic, ``Jsonb`` / mã lỗi của psycopg cho tham số SQL). Mục ``a.b`` cho phép ``a.b`` và con của nó, không cho ``a`` (``urllib.parse``
+# được, ``urllib.request`` không). Ngoài danh sách (os, sys, subprocess, socket, ssl, urllib.request, http, ctypes, importlib, threading, pickle,
+# shutil, httpx, psycopg.connect…) ⇒ LỖI, không quyền nào mở: mạng đi qua khung kết nối, tệp qua sổ tệp, DB qua executor. Cần thêm một thư viện vô hại
+# ⇒ thêm vào đây có lý do. Gói khác (``barista_pack_*``) theo luật của ``tests/test_pack_surface.py``. Test của gói (``tests/``) không bị giới hạn.
+IMPORTS_OK = frozenset({
+    "__future__", "abc", "asyncio", "base64", "bisect", "calendar", "collections", "contextlib", "copy", "csv", "dataclasses", "datetime", "decimal",
+    "difflib", "enum", "fractions", "functools", "hashlib", "heapq", "hmac", "html", "io", "itertools", "json", "logging", "math", "numbers", "operator",
+    "pathlib", "random", "re", "secrets", "statistics", "string", "struct", "textwrap", "time", "tomllib", "types", "typing", "unicodedata",
+    "urllib.parse", "uuid", "warnings", "zlib", "zoneinfo",
+    "pydantic", "pydantic_core", "psycopg.types.json", "psycopg.errors",
+})
+BUILTINS_NO = frozenset({"eval", "exec", "compile", "__import__", "breakpoint"})
+ATTRS_NO = frozenset({"__builtins__", "__globals__", "__subclasses__", "__code__", "__closure__",   # lách vào nội bộ trình thông dịch
+                      "create_subprocess_exec", "create_subprocess_shell", "open_connection", "open_unix_connection"})   # asyncio mở tiến trình / socket
+
+
+def _import_ok(name: str, pkg: str) -> bool:
+    top = name.split(".")[0]
+    return top in (pkg, "barista") or top.startswith("barista_pack_") or any(name == ok or name.startswith(ok + ".") for ok in IMPORTS_OK)
+
+
+def code_permissions(src: Path, pkg: str) -> tuple[dict[str, set[str]], list[str], list[str]]:
+    """Đọc mã chạy (``src/``): ``({quyền: {chỗ dùng}}, [vượt luật], [họ thao tác m.consumes])``. Chỗ dùng = ``file:dòng api.<phần>``."""
+    used: dict[str, set[str]] = {}
+    bad: list[str] = []
+    families: list[str] = []
+
+    def use(sub: str, where: str) -> None:
+        if (perm := API_TO_PERMISSION.get(sub)) is not None:
+            used.setdefault(perm, set()).add(f"{where} api.{sub}")
+
+    for f in sorted(src.rglob("*.py")):
+        rel = f.relative_to(src.parent).as_posix()
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except SyntaxError as e:
+            bad.append(f"{rel}: không đọc được ({e.msg}, dòng {e.lineno})")
+            continue
+        modules: set[str] = set()            # tên Module(...) trong file — ``m.route(`` là cửa HTTP riêng
+        api_alias: set[str] = set()          # ``import barista.api as api`` ⇒ ``api.ai`` là dùng phần ``ai``
+        for node in ast.walk(tree):
+            where = f"{rel}:{getattr(node, 'lineno', 0)}"
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name == "barista.api" or a.name.startswith("barista.api."):
+                        parts = a.name.split(".")
+                        if len(parts) > 2:
+                            use(parts[2], where)
+                        if a.asname:
+                            api_alias.add(a.asname)
+                    elif not _import_ok(a.name, pkg):
+                        bad.append(f"{where}: import {a.name} — mã chạy của gói chỉ dùng barista.api + thư viện chuẩn cho phép (runbook 21)")
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                if node.module == "barista.api":
+                    for a in node.names:
+                        use(a.name, where)
+                elif node.module.startswith("barista.api."):
+                    use(node.module.split(".")[2], where)
+                elif not _import_ok(node.module, pkg) and not all(_import_ok(f"{node.module}.{a.name}", pkg) for a in node.names):
+                    bad.append(f"{where}: from {node.module} import … — mã chạy của gói chỉ dùng barista.api + thư viện chuẩn cho phép (runbook 21)")
+            elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and getattr(node.value.func, "id", "") == "Module":
+                modules.update(t.id for t in node.targets if isinstance(t, ast.Name))
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in BUILTINS_NO:
+                bad.append(f"{where}: {node.func.id}(…) — không chạy mã động trong gói")
+            elif isinstance(node, ast.Attribute) and node.attr in ATTRS_NO:
+                bad.append(f"{where}: .{node.attr} — gói không lách vào nội bộ trình thông dịch, không mở tiến trình / socket")
+        for node in ast.walk(tree):   # vòng hai: cần đủ tên Module / bí danh của cả file
+            where = f"{rel}:{getattr(node, 'lineno', 0)}"
+            if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute) and node.value.attr == "api"
+                    and isinstance(node.value.value, ast.Name) and node.value.value.id == "barista"):   # ``import barista.api`` rồi ``barista.api.ai``
+                use(node.attr, where)
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                if node.value.id in api_alias:
+                    use(node.attr, where)
+                if node.value.id in modules and node.attr == "route":
+                    used.setdefault("public", set()).add(f"{where} Module.route")
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "consumes"
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id in modules):
+                families += [a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+    return used, bad, sorted(set(families))
+
+
+def permission_check(pack: Path, pkg: str, meta: dict, r: Report) -> None:
+    """So quyền khai ở ``[tool.barista] permissions`` với quyền mã dùng (``code_permissions``)."""
+    raw = meta.get("tool", {}).get("barista", {}).get("permissions", [])
+    if not isinstance(raw, list) or not all(isinstance(p, str) for p in raw):
+        r.fail('[tool.barista] permissions phải là danh sách chuỗi, vd permissions = ["network"] (để [] nếu không cần quyền nào)')
+        return
+    declared = set(raw)
+    for p in sorted(declared - set(PERMISSIONS)):
+        r.fail(f"quyền '{p}' không có — chọn trong: {', '.join(PERMISSIONS)}")
+    used, bad, families = code_permissions(pack / "src" / pkg, pkg)
+    for b in bad:
+        r.fail(b)
+    for perm in sorted(set(used) - declared):
+        r.fail(f"mã dùng quyền '{perm}' ({PERMISSIONS[perm][0]}) mà pyproject chưa khai: {', '.join(sorted(used[perm])[:3])} — "
+               f'thêm "{perm}" vào [tool.barista] permissions')
+    for perm in sorted((declared & set(PERMISSIONS)) - set(used)):
+        r.warn(f"khai quyền '{perm}' mà mã không dùng — bỏ khỏi permissions cho người review khỏi soi thừa")
+    shown = ", ".join(sorted(declared & set(PERMISSIONS))) or "không"
+    r.ok(f"quyền khai: {shown}; họ thao tác hệ thống (m.consumes): {', '.join(families) or 'không'}")
+
+
+def deprecated_names(src: Path, surface: dict) -> list[str]:
+    """Tên của ``barista.api`` gói đang dùng mà lõi đã đánh dấu sắp bỏ (``api_surface.json`` → ``deprecated``) — kèm thứ thay và ngày sớm nhất bị bỏ."""
+    gone = surface.get("deprecated", {})
+    out: list[str] = []
+    for f in sorted(src.rglob("*.py")):
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            names = [a.name for a in node.names] if isinstance(node, ast.ImportFrom) and node.module == "barista.api" else []
+            names += [node.attr] if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "api" else []
+            for n in names:
+                if n in gone:
+                    d = gone[n]
+                    out.append(f"{f.name}:{getattr(node, 'lineno', 0)}: barista.api.{n} sắp bỏ (từ {d['since']}) — dùng {d['use']}; bỏ sớm nhất {d['remove_after']}, ở bản {d['remove_in']}")
+    return out
 
 
 # ───────────────────────────────────────────────────────────── new
@@ -173,6 +315,7 @@ def static_check(pack: Path, api: str, r: Report) -> dict[str, str] | None:
             r.fail(f"requires-core '{spec}' KHÔNG chứa barista.api {api} của lõi — nâng gói hoặc kiểm với lõi khác (--core-ref)")
     except ValueError as e:
         r.fail(f"requires-core '{spec}': {e}")
+    permission_check(pack, pkg, meta, r)
     found: dict = {}
     for f in sorted(src.rglob("*.py")):
         release_packs._scan(f.read_text(encoding="utf-8", errors="replace"), key, found)
@@ -308,6 +451,9 @@ def check(pack: Path, core_ref: str, worktree: bool, extra: list[Path], keep: bo
         info = static_check(mine, api, r)
         if info is None:
             return _summary(r, "?")
+        surface = json.loads((core_be / "tests/api_surface.json").read_text(encoding="utf-8"))
+        for w in deprecated_names(mine / "src" / info["pkg"], surface):
+            r.warn(w)
 
         step("2. Môi trường lõi + cài gói + nạp")
         code, out = run(["uv", "sync", "--frozen", "-q"], cwd=core_be, env=env)

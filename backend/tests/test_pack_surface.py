@@ -159,6 +159,47 @@ def test_the_surface_is_versioned_and_changes_only_on_purpose() -> None:
             assert getattr(mod, n) is getattr(origin, n), (sub, n)
 
 
+DEPRECATION_DAYS = 90   # tên sắp bỏ còn chạy ít nhất từng này ngày kể từ lúc đánh dấu (ADR 0247, runbook 21)
+
+
+def _deprecation_problems(register: dict[str, Any], names: set[str], version: str) -> list[str]:
+    """Sổ ``deprecated`` của ``api_surface.json``: tên còn xuất (chưa bỏ được khi còn trong sổ), đủ trường, giữ ≥ 90 ngày, chỉ bỏ ở bản LỚN kế tiếp."""
+    from datetime import date, timedelta
+
+    major = int(version.split(".")[0])
+    out: list[str] = []
+    for name, d in register.items():
+        if not isinstance(d, dict) or set(d) != {"since", "since_day", "use", "remove_after", "remove_in"}:
+            out.append(f"{name}: cần đúng các trường since, since_day, use, remove_after, remove_in")
+            continue
+        if name not in names:
+            out.append(f"{name}: đã bỏ khỏi barista.api mà còn trong sổ — bỏ tên chỉ ở bản {d['remove_in']}, rồi xoá dòng sổ cùng lúc")
+        if not str(d["use"]).strip():
+            out.append(f"{name}: thiếu 'use' (dùng gì thay)")
+        try:
+            if date.fromisoformat(d["remove_after"]) < date.fromisoformat(d["since_day"]) + timedelta(days=DEPRECATION_DAYS):
+                out.append(f"{name}: remove_after phải cách since_day ít nhất {DEPRECATION_DAYS} ngày")
+        except (TypeError, ValueError):
+            out.append(f"{name}: since_day / remove_after phải dạng YYYY-MM-DD")
+        if d["remove_in"] != f"{major + 1}.0.0":
+            out.append(f"{name}: remove_in phải là bản lớn kế tiếp {major + 1}.0.0 — trong một bản lớn không bỏ tên")
+        if tuple(int(x) for x in str(d["since"]).split(".")) > tuple(int(x) for x in version.split(".")):
+            out.append(f"{name}: since {d['since']} sau phiên bản hiện tại {version}")
+    return out
+
+
+def test_deprecated_names_stay_published_for_ninety_days_and_go_only_in_the_next_major() -> None:
+    """Luật bỏ tên ở bề mặt (ADR 0247): đánh dấu ở ``api_surface.json`` → ``deprecated`` (``pack.sh check`` báo gói đang dùng), tên vẫn chạy ít nhất
+    90 ngày, chỉ bỏ ở bản lớn kế tiếp. Sổ trống là bình thường."""
+    pinned = json.loads(SURFACE.read_text())
+    assert _deprecation_problems(pinned.get("deprecated", {}), set(api.__all__), api.__version__) == []
+    ok = {"since": "1.70.0", "since_day": "2026-11-20", "use": "ledger.read", "remove_after": "2027-02-18", "remove_in": "2.0.0"}
+    assert _deprecation_problems({"fold": ok}, {"fold"}, "1.70.0") == []
+    assert _deprecation_problems({"fold": ok}, set(), "1.70.0") != []                                     # bỏ trước bản lớn
+    assert _deprecation_problems({"fold": {**ok, "remove_after": "2026-12-01"}}, {"fold"}, "1.70.0") != []   # chưa đủ 90 ngày
+    assert _deprecation_problems({"fold": {**ok, "remove_in": "1.80.0"}}, {"fold"}, "1.70.0") != []          # bỏ giữa bản lớn
+
+
 def test_the_core_does_not_depend_on_the_surface() -> None:
     """Bề mặt dựa vào lõi, không ngược lại: kernel / agent / file ráp không import ``barista.api`` (tránh vòng, giữ lõi đổi tự do)."""
     hubs = [*(SRC / "kernel").rglob("*.py"), *(SRC / "agent").rglob("*.py"), SRC / "workspaces.py", SRC / "presets.py"]
