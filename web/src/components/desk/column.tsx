@@ -17,15 +17,25 @@ export function Orb({ size = 40, busy = false }: { size?: number; busy?: boolean
   );
 }
 
+/** Nút đầu ngăn NỔI kiểu ChatGPT: viên tròn có nền + viền, cùng họ với nút viên ở đầu khung làm việc ("Người dùng", "Vai trò & quyền").
+ *  Một nút đứng riêng ⇒ `headerBtn`; nhiều nút cùng việc (cuộc trò chuyện mới + cuộc trước) ⇒ gói chung một viên `HeaderGroup` với `pillBtn`. */
 export const headerBtn =
-  "grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring";   // không nền đặc: chỉ biểu tượng, nền nhạt khi rê chuột
+  "grid size-8 shrink-0 place-items-center rounded-full border border-border bg-surface text-foreground/80 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+
+/** Nút trong viên `HeaderGroup`: không viền riêng — viên chung đã có viền. */
+export const pillBtn =
+  "grid h-full w-8 shrink-0 place-items-center rounded-full text-foreground/80 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+
+export function HeaderGroup({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <div className={cn("inline-flex h-8 shrink-0 items-center overflow-hidden rounded-full border border-border bg-surface", className)}>{children}</div>;
+}
 
 /** Ẩn / hiện thanh bên trái (Ctrl+Shift+S) — góc trên trái của cột, như nút sidebar của Notes / Finder. */
 export function RailToggle() {
   const desk = useDesk();
   const label = desk.railHidden ? "Hiện thanh bên trái (Ctrl+Shift+S)" : "Ẩn thanh bên trái (Ctrl+Shift+S)";
   return (
-    <button type="button" onClick={desk.toggleRail} className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" aria-label={label} title={label} aria-pressed={!desk.railHidden}>
+    <button type="button" onClick={desk.toggleRail} className={headerBtn} aria-label={label} title={label} aria-pressed={!desk.railHidden}>
       <Menu className="size-4" />
     </button>
   );
@@ -53,7 +63,7 @@ export function ColumnHeader({
     <header className={cn(PANE_HEADER, "px-3")}>
       <RailToggle />
       {back ? (
-        <button type="button" onClick={back} className="grid size-8 shrink-0 place-items-center rounded-lg border border-border bg-surface outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring" aria-label="Về danh sách" title="Về danh sách">
+        <button type="button" onClick={back} className={headerBtn} aria-label="Về danh sách" title="Về danh sách">
           <ChevronLeft className="size-4" />
         </button>
       ) : null}

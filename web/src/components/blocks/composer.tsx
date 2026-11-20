@@ -17,7 +17,7 @@ import { useDesk } from "@/components/desk/desk-context";
 import { useFrameActions } from "@/components/desk/frame-context";
 import { DataTable, KpiRow } from "@/components/pages/table";
 import { useFullFrame } from "@/components/desk/full-frame";
-import { headerBtn, Orb, PANE_HEADER, RailToggle } from "@/components/desk/column";
+import { HeaderGroup, Orb, PANE_HEADER, pillBtn, RailToggle } from "@/components/desk/column";
 import { DictateMic } from "@/components/desk/dictate-mic";
 import { COMPOSER_PILL, COMPOSER_TEXT, SendStopButton } from "@/components/desk/send-button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -258,14 +258,16 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
               <span className="truncate">{live ? "đang soạn…" : doc.session_id ? title : "Thử nghiệm · số liệu đúng quyền của bạn"}</span>
             </p>
           </div>
+          <HeaderGroup>
           {hasDraft && !draftOpen ? (
-            <button type="button" className={cn(headerBtn, "max-[0px]:hidden")} onClick={() => setDraftOpen(true)} aria-label="Mở bản soạn" title="Mở bản soạn">
+            <button type="button" className={pillBtn} onClick={() => setDraftOpen(true)} aria-label="Mở bản soạn" title="Mở bản soạn">
               <FileText className="size-4" />
             </button>
           ) : null}
-          <button type="button" className={headerBtn} onClick={fresh} disabled={!!live} aria-label="Bản soạn mới" title="Bản soạn mới">
+          <button type="button" className={pillBtn} onClick={fresh} disabled={!!live} aria-label="Bản soạn mới" title="Bản soạn mới">
             <MessageSquarePlus className="size-4" />
           </button>
+          </HeaderGroup>
           {frameActions}
         </header>
         <Conversation doc={doc} live={live} local={local} docs={docs} onRetry={(t, retry) => void send(t.text, { block: t.block, mode: t.mode, retry })}

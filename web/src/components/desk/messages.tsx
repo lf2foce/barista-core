@@ -11,7 +11,7 @@ import { Initials, Spinner } from "@/components/primitives";
 import { ThreadBlock } from "@/components/blocks/thread";
 import { ThreadFiles } from "@/components/blocks/thread-files";
 import { CardFrame } from "./canvas";
-import { ColumnHeader, headerBtn, Orb, PANE_HEADER } from "./column";
+import { ColumnHeader, HeaderGroup, Orb, PANE_HEADER, pillBtn } from "./column";
 import { useChat } from "./chat-context";
 import { useDesk } from "./desk-context";
 import { NoticeList } from "./notices";
@@ -102,10 +102,12 @@ function InboxList() {
   return (
     <>
       <ColumnHeader title="Tin nhắn" subtitle={unreadSummary(desk.unread + (talk?.unread ?? 0))}>
+        {talk ? (
+          <HeaderGroup>
         {talk?.can_start_direct ? (
           <button
             type="button"
-            className={headerBtn}
+            className={pillBtn}
             aria-label="Nhắn riêng cho một người"
             title="Nhắn riêng — chỉ hai người đọc được"
             onClick={() =>
@@ -115,13 +117,12 @@ function InboxList() {
               )
             }
           >
-            <Send className="size-3.5" />
+            <Send className="size-4" />
           </button>
         ) : null}
-        {talk ? (
           <button
             type="button"
-            className={headerBtn}
+            className={pillBtn}
             aria-label="Tạo phòng nhắn tin nhóm"
             title="Tạo phòng nhắn tin nhóm"
             onClick={() =>
@@ -131,8 +132,9 @@ function InboxList() {
               )
             }
           >
-            <MessageSquarePlus className="size-3.5" />
+            <MessageSquarePlus className="size-4" />
           </button>
+          </HeaderGroup>
         ) : null}
       </ColumnHeader>
       <ul className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2" aria-label="Danh sách tin nhắn">

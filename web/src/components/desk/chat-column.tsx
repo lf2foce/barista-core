@@ -21,7 +21,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 import { IconTile, moduleTint } from "@/components/icons";
 import { Markdown } from "@/components/markdown";
 import { actionClass } from "@/components/primitives";
-import { headerBtn, Orb, PANE_HEADER, RailToggle } from "./column";
+import { HeaderGroup, Orb, PANE_HEADER, pillBtn, RailToggle } from "./column";
 import { COMPOSER_PILL, COMPOSER_TEXT, SendStopButton } from "./send-button";
 import { useChat } from "./chat-context";
 import { useDesk } from "./desk-context";
@@ -118,12 +118,12 @@ function ChatHeader() {
         </p>
       </div>
       {/* trình tạo app (0098): không nút "Xong" — người dùng tự điều hướng; cuộc trò chuyện mới / mở cuộc cũ / bấm "Trợ lý" là thoát trình tạo */}
-      <>
-      <button type="button" className={headerBtn} onClick={chat.newThread} aria-label="Cuộc trò chuyện mới" title="Cuộc trò chuyện mới">
+      <HeaderGroup>
+      <button type="button" className={pillBtn} onClick={chat.newThread} aria-label="Cuộc trò chuyện mới" title="Cuộc trò chuyện mới">
         <MessageSquarePlus className="size-4" />
       </button>
       <DropdownMenu>
-        <DropdownMenuTrigger className={headerBtn} aria-label="Cuộc trò chuyện trước" title="Cuộc trò chuyện trước">
+        <DropdownMenuTrigger className={pillBtn} aria-label="Cuộc trò chuyện trước" title="Cuộc trò chuyện trước">
           <History className="size-4" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="max-h-96 w-72">
@@ -137,7 +137,7 @@ function ChatHeader() {
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
-      </>
+      </HeaderGroup>
     </header>
   );
 }
