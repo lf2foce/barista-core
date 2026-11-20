@@ -17,7 +17,7 @@ struct CanvasView: View {
             CanvasHeader(onBack: onBack)
                 .padding(.horizontal, edge)
                 .padding(.top, titlebarInset)
-                .padding(.bottom, 12)   // không đường kẻ dưới: đầu khung nổi trên nền khung (cùng web)
+                .padding(.bottom, 8)   // không đường kẻ dưới: đầu khung nổi trên nền khung (cùng web)
             if let hero = desk.active {
                 VStack(alignment: .leading, spacing: 12) {
                     CardFrame(item: hero)
@@ -37,7 +37,7 @@ struct CanvasView: View {
                         .frame(height: 32)
                     }
                 }
-                .padding(edge)
+                .padding([.horizontal, .bottom], edge)   // trên: đầu khung đã chừa 8 ⇒ thẻ sát đầu khung, không hở hai lần
             } else {
                 EmptyCanvas()
             }
