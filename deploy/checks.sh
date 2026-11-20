@@ -7,7 +7,8 @@
 #   check_core <WORK> [tham số pytest…]   lõi MỘT MÌNH: uv sync --frozen trong WORK/backend (môi trường RIÊNG), ruff, pyright, pytest
 #   check_packs <WORK> "<khoá…>"          cài mọi gói vào môi trường của WORK, test cấu trúc của lõi (tests/pack_guards.txt), rồi từng gói
 #   drop_test_dbs                         xoá DB test mang mã lần chạy BARISTA_TEST_RUN_ID (gọi trong bẫy EXIT)
-#   tree_digest <WORK> [core|web]         dấu nội dung (sha256) vừa dựng — gọi NGAY sau stage_tree, trước khi test. Mặc định: backend/ + deploy/ (gồm gói);
+#   tree_digest <WORK> [core|web]         dấu nội dung (sha256) vừa dựng — gọi NGAY sau stage_tree, trước khi test. Mặc định: backend/ + deploy/ (gồm gói)
+#       + mọi file bản cài ở $BARISTA_OPS_DIR/instances (test đọc chúng);
 #       ``core``: như mặc định nhưng BỎ deploy/packs/ (bộ test lõi là hợp đồng của lõi, chạy khi CHƯA cài gói nào ⇒ không phụ thuộc gói); ``web``: web/
 #   stamp_ok <dấu> / stamp_write <dấu> <nhãn>   dấu "đã kiểm đủ": <dấu đủ> = lõi TOÀN BỘ + gói ở tag ghim; core-<dấu lõi> = check_core TOÀN BỘ;
 #       web-<dấu web> = typecheck + lint + test của web. release.sh bỏ chạy lại pha nào đã có dấu (cùng lõi, bản cài khác ⇒ chỉ test gói của bản cài đó).
@@ -49,6 +50,14 @@ for top in (("web",) if part == "web" else ("backend", "deploy")):
             h.update(os.path.relpath(p, root).encode() + b"\0")
             with open(p, "rb") as fh:
                 h.update(hashlib.sha256(fh.read()).digest())
+# file bản cài (barista-ops/instances/*.json) cũng là đầu vào của bộ test (test_deploy_* so render của MỌI bản cài) ⇒ đổi một file bản cài (vd "gate")
+# là nội dung khác, không dùng lại dấu cũ (rà 20/11). Web không đọc file bản cài.
+ops = os.environ.get("BARISTA_OPS_DIR", "")
+if part != "web" and ops and os.path.isdir(os.path.join(ops, "instances")):
+    for f in sorted(os.listdir(os.path.join(ops, "instances"))):
+        if f.endswith(".json"):
+            with open(os.path.join(ops, "instances", f), "rb") as fh:
+                h.update(b"instance:" + f.encode() + b"\0" + hashlib.sha256(fh.read()).digest())
 print(h.hexdigest())
 PY
 }
