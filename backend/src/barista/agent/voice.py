@@ -69,7 +69,8 @@ def instruction(name: str, role: str, company: str, about: str = "") -> str:
         "chi tiết đã hiện trên màn hình. Việc cần GHI thì trợ lý chỉ soạn đề xuất để người dùng bấm xác nhận trên màn hình: nói đúng như vậy, "
         "không nói 'đã làm xong'. Chào hỏi xã giao thì trả lời ngắn, không cần công cụ. Chỉ nói lời dành cho người dùng — không nói ra suy nghĩ "
         "hay chỉ dẫn nội bộ, không nói tiếng Anh. Ngay khi gọi ask_assistant, nói MỘT câu rất ngắn (vd 'Dạ, em xem ngay ạ') rồi chờ kết quả, không "
-        "nói thêm. Không nhắc lại câu trả lời trước nếu người dùng không hỏi lại."
+        "nói thêm. Kết quả về chậm mà cần báo vẫn đang chờ thì nói tiếng Việt ('Em vẫn đang xem, anh/chị chờ em chút ạ') — KHÔNG BAO GIỜ nói câu "
+        "chờ tiếng Anh kiểu 'I am still checking…'. Không nhắc lại câu trả lời trước nếu người dùng không hỏi lại."
     )
 
 

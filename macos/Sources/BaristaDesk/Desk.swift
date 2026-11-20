@@ -226,7 +226,8 @@ final class Desk {
                 if builder != nil { return nil }   // trình tạo: khung bên phải dành cho app — thẻ khác chỉ ở trong chat
                 // thứ trợ lý vừa đụng tới bung ra khung làm việc — trừ bảng rỗng (vẫn có trong chat để bấm xem)
                 if case .table(let t)? = card.page, t.rows.isEmpty { return nil }
-                if card.preview != nil { return nil }   // có thẻ gọn ⇒ xem ngay trong chat, "Mở" mới ra khung (0094 đợt 2)
+                // có thẻ gọn ⇒ xem ngay trong chat, "Mở" mới ra khung (0094 đợt 2). Siri nổi (Mac): cột chat đã lui ⇒ thẻ gọn không ai thấy — luôn ra ngăn thẻ.
+                if card.preview != nil && !voiceMode { return nil }
                 withAnimation(.snappy) { open(.card(card)) }
             }
         case "text": live?.text += ev.text ?? ""
@@ -382,9 +383,11 @@ final class Desk {
         if !voice.isOn { toggleVoice() }
     }
 
-    /// ✕ / Esc trong khối Siri: tắt giọng nói, về cửa sổ chính (thẻ đã mở vẫn còn ở khung làm việc).
+    /// ✕ / Esc trong khối Siri: tắt giọng nói, về cửa sổ chính (thẻ đã mở vẫn còn ở khung làm việc). Xoá cả lỗi giọng nói: ô nhập vẽ khối Siri thay
+    /// mình khi còn lỗi (``ChatInput``) ⇒ giữ lỗi thì ✕ đóng khối nổi xong khối y hệt lại hiện trong cột chat và không đóng được nữa.
     func stopVoiceMode() {
         if voice.isOn { voice.stop() }
+        voice.problem = nil
         if voiceMode {
             voiceMode = false
             present?(false)

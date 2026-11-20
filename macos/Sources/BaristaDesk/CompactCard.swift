@@ -47,7 +47,14 @@ struct CompactCard: View {
                     case .card(let c): CardView(page: c, onChanged: { Task { await reload() } })
                     case .table(let t):
                         if t.rows.isEmpty { Text(t.empty).font(.t12).foregroundStyle(.secondary) }
-                        else { DataTable(page: t, selection: .constant([]), menu: { _ in EmptyView() }, open: { _ in onOpen() }) }
+                        else {
+                            DataTable(page: t, selection: .constant([]), menu: { _ in EmptyView() }, open: { _ in onOpen() })
+                            #if os(macOS)
+                                // ``Table`` của Mac giãn hết chỗ được cho ⇒ thẻ một dòng cao gần hết cột chat (20/11). Cao đúng số dòng (≤ 3), không cuộn.
+                                .frame(height: 30 + CGFloat(t.rows.count) * 28)
+                                .scrollDisabled(true)
+                            #endif
+                        }
                     case .detail: Text("Bấm “Mở” để xem chi tiết.").font(.t12).foregroundStyle(.secondary)
                     }
                 } else {

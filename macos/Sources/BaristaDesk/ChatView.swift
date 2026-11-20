@@ -62,18 +62,20 @@ private struct ChatHeader: View {
             #if os(iOS)
             NoticeBell()   // Mac: thông báo nằm trong "Tin nhắn" ở thanh bên trái; iPhone: "Việc" / "Tin nhắn" ở thanh tab dưới đáy
             #endif
-            HeaderIcon(symbol: "square.and.pencil", help: "Cuộc trò chuyện mới") { desk.newThread() }
-            Menu {
-                if desk.threads.isEmpty { Text("Chưa có cuộc trò chuyện nào") }
-                ForEach(desk.threads.prefix(20)) { t in
-                    Button(t.title.isEmpty ? "(không tên)" : t.title) { Task { await desk.openThread(t.id) } }
-                }
-            } label: { IconTile(symbol: "clock.arrow.circlepath", tint: .purple, size: 30) }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Cuộc trò chuyện trước")
+            HeaderPill {
+                HeaderIcon(symbol: "square.and.pencil", help: "Cuộc trò chuyện mới") { desk.newThread() }
+                Menu {
+                    if desk.threads.isEmpty { Text("Chưa có cuộc trò chuyện nào") }
+                    ForEach(desk.threads.prefix(20)) { t in
+                        Button(t.title.isEmpty ? "(không tên)" : t.title) { Task { await desk.openThread(t.id) } }
+                    }
+                } label: { HeaderGlyph(symbol: "clock.arrow.circlepath") }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Cuộc trò chuyện trước")
+            }
             #if os(iOS)
             PersonaMenu()   // Mac: ở đáy thanh bên trái
             #endif
@@ -110,20 +112,44 @@ struct PersonaMenu: View {
 }
 
 /// Nút tiện ích đầu cột — ô vuông bo góc, gradient màu (như IconTile), không còn vòng tròn xám nhạt.
-struct HeaderIcon: View {
+/// Viên nút đầu ngăn NỔI kiểu ChatGPT — cùng họ `HeaderGroup` của web: viên tròn nền ``Color/surface`` + viền mảnh;
+/// nút cùng việc (cuộc trò chuyện mới + cuộc trước; nhắn riêng + tạo phòng) chung một viên, biểu tượng đơn sắc thay ô màu.
+struct HeaderPill<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(spacing: 0) { content }
+            .padding(.horizontal, 2)
+            .frame(height: 32)
+            .background(Capsule().fill(Color.surface))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12)))
+    }
+}
+
+/// Biểu tượng trong ``HeaderPill`` (cũng là nhãn của Menu): đơn sắc, nền nhạt khi rê chuột.
+struct HeaderGlyph: View {
     let symbol: String
-    let help: String
-    var tint: Color = .accent
-    let action: () -> Void
     @State private var hover = false
 
     var body: some View {
-        Button(action: action) { IconTile(symbol: symbol, tint: tint, size: 30) }
-            .buttonStyle(.plain)
-            .opacity(hover ? 1 : 0.88)
-            .scaleEffect(hover ? 1.04 : 1)
-            .animation(.snappy(duration: 0.15), value: hover)
+        Image(systemName: SymbolMap.name(symbol))
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(Color.primary.opacity(hover ? 1 : 0.78))
+            .frame(width: 32, height: 28)
+            .background(Capsule().fill(Color.primary.opacity(hover ? 0.07 : 0)))
+            .contentShape(Capsule())
             .onHover { hover = $0 }
+    }
+}
+
+struct HeaderIcon: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { HeaderGlyph(symbol: symbol) }
+            .buttonStyle(.plain)
             .help(help)
     }
 }

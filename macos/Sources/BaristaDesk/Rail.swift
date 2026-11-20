@@ -278,16 +278,18 @@ struct MessagesColumn: View {
     private var list: some View {
         VStack(spacing: 0) {
             ColumnHeader(title: "Tin nhắn", subtitle: summary) {
-                if desk.talk?.can_start_direct == true {
-                    HeaderIcon(symbol: "paperplane", help: "Nhắn riêng — chỉ hai người đọc được") {
-                        creating = ActionSpec(command: "talk.start_direct", title: "Nhắn riêng", style: "primary", bind: [:], preset: [:],
-                                              when: [:], importable: false)
-                    }
-                }
                 if desk.talk != nil {
-                    HeaderIcon(symbol: "plus.bubble", help: "Tạo phòng nhắn tin nhóm") {
-                        creating = ActionSpec(command: "talk.create_room", title: "Tạo phòng nhắn tin", style: "primary", bind: [:], preset: [:],
-                                              when: [:], importable: false)
+                    HeaderPill {
+                        if desk.talk?.can_start_direct == true {
+                            HeaderIcon(symbol: "paperplane", help: "Nhắn riêng — chỉ hai người đọc được") {
+                                creating = ActionSpec(command: "talk.start_direct", title: "Nhắn riêng", style: "primary", bind: [:], preset: [:],
+                                                      when: [:], importable: false)
+                            }
+                        }
+                        HeaderIcon(symbol: "plus.bubble", help: "Tạo phòng nhắn tin nhóm") {
+                            creating = ActionSpec(command: "talk.create_room", title: "Tạo phòng nhắn tin", style: "primary", bind: [:], preset: [:],
+                                                  when: [:], importable: false)
+                        }
                     }
                 }
             }
