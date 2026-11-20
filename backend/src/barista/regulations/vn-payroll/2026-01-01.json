@@ -1,0 +1,299 @@
+{
+  "pack": "vn-payroll",
+  "title": "Lương & thù lao — Việt Nam",
+  "version": "2026-01-01",
+  "effective_from": "2026-01-01",
+  "published_on": "2026-11-09",
+  "retroactive_reason": "Bản nạp ban đầu của bộ khi dựng hệ thống: chưa có kỳ thật nào tính theo bộ này trước ngày phát hành, nên không đổi số kỳ nào đã mở (dữ liệu lịch sử, không phải văn bản mới hồi tố).",
+  "status": "assumption",
+  "verified_by": "",
+  "summary": "CHỜ KẾ TOÁN XÁC MINH TỪNG QUY TẮC (ADR 0150 §6, Phụ lục A). Lát 1: khấu trừ 10% theo lần chi. Lát 3 (10/11/2026): bảo hiểm bắt buộc người lao động và doanh nghiệp đóng (trần theo lương cơ sở / lương tối thiểu vùng), kinh phí công đoàn, đoàn phí, thuế TNCN luỹ tiến theo tháng chi với giảm trừ gia cảnh, tiền làm thêm giờ. Quy tắc chưa xác minh không bao giờ tính ở kỳ thật — chỉ kỳ chạy bóng. Ngày căn cứ: thuế theo NGÀY CHI; bảo hiểm, làm thêm theo THÁNG CÔNG.",
+  "sources": [
+    {
+      "ref": "Thông tư 111/2013/TT-BTC Điều 25 khoản 1 điểm i (khấu trừ 10% từ 2.000.000 đồng/lần chi) — đọc qua bản chép lại, chưa đối chiếu Công báo"
+    },
+    {
+      "ref": "Nghị định 73/2024/NĐ-CP (lương cơ sở 2.340.000 đồng) — theo bài tổng hợp"
+    },
+    {
+      "ref": "Luật Bảo hiểm xã hội 41/2024/QH15 Điều 2, 31, 33, 34 (hiệu lực 01/07/2025) — bản chép lại trên hethongphapluat.com, chưa đối chiếu Công báo"
+    },
+    {
+      "ref": "Luật Việc làm 74/2025/QH15 Điều 31, 33, 34 (hiệu lực 01/01/2026) — bản chép lại; NĐ 374/2025 theo bài tổng hợp"
+    },
+    {
+      "ref": "Luật Thuế thu nhập cá nhân 109/2025/QH15; Nghị quyết 110/2025/UBTVQH15 (giảm trừ gia cảnh) — theo bài tổng hợp (EY, KPMG)"
+    },
+    {
+      "ref": "Nghị định 293/2025/NĐ-CP (lương tối thiểu vùng từ 01/01/2026) — theo bài tổng hợp"
+    },
+    {
+      "ref": "Bộ luật Lao động 45/2019/QH14 Điều 98 (tiền làm thêm giờ); Nghị định 145/2020/NĐ-CP Điều 55 — bản chép lại / bài tổng hợp"
+    },
+    {
+      "ref": "Luật Công đoàn 50/2024/QH15 Điều 29 (kinh phí công đoàn) — theo bài tổng hợp; phần sửa đổi 2025–2026 CHƯA XÁC MINH"
+    }
+  ],
+  "params": {
+    "PIT_FLAT_10": {
+      "label": "Khấu trừ thuế thu nhập 10% theo từng lần chi cho người không ký hợp đồng lao động hoặc hợp đồng dưới 3 tháng",
+      "value": {
+        "rate_bps": 1000,
+        "min_payment_vnd": 2000000,
+        "contract_kinds": [
+          "service"
+        ],
+        "short_term_months_below": 3
+      },
+      "basis": "TT 111/2013/TT-BTC Đ25.1.i: tổng thu nhập trả mỗi lần từ 2.000.000 đồng trở lên thì khấu trừ 10% trên thu nhập trước khi trả; có bản cam kết thu nhập thấp thì không khấu trừ (lát 1 chưa ghi cam kết). Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "INSURANCE_BASE": {
+      "label": "Mức trần đóng BHXH / BHYT = 20 lần lương cơ sở (mức tham chiếu); BHTN = 20 lần lương tối thiểu vùng nơi làm việc",
+      "value": {
+        "base_salary_vnd": 2340000,
+        "cap_multiple": 20
+      },
+      "basis": "NĐ 73/2024/NĐ-CP (theo bài tổng hợp): lương cơ sở 2.340.000 đồng ⇒ trần BHXH / BHYT 46.800.000 đồng/tháng; Luật BHXH 41/2024 Đ31: trần 20 lần mức tham chiếu (chưa có mức tham chiếu thì dùng lương cơ sở). Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "REGIONAL_MIN_WAGE": {
+      "label": "Lương tối thiểu vùng theo tháng (sàn lương đóng bảo hiểm, trần BHTN, sàn lương tháng)",
+      "value": {
+        "I": 5310000,
+        "II": 4730000,
+        "III": 4140000,
+        "IV": 3700000
+      },
+      "basis": "NĐ 293/2025/NĐ-CP (hiệu lực 01/01/2026) theo bài tổng hợp — vùng I 5.310.000, II 4.730.000, III 4.140.000, IV 3.700.000 đồng/tháng. Chưa đối chiếu Công báo; lương đóng BHXH không thấp hơn lương tối thiểu vùng (Luật BHXH 41/2024 Đ31 — bản chép lại). Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "SI_EMPLOYEE": {
+      "label": "BHXH người lao động đóng (hưu trí, tử tuất) 8%",
+      "value": {
+        "kind": "contribution",
+        "payer": "employee",
+        "fund": "BHXH",
+        "rate_bps": 800,
+        "cap": "base",
+        "contract_kinds": [
+          "indefinite",
+          "fixed_term"
+        ],
+        "min_term_months": 1,
+        "skip_if_unpaid_days_at_least": 14
+      },
+      "basis": "Luật BHXH 41/2024/QH15 Đ33 (bản chép lại, hethongphapluat.com): người lao động đóng 8% vào quỹ hưu trí, tử tuất; áp với hợp đồng lao động từ đủ 1 tháng (Đ2); tháng nghỉ không lương từ 14 ngày làm việc không đóng. Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "HI_EMPLOYEE": {
+      "label": "BHYT người lao động đóng 1,5%",
+      "value": {
+        "kind": "contribution",
+        "payer": "employee",
+        "fund": "BHYT",
+        "rate_bps": 150,
+        "cap": "base",
+        "contract_kinds": [
+          "indefinite",
+          "fixed_term"
+        ],
+        "min_term_months": 1,
+        "skip_if_unpaid_days_at_least": 14
+      },
+      "basis": "Luật BHYT (sửa 2024) và NĐ 146/2018 Đ18 (theo bài tổng hợp): 4,5% tiền lương, người lao động 1/3 = 1,5%. Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "UI_EMPLOYEE": {
+      "label": "BHTN người lao động đóng 1%",
+      "value": {
+        "kind": "contribution",
+        "payer": "employee",
+        "fund": "BHTN",
+        "rate_bps": 100,
+        "cap": "regional",
+        "contract_kinds": [
+          "indefinite",
+          "fixed_term"
+        ],
+        "min_term_months": 1,
+        "skip_if_unpaid_days_at_least": 14
+      },
+      "basis": "Luật Việc làm 74/2025/QH15 Đ33–34 (hiệu lực 01/01/2026, bản chép lại): mỗi bên TỐI ĐA 1%, trần 20 lần lương tối thiểu vùng. Mức cụ thể theo nghị định hướng dẫn (NĐ 374/2025 — theo bài tổng hợp, chưa đọc). Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "SI_EMPLOYER": {
+      "label": "BHXH doanh nghiệp đóng 17,5% (hưu trí 14%, ốm đau thai sản 3%, tai nạn lao động 0,5%)",
+      "value": {
+        "kind": "contribution",
+        "payer": "employer",
+        "fund": "BHXH",
+        "rate_bps": 1750,
+        "cap": "base",
+        "contract_kinds": [
+          "indefinite",
+          "fixed_term"
+        ],
+        "min_term_months": 1,
+        "skip_if_unpaid_days_at_least": 14
+      },
+      "basis": "Luật BHXH 41/2024 Đ34 (14% hưu trí và 3% ốm đau, thai sản: bản chép lại); 0,5% tai nạn lao động, bệnh nghề nghiệp (Luật ATVSLĐ, NĐ 58/2020 — theo bài tổng hợp; ngành nguy hiểm có thể khác). Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "HI_EMPLOYER": {
+      "label": "BHYT doanh nghiệp đóng 3%",
+      "value": {
+        "kind": "contribution",
+        "payer": "employer",
+        "fund": "BHYT",
+        "rate_bps": 300,
+        "cap": "base",
+        "contract_kinds": [
+          "indefinite",
+          "fixed_term"
+        ],
+        "min_term_months": 1,
+        "skip_if_unpaid_days_at_least": 14
+      },
+      "basis": "Luật BHYT, NĐ 146/2018 Đ18 (theo bài tổng hợp): doanh nghiệp 2/3 của 4,5% = 3%. Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "UI_EMPLOYER": {
+      "label": "BHTN doanh nghiệp đóng 1%",
+      "value": {
+        "kind": "contribution",
+        "payer": "employer",
+        "fund": "BHTN",
+        "rate_bps": 100,
+        "cap": "regional",
+        "contract_kinds": [
+          "indefinite",
+          "fixed_term"
+        ],
+        "min_term_months": 1,
+        "skip_if_unpaid_days_at_least": 14
+      },
+      "basis": "Luật Việc làm 74/2025/QH15 Đ33 (tối đa 1%; mức cụ thể chưa đọc văn bản hướng dẫn). Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "UNION_EMPLOYER": {
+      "label": "Kinh phí công đoàn doanh nghiệp đóng 2% quỹ lương đóng BHXH",
+      "value": {
+        "kind": "contribution",
+        "payer": "employer",
+        "fund": "KPCD",
+        "rate_bps": 200,
+        "cap": "base",
+        "contract_kinds": [
+          "indefinite",
+          "fixed_term"
+        ],
+        "min_term_months": 1,
+        "skip_if_unpaid_days_at_least": 14
+      },
+      "basis": "Luật Công đoàn 50/2024/QH15 Đ29 (theo bài tổng hợp): 2% quỹ tiền lương làm căn cứ đóng BHXH; có thể đã được sửa / miễn giảm (Luật 97/2025, NĐ 105/2026 — CHƯA XÁC MINH). Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "UNION_MEMBER_FEE": {
+      "label": "Đoàn phí công đoàn của đoàn viên 1% lương đóng BHXH, tối đa 10% lương cơ sở",
+      "value": {
+        "kind": "contribution",
+        "payer": "employee",
+        "fund": "DOANPHI",
+        "rate_bps": 100,
+        "cap": "none",
+        "contract_kinds": [
+          "indefinite",
+          "fixed_term"
+        ],
+        "min_term_months": 1,
+        "skip_if_unpaid_days_at_least": 14,
+        "members_only": true,
+        "cap_ratio_bps": 1000
+      },
+      "basis": "Điều lệ / hướng dẫn của Tổng Liên đoàn (QĐ 1908/QĐ-TLĐ 2016 theo bài tổng hợp — CHƯA XÁC MINH bản đang hiệu lực): đoàn viên đóng 1% tiền lương làm căn cứ đóng BHXH, tối đa 10% lương cơ sở. Chỉ người ghi là đoàn viên. Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "PIT_PROGRESSIVE": {
+      "label": "Thuế TNCN từ tiền lương, tiền công: biểu luỹ tiến từng phần theo tháng (người cư trú, hợp đồng lao động từ 3 tháng)",
+      "value": {
+        "kind": "brackets",
+        "brackets": [
+          [
+            10000000,
+            500
+          ],
+          [
+            30000000,
+            1000
+          ],
+          [
+            60000000,
+            2000
+          ],
+          [
+            100000000,
+            3000
+          ],
+          [
+            null,
+            3500
+          ]
+        ],
+        "contract_kinds": [
+          "indefinite",
+          "fixed_term"
+        ],
+        "min_term_months": 3
+      },
+      "basis": "Luật Thuế TNCN 109/2025/QH15 Đ9, Đ29 (theo bài tổng hợp của EY, Tạp chí Công Thương — khớp nhau): biểu 5 bậc tháng ≤10 triệu 5%, 10–30 triệu 10%, 30–60 triệu 20%, 60–100 triệu 30%, trên 100 triệu 35%; áp cho thu nhập từ tiền lương từ kỳ tính thuế 2026. CÂU HỎI cho kế toán: tháng 1–6/2026 khấu trừ theo biểu cũ 7 bậc rồi quyết toán theo biểu mới, hay khấu trừ ngay theo biểu mới? Bộ này khấu trừ theo biểu mới cả năm 2026. Thuế tính luỹ kế theo THÁNG CHI. Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "PIT_DEDUCTIONS": {
+      "label": "Giảm trừ gia cảnh: bản thân 15,5 triệu, mỗi người phụ thuộc đã đăng ký 6,2 triệu / tháng; trừ bảo hiểm bắt buộc người lao động đóng",
+      "value": {
+        "self_vnd": 15500000,
+        "dependant_vnd": 6200000
+      },
+      "basis": "NQ 110/2025/UBTVQH15 (hiệu lực 01/01/2026, theo bài tổng hợp của KPMG): 15.500.000 và 6.200.000 đồng/tháng (thay 11 / 4,4 triệu). Bảo hiểm bắt buộc phần người lao động đóng được trừ (Luật Thuế TNCN). Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "PIT_OT_EXEMPT": {
+      "label": "Miễn thuế phần tiền làm thêm giờ cao hơn tiền lương giờ làm việc bình thường",
+      "value": {
+        "exempt_premium": true
+      },
+      "basis": "TT 111/2013/TT-BTC Đ3.1.i (bản chép lại) và Luật 109/2025, NĐ 253/2026 (theo bài tổng hợp): phần chênh của tiền làm thêm giờ so với giờ bình thường được miễn. CÂU HỎI cho kế toán: luật mới miễn phần chênh hay toàn bộ tiền làm thêm? Bộ này chỉ miễn PHẦN CHÊNH. Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "OT_PAY": {
+      "label": "Tiền làm thêm giờ: hệ số 150% ngày thường, 200% ngày nghỉ hằng tuần, 300% ngày lễ; đơn giá giờ = lương tháng / ngày công chuẩn (tối đa 26) / 8 giờ",
+      "value": {
+        "multipliers_bps": {
+          "ot.150": 15000,
+          "ot.200": 20000,
+          "ot.300": 30000
+        },
+        "hours_per_day": 8,
+        "max_std_days": 26
+      },
+      "basis": "BLLĐ 45/2019/QH14 Đ98 (bản chép lại): ít nhất 150% / 200% / 300% (300% chưa kể lương ngày lễ có hưởng lương); NĐ 145/2020/NĐ-CP Đ55 (theo bài tổng hợp): tiền lương giờ = lương tháng chia số ngày làm việc bình thường trong tháng (do doanh nghiệp quy định, tối đa 26) chia số giờ làm việc bình thường trong ngày. Lương tháng ở đây = các khoản cố định theo tháng của người đó (CÂU HỎI: loại khoản nào khỏi đơn giá). Làm đêm (+30%, +20%) CHƯA tính. Chờ kế toán xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    }
+  }
+}

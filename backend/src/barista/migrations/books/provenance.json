@@ -1,0 +1,8 @@
+{
+ "files": {
+  "000_baseline/08_books.sql": {
+   "from": "base/000_baseline/08_books.sql",
+   "sha256": "2734a9dc018ce7c645e12680c2cbfa92569bd0cc38246122c4eeaab8675dc3b3"
+  }
+ }
+}

@@ -1,0 +1,15 @@
+# Gói mẫu NGOÀI REPO LÕI (0130 lát 2–3): một bản phân phối Python riêng, chỉ dùng bề mặt công bố `barista.api`, tự mang migration.
+# tests/test_pack_loading.py "cài" nó vào một thư mục site tạm (dist-info dựng từ chính file này) rồi chạy lõi kèm / không kèm nó.
+[project]
+name = "barista-pack-sample"
+version = "0.1.0"
+description = "Gói mẫu ngoài lõi — thước đo nạp gói bằng entry point"
+requires-python = ">=3.14"
+dependencies = ["barista"]
+
+[project.entry-points."barista.packs"]
+sample = "barista_pack_sample"
+
+[build-system]
+requires = ["uv_build>=0.9.9,<0.10.0"]
+build-backend = "uv_build"

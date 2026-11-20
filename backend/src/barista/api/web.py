@@ -1,0 +1,37 @@
+"""HTTP do module tự khai (``Module.route``): người gọi, kết quả executor, kênh SSE, tệp gửi lên theo khúc — xác thực / hạn mức ở lõi."""
+
+from barista.kernel.web import (
+    AUTH,
+    CHANGED,
+    EVENT,
+    GONE,
+    PING,
+    RESYNC,
+    RETRY,
+    Body,
+    HTTPException,
+    JSONResponse,
+    LinkListener,
+    Listener,
+    Request,
+    Response,
+    StreamingResponse,
+    app_url,
+    caller,
+    inbox_feed,
+    link_caller,
+    multipart,
+    public_url,
+    query,
+    relay,
+    result,
+    run,
+    settle,
+    sse,
+    state_of,
+    subscribe,
+)
+
+__all__ = ["AUTH", "CHANGED", "EVENT", "GONE", "PING", "RESYNC", "RETRY", "Body", "HTTPException", "JSONResponse", "LinkListener", "Listener",
+           "Request", "Response", "StreamingResponse", "app_url", "caller", "inbox_feed", "link_caller", "multipart", "public_url", "query", "relay", "result", "run",
+           "settle", "sse", "state_of", "subscribe"]

@@ -1,0 +1,24 @@
+{
+ "files": {
+  "000_baseline/09_talk.sql": {
+   "from": "base/000_baseline/09_talk.sql",
+   "sha256": "3722f42efcf78cda69d5699d4b1dafee328162fca7313b4dfea2d443c85f8cef"
+  },
+  "031_talk_daily.sql": {
+   "from": "base/031_talk_daily.sql",
+   "sha256": "f5b201fbd953e8bbff1b067e532958e3ff5ae4a9406be25d73667d0eedd6a306"
+  },
+  "040_links_team_rooms.sql": {
+   "from": "base/040_chat_files_team_spaces.sql",
+   "sha256": "8e4048f41f9ab02a761c2a17d18e8a7f7f6f02517777885fa7b0ec87190cdf49"
+  },
+  "041_attachment_file_ref.sql": {
+   "from": "base/041_files.sql",
+   "sha256": "12c3adeff15b557946510110698d789d45fa616dee1c3a347dd17579f6bfb0a4"
+  },
+  "042_attachments_file_required.sql": {
+   "from": "base/042_files_required.sql",
+   "sha256": "d074bc52e12018a73d1549ae650671a73c195c261cfa66881f8e33bed6c76408"
+  }
+ }
+}

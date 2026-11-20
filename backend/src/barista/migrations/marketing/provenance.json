@@ -1,0 +1,12 @@
+{
+ "files": {
+  "000_baseline/15_mkt.sql": {
+   "from": "base/000_baseline/15_mkt.sql",
+   "sha256": "25ec1d282031a4c04be1949a4c48b3d9d14772d43bec7ed6e2943987f4635829"
+  },
+  "038_campaign_offering_columns.sql": {
+   "from": "crm/038_rename_offering_columns.sql",
+   "sha256": "2564c2ac9819025f521718815bfdb6c5be405c7f791f3adcd399fd4110ed3d97"
+  }
+ }
+}

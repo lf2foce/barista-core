@@ -1,0 +1,31 @@
+# @@TITLE@@ (`@@KEY@@`)
+
+Gói Barista: bản phân phối Python `@@DIST@@` (import `@@PKG@@`), dựng từ khuôn của lõi (`bash scripts/pack.sh new`, `barista.api` @@API@@).
+Gói nằm trong repo CỦA BẠN. Bạn tạo nhánh, đánh tag và thử thoải mái; gói ở lại đây, không cần gửi vào repo gói chính thức của Barista.
+
+## Thử trên máy
+
+Cần repo lõi `barista-core` đã clone, Postgres local, `uv`, Python 3.14 (runbook 01 của lõi). Từ thư mục repo lõi:
+
+```bash
+cd backend && uv sync --frozen && cd ..
+uv pip install --python backend/.venv/bin/python --no-deps -e <đường dẫn tới thư mục gói này>   # cài vào môi trường của LÕI (--python bắt buộc)
+cd backend && .venv/bin/python -m pytest <đường dẫn tới thư mục gói này>/tests                    # test của gói
+```
+
+Chạy lõi trên máy thì gói tự nạp (biến `BARISTA_PACKS` trống nghĩa là nạp mọi gói đã cài). Bật gói cho một công ty ở Gói & ứng dụng.
+
+## Kiểm trước khi gửi
+
+Từ repo lõi: `bash scripts/pack.sh check <đường dẫn tới thư mục gói này>`. Lệnh dựng một bản lõi sạch, cài gói vào, rồi chạy ruff, pyright, test của
+gói và các test cấu trúc của lõi trên mã gói. ĐẠT thì gửi tag (hoặc commit) cho bên vận hành Barista. Bên đó review mã rồi ghim lên bản cài,
+như mọi mã chạy trong lõi (gói chạy chung tiến trình với lõi).
+
+## Luật
+
+- Mã chạy chỉ import `barista.api`. Thiếu thứ gì thì xin thêm vào lõi, không import `barista.kernel`.
+- Bảng nằm trong schema `@@KEY@@`, bật RLS bằng `core.secure_*`. Migration đã chạy thì không sửa nữa, thay đổi viết vào file số tiếp theo.
+- Không ghi tên khách, email hay số điện thoại thật, khoá API vào mã, test hay dữ liệu mẫu.
+- Phiên bản: tag `@@KEY@@/vX.Y.Z` có chú thích, khớp `version` trong `pyproject.toml`. Không dời tag đã gửi.
+
+Hợp đồng đầy đủ của một gói: `docs/runbooks/12-them-mot-goi.md`. Quy trình cho gói của đối tác: `docs/runbooks/21-goi-cua-doi-tac.md` (cả hai ở repo lõi).

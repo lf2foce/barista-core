@@ -1,0 +1,1 @@
+{"maintenance": ["024_customer_identity.sql", "038_offering_columns.sql", "069_appointments_on_calendar.sql", "083_customer_phone_e164.sql", "084_campaign_plan_routing.sql"]}

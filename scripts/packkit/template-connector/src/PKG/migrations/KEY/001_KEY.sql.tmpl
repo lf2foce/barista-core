@@ -1,0 +1,18 @@
+-- module: @@KEY@@
+-- Bảng của gói kết nối @@TITLE@@ — VÍ DỤ chạy được. Gói thật ghi dữ liệu qua LỆNH của module sở hữu (lead, đơn, bài viết…), chỉ giữ ở đây thứ của
+-- riêng mình. Kết nối, khoá, con trỏ, nhật ký đồng bộ nằm ở lõi (schema connectors) — gói KHÔNG tự làm bảng kết nối / khoá.
+-- Migration đã chạy ở bất kỳ DB nào thì KHÔNG sửa (lõi chặn checksum lệch) — thay đổi sau này là file mới 002_…, 003_…
+
+CREATE SCHEMA @@KEY@@;
+GRANT USAGE ON SCHEMA @@KEY@@ TO barista_app;
+
+CREATE TABLE @@KEY@@.records (
+    tenant_id     UUID NOT NULL DEFAULT core.tenant() REFERENCES core.tenants(id) ON DELETE CASCADE,
+    connection_id UUID NOT NULL,
+    ref           TEXT NOT NULL CHECK (btrim(ref) <> '' AND length(ref) <= 200),
+    title         TEXT NOT NULL CHECK (btrim(title) <> ''),
+    received_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, connection_id, ref)   -- chống lặp theo mã của hệ ngoài: lõi giao lại một mục thì không ghi trùng
+);
+CALL core.secure_table('@@KEY@@.records', '@@KEY@@');
+GRANT SELECT, INSERT ON @@KEY@@.records TO barista_app;

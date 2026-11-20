@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Kiểm nhanh trước khi đẩy (~1 phút): quét tên khách / email thật / khoá bí mật (barista-ops), khoá phát hành (khi đẩy main), ruff + pyright (khi backend/ hoặc deploy/ đổi), tsc (khi web/ đổi), BỘ TEST LUẬT (khi bộ quy định đổi — GitHub CI
+# đã tắt nên đây là cổng sớm nhất cho luật, runbook 13). KHÔNG chạy bộ test đầy đủ
+# (backend/scripts/test_repeat.sh chạy tay trước phát hành). Bỏ qua khẩn cấp: git push --no-verify.
+# Cài: bash scripts/install_hooks.sh
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+ZERO=0000000000000000000000000000000000000000
+
+changed=""
+to_main=0
+pushed=()
+while read -r _lref lsha rref rsha; do
+  [[ "$lsha" == "$ZERO" ]] && continue   # xoá nhánh
+  pushed+=("$lsha")
+  [[ "$rref" == refs/heads/main ]] && to_main=1
+  if [[ "$rsha" == "$ZERO" ]]; then      # nhánh mới: so với main (hoặc origin/main)
+    base="$(git merge-base "$lsha" origin/main 2>/dev/null || git merge-base "$lsha" main 2>/dev/null || true)"
+  else
+    base="$rsha"
+  fi
+  if [[ -n "$base" ]] && git cat-file -e "$base" 2>/dev/null; then
+    changed+=$'\n'"$(git diff --name-only "$base" "$lsha")"
+  else
+    changed+=$'\n'"backend/ web/"   # không xác định được gốc ⇒ kiểm hết
+  fi
+done
+
+fail=0
+# Lõi coi như CÓ THỂ CÔNG KHAI: mọi commit đẩy lên (mọi nhánh) không mang tên khách / email thật / khoá bí mật. Danh sách tên nằm ở repo riêng tư
+# barista-ops (share/scan-core.sh, cạnh repo lõi — như deploy/packs.py tìm repo anh em), không nằm trong lõi; không có barista-ops ⇒ chỉ cảnh báo.
+siblings="$(dirname "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")")"
+scan="${BARISTA_OPS_DIR:-$siblings/barista-ops}/share/scan-core.sh"
+if [[ -f "$scan" ]]; then
+  for sha in "${pushed[@]}"; do bash "$scan" "$sha" || fail=1; done
+else
+  echo "pre-push: bỏ qua quét tên khách — không thấy $scan"
+fi
+if [[ $to_main == 1 ]]; then
+  # DIEU-PHOI luật 2–3: đang có người phát hành ⇒ không đẩy main. Kiểm đủ (lõi + gói ghim của bản cài) là scripts/premerge.sh — chạy TRƯỚC khi đẩy.
+  bash scripts/release_lock.sh || fail=1
+  echo "pre-push: đẩy main — đã chạy 'bash scripts/premerge.sh' (hoặc --quick) trên đúng cây này chưa?"
+fi
+if grep -qE '^(backend/|deploy/)|backend/ ' <<<"$changed"; then
+  echo "pre-push: ruff + pyright"
+  (cd backend && uv run ruff check src tests ../deploy && uv run pyright) || fail=1
+fi
+if grep -qE '^backend/src/barista/(regulations/|kernel/regulations\.py|modules/pay/engine\.py)|backend/ ' <<<"$changed"; then
+  # luật là dữ liệu có hậu quả tiền / hạn nộp (0154): nạp mọi file + hợp đồng mã + tính lương theo luật + sổ sách + lịch + tuổi bảo vệ dữ liệu
+  echo "pre-push: test luật (regulations / pay statutory / books / calendar / minors)"
+  (cd backend && uv run pytest -q -n 2 tests/test_regulations.py tests/test_pay_statutory.py tests/test_books.py tests/test_business_calendar.py \
+      tests/test_minors.py tests/test_pack_surface.py) || fail=1
+fi
+if grep -qE '^web/|web/ ' <<<"$changed"; then
+  if [[ -d web/node_modules ]]; then
+    echo "pre-push: tsc (web)"
+    (cd web && pnpm exec tsc --noEmit) || fail=1
+  else
+    echo "pre-push: bỏ qua tsc — web/node_modules chưa cài (pnpm install --frozen-lockfile)"
+  fi
+fi
+if [[ $fail -ne 0 ]]; then
+  echo "pre-push: LỖI — sửa rồi đẩy lại (khẩn cấp: git push --no-verify)" >&2
+  exit 1
+fi

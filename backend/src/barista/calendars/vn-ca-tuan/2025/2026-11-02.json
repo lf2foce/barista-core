@@ -1,0 +1,28 @@
+{
+  "calendar": "vn-ca-tuan",
+  "year": 2025,
+  "version": "2026-11-02",
+  "status": "assumption",
+  "verified_by": "",
+  "weekend": [],
+  "holidays": [
+    "2025-01-01",
+    "2025-01-27",
+    "2025-01-28",
+    "2025-01-29",
+    "2025-01-30",
+    "2025-01-31",
+    "2025-04-07",
+    "2025-04-30",
+    "2025-05-01",
+    "2025-05-02",
+    "2025-09-01",
+    "2025-09-02"
+  ],
+  "working_days": [],
+  "sources": [
+    "https://baochinhphu.vn/chinh-thuc-bo-ldtbxh-thong-bao-lich-nghi-tet-nguyen-dan-at-ty-va-nghi-le-nam-2025-10224120316465192.htm",
+    "https://xaydungchinhsach.chinhphu.vn/lich-nghi-le-30-4-1-5-va-nghi-quoc-khanh-2025-119250204221442901.htm"
+  ],
+  "basis": "Làm cả tuần (kể cả thứ Bảy, Chủ nhật), chỉ nghỉ ngày lễ / Tết theo lịch vn-public cùng năm — cho đội bán hàng, trực dự án. Ngày nghỉ lễ chép từ vn-public; sửa lịch lễ ở cả hai."
+}

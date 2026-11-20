@@ -1,0 +1,60 @@
+{
+  "pack": "vn-vat",
+  "title": "Thuế GTGT — Việt Nam (đầu ra; điều kiện khấu trừ đầu vào)",
+  "version": "2025-07-01",
+  "effective_from": "2025-07-01",
+  "published_on": "2026-11-11",
+  "retroactive_reason": "Bản nạp ban đầu của bộ khi dựng hệ thống (ADR 0165): chưa có hoá đơn GTGT nào tính theo bộ này trước ngày phát hành — công tắc acct.vat_enabled mặc định tắt và lần ghi thật bị chặn tới khi kế toán xác minh từng quy tắc — nên không đổi số đã ghi (dữ liệu lịch sử, không phải văn bản mới hồi tố).",
+  "status": "assumption",
+  "verified_by": "",
+  "summary": "CHỜ KẾ TOÁN XÁC MINH TỪNG QUY TẮC (ADR 0165). Luật Thuế GTGT 48/2024/QH15 hiệu lực 01/07/2025 (thuế suất 0% / 5% / 10%, đối tượng không chịu thuế), NĐ 181/2025/NĐ-CP (sửa bởi NĐ 359/2025, NĐ 144/2026 — theo bài tổng hợp) và giảm 2% (10% ⇒ 8%) theo NQ 204/2025/QH15 + NĐ 174/2025/NĐ-CP từ 01/07/2025 đến hết 31/12/2026 cho hàng hoá, dịch vụ KHÔNG thuộc danh mục loại trừ. Đọc từ bài tổng hợp (MISA, KPMG, Báo Chính phủ / VCCI), chưa đối chiếu Công báo. Mọi quy tắc 'assumption' ⇒ chỉ xem trước được, không ghi sổ.",
+  "sources": [
+    {"ref": "Luật Thuế giá trị gia tăng 48/2024/QH15 (hiệu lực 01/07/2025) — Điều 5 (không chịu thuế), Điều 8 khoản 1 (thời điểm xác định thuế), Điều 9 (thuế suất) — theo bài tổng hợp, chưa đối chiếu Công báo", "url": ""},
+    {"ref": "Nghị định 181/2025/NĐ-CP quy định chi tiết Luật Thuế GTGT (hiệu lực 01/07/2025); sửa đổi: NĐ 359/2025/NĐ-CP (01/01/2026), NĐ 144/2026/NĐ-CP (theo một nguồn) — chưa đối chiếu", "url": "https://amis.misa.vn/232183/nghi-dinh-181-2025-nd-cp/"},
+    {"ref": "Thông tư 69/2025/TT-BTC hướng dẫn Luật Thuế GTGT (hiệu lực 01/07/2025) — chưa đối chiếu", "url": ""},
+    {"ref": "Nghị quyết 204/2025/QH15 (17/06/2025) + Nghị định 174/2025/NĐ-CP (30/06/2025): giảm 2% thuế suất GTGT 01/07/2025 – 31/12/2026, trừ danh mục Phụ lục I–III", "url": "https://kpmg.com/vn/vi/home/phan-tich-chuyen-sau/2025/07/decree-174-extending-vat-reduction-to-2026.html"},
+    {"ref": "Thông tư 80/2021/TT-BTC (tờ khai 01/GTGT tới kỳ 06/2026 hoặc quý II/2026) và Thông tư 89/2026/TT-BTC (mẫu 01/GTGT từ kỳ 07/2026, thêm [32b], [34a]) — theo bài tổng hợp", "url": "https://einvoice.vn/tin-tuc/to-khai-01-gtgt-theo-tt89-2026"}
+  ],
+  "params": {
+    "RATE_STANDARD": {
+      "label": "Thuế suất GTGT phổ thông (hàng hoá, dịch vụ không thuộc 0% / 5% / không chịu thuế)",
+      "value": {"rate_bps": 1000, "report_line": "32/33"},
+      "basis": "Luật 48/2024/QH15 Điều 9 khoản 3 — 10%; tờ khai 01/GTGT chỉ tiêu [32] doanh thu / [33] thuế (TT 80/2021, giữ số ở TT 89/2026 — chờ kế toán xác nhận)"
+    },
+    "RATE_FIVE": {
+      "label": "Thuế suất GTGT 5% (danh mục hàng hoá, dịch vụ thiết yếu của luật)",
+      "value": {"rate_bps": 500, "report_line": "30/31"},
+      "basis": "Luật 48/2024/QH15 Điều 9 khoản 2 — 5%; tờ khai 01/GTGT chỉ tiêu [30] / [31] (chờ kế toán xác nhận)"
+    },
+    "RATE_ZERO": {
+      "label": "Thuế suất GTGT 0% (hàng hoá, dịch vụ xuất khẩu và trường hợp luật liệt kê)",
+      "value": {"rate_bps": 0, "report_line": "29"},
+      "basis": "Luật 48/2024/QH15 Điều 9 khoản 1 — 0%, kèm điều kiện chứng từ (hợp đồng, thanh toán qua ngân hàng…) do kế toán kiểm; tờ khai chỉ tiêu [29]"
+    },
+    "EXEMPT": {
+      "label": "Không chịu thuế GTGT (vd dạy học, dạy nghề theo quy định của pháp luật)",
+      "value": {"rate_bps": null, "report_line": "26"},
+      "basis": "Luật 48/2024/QH15 Điều 5 (26 nhóm; dạy học, dạy nghề — khoản 13 theo bản đọc, CẦN KẾ TOÁN XÁC NHẬN số khoản và phạm vi từng loại khoá học); hoá đơn ghi 'không chịu thuế', tờ khai chỉ tiêu [26]"
+    },
+    "NOT_DECLARED": {
+      "label": "Không phải kê khai, tính nộp thuế GTGT (vd tiền bồi thường, hỗ trợ không gắn với bán hàng — trường hợp do nghị định liệt kê)",
+      "value": {"rate_bps": null, "report_line": "32a"},
+      "basis": "NĐ 181/2025/NĐ-CP (điều khoản về trường hợp không phải kê khai, tính nộp — theo bài tổng hợp, cần kế toán xác nhận); tờ khai chỉ tiêu [32a] ('không kê khai, tính nộp thuế' ở TT 89/2026)"
+    },
+    "REDUCTION": {
+      "label": "Giảm 2% thuế suất GTGT (10% ⇒ 8%) theo khoảng ngày, chỉ cho loại thuế công ty khai 'được giảm'",
+      "value": {"windows": [{"from": "2025-07-01", "to": "2026-12-31", "rate_bps": 800, "replaces": "RATE_STANDARD"}]},
+      "basis": "NQ 204/2025/QH15 + NĐ 174/2025/NĐ-CP Điều 1 khoản 1–2, Điều 2 (hiệu lực 01/07/2025 – 31/12/2026). Danh mục KHÔNG được giảm (Phụ lục I–III: viễn thông, tài chính, ngân hàng, chứng khoán, bảo hiểm, KINH DOANH BẤT ĐỘNG SẢN, kim loại, khai khoáng, hàng chịu TTĐB…) — mã ngành của từng dịch vụ do kế toán đối chiếu; code không tự suy, công ty khai ở loại thuế. Hoá đơn ghi rõ mức 8% / số được giảm; khai kèm Phụ lục giảm thuế (chờ kế toán xác nhận cách khai trên mẫu 01/GTGT mới). Chưa thấy văn bản gia hạn sang 2027 (tra 11/11/2026)."
+    },
+    "ROUNDING": {
+      "label": "Làm tròn tiền thuế: tới 1 đồng, nửa lên, theo từng dòng hàng (một khoản phải thu = một dòng ở lát A)",
+      "value": {"unit_vnd": 1, "mode": "half_up", "per": "line"},
+      "basis": "Đồng tiền ghi hoá đơn là đồng Việt Nam (NĐ hoá đơn); KHÔNG tìm thấy điều khoản quy định cách làm tròn tiền thuế ở TT 78/2021 / TT 32/2025 / NĐ 254/2026 — đây là thực hành phổ biến của phần mềm hoá đơn, CẦN KẾ TOÁN XÁC NHẬN khớp với phần mềm hoá đơn điện tử đang dùng (lệch 1 đồng là lệch tờ khai)."
+    },
+    "INPUT_CREDIT": {
+      "label": "Khấu trừ thuế GTGT đầu vào của chi phí mua vào: cần hoá đơn GTGT (số hoá đơn ghi trên phiếu) và chứng từ thanh toán không dùng tiền mặt khi tổng một lần mua từ ngưỡng trở lên",
+      "value": {"invoice_required": true, "noncash_from_vnd": 5000000, "report_line": "25"},
+      "basis": "Luật 48/2024/QH15 Điều 14 khoản 2 (điều kiện khấu trừ: hoá đơn GTGT; chứng từ thanh toán không dùng tiền mặt, trừ trường hợp Chính phủ quy định); NĐ 181/2025/NĐ-CP — mua vào mỗi lần dưới 5 triệu đồng (giá đã gồm thuế) không cần chứng từ thanh toán không dùng tiền mặt (theo bài tổng hợp, chưa đối chiếu); chỉ tiêu [25] tờ khai 01/GTGT. Bổ sung 11/11/2026 vào bản nạp ban đầu (ADR 0170, chưa phát hành). CẦN KẾ TOÁN XÁC NHẬN ngưỡng, cách hiểu 'một lần mua', và việc khấu trừ khi ghi nợ nhà cung cấp chưa thanh toán."
+    }
+  }
+}

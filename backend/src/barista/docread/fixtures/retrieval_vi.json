@@ -1,0 +1,552 @@
+{
+ "_note": "Bộ truy hồi GIẢ để so cấu hình nhúng (ADR 0232): đoạn + câu hỏi tiếng Việt do người soạn, KHÔNG có dữ liệu khách. Câu hỏi cố ý nói khác chữ của đoạn (đồng nghĩa, nói thường ngày, không dấu, viết tắt). Nhỏ ⇒ chỉ đủ so sánh thô; bộ thật của khách để ở máy (--dir, retrieval.json cùng định dạng).",
+ "passages": [
+  {
+   "id": "hoan-giu-cho",
+   "text": "Khách huỷ giữ chỗ trong vòng 7 ngày kể từ ngày đặt thì được hoàn lại 100% tiền giữ chỗ; sau 7 ngày chỉ hoàn 50%."
+  },
+  {
+   "id": "lai-cham-tra",
+   "text": "Bên mua thanh toán chậm quá 10 ngày so với lịch phải chịu lãi 0,03% mỗi ngày trên số tiền chậm."
+  },
+  {
+   "id": "hoa-hong",
+   "text": "Nhân viên kinh doanh được hưởng hoa hồng 2% giá trị căn hộ sau khi khách đã đóng đủ đợt 2."
+  },
+  {
+   "id": "tam-ung-hoa-hong",
+   "text": "Nhân viên kinh doanh có thể tạm ứng tối đa 50% hoa hồng dự kiến sau khi hợp đồng đặt cọc được duyệt."
+  },
+  {
+   "id": "phep-nam",
+   "text": "Mỗi nhân viên có 12 ngày phép năm, cộng thêm 1 ngày cho mỗi 5 năm thâm niên."
+  },
+  {
+   "id": "nghi-om",
+   "text": "Nghỉ ốm có giấy của cơ sở y tế được hưởng bảo hiểm xã hội; nghỉ không có giấy thì trừ vào ngày phép năm."
+  },
+  {
+   "id": "lam-them",
+   "text": "Làm thêm giờ ngày thường được trả 150% lương giờ, ngày nghỉ hằng tuần 200%, ngày lễ 300%."
+  },
+  {
+   "id": "hoa-don-vat",
+   "text": "Hoá đơn giá trị gia tăng phải xuất trong vòng 24 giờ kể từ khi khách thanh toán và gửi qua email khách đã đăng ký."
+  },
+  {
+   "id": "hoan-ung",
+   "text": "Khoản tạm ứng phải hoàn ứng kèm chứng từ trong 15 ngày; quá hạn sẽ trừ vào lương kỳ kế tiếp."
+  },
+  {
+   "id": "cong-tac-phi",
+   "text": "Đi công tác tỉnh được hưởng phụ cấp ăn 200.000 đồng mỗi ngày; vé máy bay hạng phổ thông do công ty chi trả."
+  },
+  {
+   "id": "mat-khau",
+   "text": "Mật khẩu hệ thống phải dài tối thiểu 12 ký tự và đổi mỗi 90 ngày; không dùng lại 5 mật khẩu gần nhất."
+  },
+  {
+   "id": "xac-thuc-2-lop",
+   "text": "Tài khoản quản trị bắt buộc bật xác thực hai bước bằng ứng dụng tạo mã, không dùng tin nhắn SMS."
+  },
+  {
+   "id": "mat-thiet-bi",
+   "text": "Mất thiết bị của công ty phải báo bộ phận CNTT trong 2 giờ để khoá từ xa và thu hồi quyền truy cập."
+  },
+  {
+   "id": "sao-luu",
+   "text": "Dữ liệu được sao lưu mỗi đêm lúc 3 giờ sáng và giữ 30 bản gần nhất; khôi phục thử mỗi quý một lần."
+  },
+  {
+   "id": "phi-quan-ly",
+   "text": "Phí quản lý chung cư là 12.000 đồng mỗi mét vuông mỗi tháng, thu theo quý."
+  },
+  {
+   "id": "phi-gui-xe",
+   "text": "Gửi ô tô tại hầm B1 giá 1.200.000 đồng mỗi tháng; xe máy 120.000 đồng mỗi tháng."
+  },
+  {
+   "id": "ban-giao",
+   "text": "Căn hộ được bàn giao trong 60 ngày sau khi khách đóng đủ 95% giá trị hợp đồng; khách kiểm tra và ký biên bản bàn giao."
+  },
+  {
+   "id": "bao-hanh",
+   "text": "Chủ đầu tư bảo hành kết cấu 60 tháng và hoàn thiện nội thất 12 tháng kể từ ngày bàn giao."
+  },
+  {
+   "id": "so-hong",
+   "text": "Hồ sơ xin cấp giấy chứng nhận quyền sở hữu nộp trong 50 ngày sau bàn giao; khách chuẩn bị căn cước công dân và biên bản bàn giao."
+  },
+  {
+   "id": "vay-ngan-hang",
+   "text": "Ngân hàng đối tác cho vay tối đa 70% giá trị căn hộ, ân hạn nợ gốc 24 tháng, lãi suất ưu đãi 12 tháng đầu."
+  },
+  {
+   "id": "chiet-khau-som",
+   "text": "Thanh toán sớm hơn hạn 30 ngày được chiết khấu 1,5% trên số tiền đóng sớm."
+  },
+  {
+   "id": "chuyen-nhuong",
+   "text": "Khách được chuyển nhượng hợp đồng cho người khác sau khi đóng đợt 2; phí chuyển nhượng 1% giá trị hợp đồng."
+  },
+  {
+   "id": "huy-hop-dong",
+   "text": "Nếu khách đơn phương chấm dứt hợp đồng mua bán, chủ đầu tư giữ lại 10% giá trị hợp đồng, phần còn lại hoàn trong 60 ngày."
+  },
+  {
+   "id": "nha-mau",
+   "text": "Nhà mẫu mở cửa từ 8 giờ đến 18 giờ kể cả cuối tuần; khách nên đặt lịch trước một ngày."
+  },
+  {
+   "id": "tuyen-dung",
+   "text": "Quy trình tuyển dụng gồm sàng lọc hồ sơ, phỏng vấn chuyên môn, phỏng vấn giám đốc và gửi thư mời nhận việc trong 3 ngày."
+  },
+  {
+   "id": "thu-viec",
+   "text": "Thời gian thử việc 2 tháng, lương thử việc bằng 85% lương chính thức."
+  },
+  {
+   "id": "danh-gia",
+   "text": "Đánh giá năng lực mỗi 6 tháng theo thang điểm 1–5; từ 4 điểm trở lên được xét tăng lương."
+  },
+  {
+   "id": "thuong-gioi-thieu",
+   "text": "Người giới thiệu ứng viên được nhận việc và qua thử việc sẽ nhận thưởng 3.000.000 đồng."
+  },
+  {
+   "id": "bao-gia",
+   "text": "Báo giá gửi khách có hiệu lực 15 ngày; hết thời hạn phải xin duyệt lại giá."
+  },
+  {
+   "id": "giam-gia",
+   "text": "Giảm giá trên 3% cần trưởng phòng duyệt, trên 7% cần giám đốc duyệt."
+  },
+  {
+   "id": "khieu-nai",
+   "text": "Khiếu nại của khách phải được phản hồi trong 24 giờ và giải quyết xong trong 7 ngày làm việc."
+  },
+  {
+   "id": "cham-soc-sau-ban",
+   "text": "Sau bàn giao, nhân viên chăm sóc gọi thăm khách vào ngày thứ 7, thứ 30 và thứ 90."
+  },
+  {
+   "id": "du-lieu-ca-nhan",
+   "text": "Thông tin cá nhân của khách chỉ dùng để tư vấn, không chia sẻ cho bên thứ ba khi chưa có đồng ý bằng văn bản."
+  },
+  {
+   "id": "ngung-nhan-tin",
+   "text": "Khách có quyền yêu cầu ngừng nhận tin quảng cáo bất cứ lúc nào; yêu cầu được thực hiện trong 3 ngày."
+  },
+  {
+   "id": "giao-ban",
+   "text": "Họp giao ban sáng thứ Hai lúc 8 giờ 30, mỗi phòng báo cáo số liệu tuần trước trong 5 phút."
+  },
+  {
+   "id": "phu-cap-dien-thoai",
+   "text": "Nhân viên kinh doanh được hỗ trợ cước điện thoại 300.000 đồng mỗi tháng."
+  },
+  {
+   "id": "dong-phuc",
+   "text": "Đồng phục phát hai bộ mỗi năm; nhân viên tự giặt ủi và mặc vào thứ Hai và thứ Sáu."
+  },
+  {
+   "id": "phong-chay",
+   "text": "Khi có báo cháy, di chuyển bằng cầu thang bộ, không dùng thang máy và tập trung tại sân sau toà nhà."
+  },
+  {
+   "id": "quy-bao-tri",
+   "text": "Quỹ bảo trì bằng 2% giá trị căn hộ, đóng một lần khi nhận bàn giao."
+  },
+  {
+   "id": "thang-may-hong",
+   "text": "Sự cố thang máy báo ban quản lý qua số nội bộ 1900; kỹ thuật viên có mặt trong 30 phút."
+  },
+  {
+   "id": "dat-giu-cho",
+   "text": "Khách đặt giữ chỗ phải nộp 20.000.000 đồng trong 24 giờ; quá hạn thì chỗ được mở bán cho người khác."
+  },
+  {
+   "id": "lich-thanh-toan",
+   "text": "Lịch thanh toán gồm 5 đợt: đợt 1 là 30% khi ký hợp đồng, các đợt sau mỗi đợt 15% cách nhau 3 tháng."
+  },
+  {
+   "id": "hoa-hong-gioi-thieu-khach",
+   "text": "Khách cũ giới thiệu người mua căn hộ được tặng phiếu giảm phí quản lý 6 tháng, không nhận tiền mặt."
+  },
+  {
+   "id": "chi-tieu-kinh-doanh",
+   "text": "Chỉ tiêu bán hàng mỗi quý của nhân viên kinh doanh là 3 căn; không đạt hai quý liên tiếp bị xem xét điều chuyển."
+  },
+  {
+   "id": "nghi-thai-san",
+   "text": "Nhân viên nữ nghỉ thai sản 6 tháng hưởng bảo hiểm xã hội, được giữ nguyên vị trí khi quay lại."
+  },
+  {
+   "id": "nghi-le",
+   "text": "Công ty nghỉ 11 ngày lễ trong năm theo luật; nếu lễ trùng chủ nhật thì nghỉ bù vào ngày làm việc kế tiếp."
+  },
+  {
+   "id": "luong-thang-13",
+   "text": "Lương tháng 13 chi vào tháng 12, tính theo số tháng làm việc thực tế trong năm."
+  },
+  {
+   "id": "hoa-don-dien-tu",
+   "text": "Hoá đơn điện tử được lưu 10 năm trên hệ thống kế toán; nhân viên không tự xoá hoặc sửa hoá đơn đã phát hành."
+  },
+  {
+   "id": "thanh-toan-ncc",
+   "text": "Nhà cung cấp được thanh toán trong 30 ngày kể từ ngày nhận đủ hàng và hoá đơn hợp lệ."
+  },
+  {
+   "id": "thue-tncn",
+   "text": "Thuế thu nhập cá nhân được công ty khấu trừ hằng tháng và quyết toán vào quý I năm sau."
+  },
+  {
+   "id": "vpn",
+   "text": "Làm việc từ xa phải kết nối VPN của công ty; không truy cập dữ liệu khách hàng từ mạng wifi công cộng."
+  },
+  {
+   "id": "phan-quyen",
+   "text": "Quyền truy cập dữ liệu khách theo vai trò; trưởng phòng xem được dữ liệu cả phòng, nhân viên chỉ xem khách của mình."
+  },
+  {
+   "id": "thiet-bi-moi",
+   "text": "Nhân viên mới được cấp laptop và điện thoại bàn trong ngày đầu đi làm, bộ phận CNTT bàn giao có biên bản."
+  },
+  {
+   "id": "khoi-phuc",
+   "text": "Yêu cầu khôi phục dữ liệu bị xoá nhầm gửi cho CNTT, xử lý trong 1 ngày làm việc."
+  },
+  {
+   "id": "phi-dich-vu-thuong-mai",
+   "text": "Mặt bằng thương mại tầng trệt tính phí dịch vụ 25.000 đồng mỗi mét vuông mỗi tháng."
+  },
+  {
+   "id": "phi-gui-xe-khach",
+   "text": "Khách đến tham quan được gửi xe miễn phí trong 2 giờ đầu tại hầm B1."
+  },
+  {
+   "id": "nhan-nha-dung-han",
+   "text": "Nhận nhà đúng hạn khách được tặng một năm phí quản lý; bàn giao trễ quá 3 tháng, chủ đầu tư phải bồi thường theo hợp đồng."
+  },
+  {
+   "id": "sua-chua-noi-that",
+   "text": "Khách tự thi công nội thất phải đăng ký với ban quản lý và đóng tiền cọc thi công 5.000.000 đồng."
+  },
+  {
+   "id": "ho-so-vay",
+   "text": "Hồ sơ vay mua nhà gồm hợp đồng mua bán, giấy tờ tuỳ thân, sao kê lương và xác nhận thu nhập ba tháng gần nhất."
+  },
+  {
+   "id": "lai-suat-tha-noi",
+   "text": "Sau thời gian ưu đãi, lãi suất cho vay thả nổi bằng lãi suất tiết kiệm 12 tháng cộng biên độ 3,5% mỗi năm."
+  },
+  {
+   "id": "thue-phi-chuyen-nhuong",
+   "text": "Người bán lại căn hộ nộp thuế thu nhập cá nhân 2% trên giá chuyển nhượng và lệ phí trước bạ do người mua nộp."
+  },
+  {
+   "id": "doi-can-ho",
+   "text": "Khách muốn đổi sang căn khác cùng dự án phải còn căn trống và nộp phí đổi 0,5% giá trị hợp đồng."
+  },
+  {
+   "id": "mo-nha-mau-le",
+   "text": "Dịp lễ lớn nhà mẫu mở cửa đến 20 giờ và có chương trình đón khách tham quan."
+  },
+  {
+   "id": "phong-van-online",
+   "text": "Phỏng vấn vòng đầu có thể thực hiện trực tuyến, vòng cuối bắt buộc gặp trực tiếp tại văn phòng."
+  },
+  {
+   "id": "hop-dong-lao-dong",
+   "text": "Sau thử việc, nhân viên ký hợp đồng lao động 12 tháng, hết hạn ký tiếp thì chuyển hợp đồng không xác định thời hạn."
+  },
+  {
+   "id": "thong-bao-nghi-viec",
+   "text": "Nhân viên xin nghỉ việc phải báo trước 30 ngày và bàn giao công việc, tài sản cho người được chỉ định."
+  },
+  {
+   "id": "phan-hoi-lead",
+   "text": "Lead mới từ quảng cáo phải được gọi lại trong vòng 15 phút trong giờ hành chính."
+  },
+  {
+   "id": "goi-lai-khach",
+   "text": "Khách chưa nghe máy được gọi lại tối đa 3 lần trong 2 ngày trước khi đưa vào danh sách chăm sóc sau."
+  },
+  {
+   "id": "xu-ly-su-co",
+   "text": "Sự cố điện nước trong căn hộ báo ban quản lý, kỹ thuật viên xử lý trong 4 giờ với sự cố khẩn."
+  },
+  {
+   "id": "diem-danh",
+   "text": "Chấm công bằng vân tay hoặc ứng dụng; đi trễ quá 3 lần trong tháng bị trừ 1 ngày phép."
+  }
+ ],
+ "questions": [
+  {
+   "q": "huỷ cọc có được trả lại tiền không",
+   "expect": [
+    "hoan-giu-cho"
+   ]
+  },
+  {
+   "q": "trả tiền trễ hạn thì bị phạt bao nhiêu",
+   "expect": [
+    "lai-cham-tra"
+   ]
+  },
+  {
+   "q": "sale ăn bao nhiêu phần trăm khi bán được căn",
+   "expect": [
+    "hoa-hong"
+   ]
+  },
+  {
+   "q": "ứng trước tiền thưởng cho nhân viên bán hàng được bao nhiêu",
+   "expect": [
+    "tam-ung-hoa-hong"
+   ]
+  },
+  {
+   "q": "một năm được nghỉ có lương mấy ngày",
+   "expect": [
+    "phep-nam"
+   ]
+  },
+  {
+   "q": "bị bệnh mà không có giấy bác sĩ thì tính sao",
+   "expect": [
+    "nghi-om"
+   ]
+  },
+  {
+   "q": "đi làm chủ nhật được trả gấp mấy lần",
+   "expect": [
+    "lam-them"
+   ]
+  },
+  {
+   "q": "bao lâu phải xuất hoá đơn đỏ cho khách",
+   "expect": [
+    "hoa-don-vat"
+   ]
+  },
+  {
+   "q": "tiền ứng quá hạn chưa báo cáo thì xử lý thế nào",
+   "expect": [
+    "hoan-ung"
+   ]
+  },
+  {
+   "q": "đi công tác tỉnh được hỗ trợ ăn uống bao nhiêu",
+   "expect": [
+    "cong-tac-phi"
+   ]
+  },
+  {
+   "q": "mat khau toi thieu bao nhieu ky tu",
+   "expect": [
+    "mat-khau"
+   ]
+  },
+  {
+   "q": "đăng nhập quản trị có cần mã OTP không",
+   "expect": [
+    "xac-thuc-2-lop"
+   ]
+  },
+  {
+   "q": "làm rơi máy tính của công ty phải làm gì",
+   "expect": [
+    "mat-thiet-bi"
+   ]
+  },
+  {
+   "q": "dữ liệu có được lưu dự phòng hằng ngày không",
+   "expect": [
+    "sao-luu"
+   ]
+  },
+  {
+   "q": "tiền dịch vụ toà nhà tính theo mét vuông bao nhiêu",
+   "expect": [
+    "phi-quan-ly"
+   ]
+  },
+  {
+   "q": "gửi xe hơi dưới hầm tốn bao nhiêu một tháng",
+   "expect": [
+    "phi-gui-xe"
+   ]
+  },
+  {
+   "q": "khi nào giao nhà cho khách",
+   "expect": [
+    "ban-giao"
+   ]
+  },
+  {
+   "q": "nhà bị nứt tường sau khi nhận thì ai sửa trong bao lâu",
+   "expect": [
+    "bao-hanh"
+   ]
+  },
+  {
+   "q": "làm sổ hồng cần giấy tờ gì và bao lâu",
+   "expect": [
+    "so-hong"
+   ]
+  },
+  {
+   "q": "vay ngân hàng mua căn hộ được tối đa mấy phần trăm",
+   "expect": [
+    "vay-ngan-hang"
+   ]
+  },
+  {
+   "q": "đóng tiền sớm có được giảm không",
+   "expect": [
+    "chiet-khau-som"
+   ]
+  },
+  {
+   "q": "bán lại suất mua cho người khác tốn phí bao nhiêu",
+   "expect": [
+    "chuyen-nhuong"
+   ]
+  },
+  {
+   "q": "khách không mua nữa thì công ty giữ lại bao nhiêu",
+   "expect": [
+    "huy-hop-dong"
+   ]
+  },
+  {
+   "q": "cuối tuần có xem nhà mẫu được không",
+   "expect": [
+    "nha-mau"
+   ]
+  },
+  {
+   "q": "quy trình nhận người mới gồm những vòng nào",
+   "expect": [
+    "tuyen-dung"
+   ]
+  },
+  {
+   "q": "lương trong thời gian học việc bằng bao nhiêu",
+   "expect": [
+    "thu-viec"
+   ]
+  },
+  {
+   "q": "bao giờ thì xét tăng lương",
+   "expect": [
+    "danh-gia"
+   ]
+  },
+  {
+   "q": "giới thiệu bạn vào làm được thưởng bao nhiêu",
+   "expect": [
+    "thuong-gioi-thieu"
+   ]
+  },
+  {
+   "q": "bảng giá gửi khách dùng được bao lâu",
+   "expect": [
+    "bao-gia"
+   ]
+  },
+  {
+   "q": "muốn bớt giá cho khách 5% thì ai duyệt",
+   "expect": [
+    "giam-gia"
+   ]
+  },
+  {
+   "q": "khách phàn nàn thì phải trả lời trong bao lâu",
+   "expect": [
+    "khieu-nai"
+   ]
+  },
+  {
+   "q": "sau khi giao nhà bao giờ gọi hỏi thăm khách",
+   "expect": [
+    "cham-soc-sau-ban"
+   ]
+  },
+  {
+   "q": "có được đưa số điện thoại khách cho đối tác không",
+   "expect": [
+    "du-lieu-ca-nhan"
+   ]
+  },
+  {
+   "q": "khách không muốn nhận tin nhắn quảng cáo nữa",
+   "expect": [
+    "ngung-nhan-tin"
+   ]
+  },
+  {
+   "q": "họp đầu tuần lúc mấy giờ",
+   "expect": [
+    "giao-ban"
+   ]
+  },
+  {
+   "q": "công ty có trả tiền cước điện thoại cho nhân viên không",
+   "expect": [
+    "phu-cap-dien-thoai"
+   ]
+  },
+  {
+   "q": "đồng phục mặc ngày nào trong tuần",
+   "expect": [
+    "dong-phuc"
+   ]
+  },
+  {
+   "q": "nghe chuông báo cháy thì đi đường nào",
+   "expect": [
+    "phong-chay"
+   ]
+  },
+  {
+   "q": "quỹ bảo trì chung cư đóng bao nhiêu",
+   "expect": [
+    "quy-bao-tri"
+   ]
+  },
+  {
+   "q": "thang máy bị kẹt thì gọi ai",
+   "expect": [
+    "thang-may-hong"
+   ]
+  },
+  {
+   "q": "chi phí khi khách không muốn tiếp tục mua",
+   "expect": [
+    "huy-hop-dong",
+    "hoan-giu-cho"
+   ]
+  },
+  {
+   "q": "ung truoc hoa hong toi da bao nhieu",
+   "expect": [
+    "tam-ung-hoa-hong"
+   ]
+  },
+  {
+   "q": "CĐT bảo hành mấy năm",
+   "expect": [
+    "bao-hanh"
+   ]
+  },
+  {
+   "q": "phat tre han bao nhieu phan tram mot ngay",
+   "expect": [
+    "lai-cham-tra"
+   ]
+  }
+ ]
+}

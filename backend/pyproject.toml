@@ -1,0 +1,81 @@
+[project]
+name = "barista"
+license = "Apache-2.0"
+classifiers = ["Private :: Do Not Upload"]
+version = "0.1.0"
+description = "Lõi vận hành doanh nghiệp theo gói — một cửa lệnh, quyền ở DB, sổ cái ghi kép, trợ lý theo quyền"
+requires-python = ">=3.14"
+dependencies = [
+    "dbos>=3.3.0",
+    "fastapi>=0.144.0",
+    "httpx[http2]>=0.28.1",
+    "mcp>=2.3",
+    "openpyxl>=3.1.5",
+    "psycopg[binary,pool]>=3.3.6",
+    "pydantic>=2.14.1",
+    "pydantic-ai-slim[anthropic,google,openai]>=2.66,<2.67",
+    "pydantic-settings>=2.16.0",
+    "pyjwt[crypto]>=2.10",
+    "pypdf>=6.21.4",
+    "python-docx>=1.2.0",
+    "python-multipart>=0.0.33",
+    "python-pptx>=1.0.2",
+    "uvicorn[standard]>=0.54.0",
+]
+
+# GÓI trong repo (0130): khoá gói = module điểm vào (import nó đăng ký trọn gói). Gói ngoài repo khai y như vậy trong bản phân phối của nó.
+# Thứ tự nạp do kernel/loader.py tính (tầng → phụ thuộc → khoá), không theo thứ tự ở đây. Đổi danh sách ⇒ `uv sync` để cài lại điểm vào.
+[project.entry-points."barista.packs"]
+base = "barista.foundation"
+books = "barista.modules.books"
+compose = "barista.modules.compose"
+crm = "barista.modules.crm"
+directory = "barista.modules.parties"
+findings = "barista.modules.findings"
+finance = "barista.modules.acct"
+hr = "barista.modules.hr"
+kpi = "barista.modules.kpi"
+marketing = "barista.modules.mkt"
+meet = "barista.modules.meet"
+mgmt = "barista.modules.mgmt"
+pay = "barista.modules.pay"
+schedule = "barista.modules.schedule"
+talk = "barista.modules.talk"
+timekeeping = "barista.modules.timekeeping"
+training = "barista.modules.training"
+word = "barista.modules.word"
+
+[build-system]
+requires = ["uv_build>=0.9.9,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.17.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 4 tiến trình, mỗi tiến trình một DB (tests/conftest.py); file nào cũng trọn trong một tiến trình. Tuần tự: -n0. Máy 8 GB — đừng -n auto.
+addopts = "-n 4 --dist loadfile"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+
+[tool.ruff]
+line-length = 130
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF", "ASYNC"]
+ignore = ["RUF001", "RUF002", "RUF003", "E501"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.14"
+typeCheckingMode = "standard"

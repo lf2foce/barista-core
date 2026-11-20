@@ -1,0 +1,54 @@
+# @@TITLE@@ (`@@KEY@@`) — gói kết nối
+
+Gói kết nối Barista: bản phân phối Python `@@DIST@@` (import `@@PKG@@`), dựng từ khuôn của lõi (`bash scripts/pack.sh new --connector`,
+`barista.api` @@API@@). Gói nằm trong repo CỦA BẠN. Bạn tạo nhánh, đánh tag và thử thoải mái; gói ở lại đây, không cần gửi vào repo gói chính thức
+của Barista.
+
+## Gói kết nối gồm gì
+
+Lõi Barista đã có khung kết nối chung: kết nối của từng công ty, khoá API (mã hoá, quản trị dán trong app), lịch kéo dữ liệu có con trỏ, thử lại
+từng mục lỗi, cửa nhận webhook, nhật ký đồng bộ, màn Quản trị › Kết nối ngoài và Sức khoẻ dữ liệu. Gói chỉ viết:
+
+| Phần | Ở đâu | Việc |
+|---|---|---|
+| Bộ nối | lớp `Api` | thử khoá, kéo một lô từ con trỏ, đọc webhook — đổi dữ liệu hệ ngoài về MỤC (dict); không chạm DB |
+| Lệnh nhận | hàm `receive` (`@m.connector(Api)`) | nhận TỪNG MỤC, ghi vào Barista, chống lặp theo mã của hệ ngoài |
+| Form tạo kết nối | lệnh `connect` | quản trị nhập tên + khoá, gọi `connectors.save` |
+
+Ghi dữ liệu vào Barista bằng LỆNH của phần sở hữu dữ liệu đó (vd lead mới: lệnh nhận lead của lõi), không tự làm bảng song song. Bảng `records` của
+khuôn chỉ là ví dụ chạy được.
+
+Đẩy dữ liệu ra hệ ngoài (đăng bài, tạo đơn): lệnh khai `prepare=`, ở bước chuẩn bị gọi `await connectors.open(prep, connection_id)` rồi gọi bộ nối.
+Không gọi hệ ngoài trong thân lệnh (đang trong giao dịch DB).
+
+Hệ của bạn chỉ cần GỌI VÀO Barista (đẩy lead, báo có nội dung mới)? Không cần gói: dùng app ngoài (Quản trị › Ứng dụng đã kết nối, token theo vai).
+
+## Thử trên máy
+
+Cần repo lõi `barista-core` đã clone, Postgres local, `uv`, Python 3.14 (runbook 01 của lõi). Từ thư mục repo lõi:
+
+```bash
+cd backend && uv sync --frozen && cd ..
+uv pip install --python backend/.venv/bin/python --no-deps -e <đường dẫn tới thư mục gói này>   # cài vào môi trường của LÕI (--python bắt buộc)
+cd backend && .venv/bin/python -m pytest <đường dẫn tới thư mục gói này>/tests                    # test của gói
+```
+
+Chạy lõi trên máy thì gói tự nạp (biến `BARISTA_PACKS` trống nghĩa là nạp mọi gói đã cài). Bật gói cho một công ty ở Gói & ứng dụng.
+
+## Kiểm trước khi gửi
+
+Từ repo lõi: `bash scripts/pack.sh check <đường dẫn tới thư mục gói này>`. Lệnh dựng một bản lõi sạch, cài gói vào, rồi chạy ruff, pyright, test của
+gói và các test cấu trúc của lõi trên mã gói. ĐẠT thì gửi tag (hoặc commit) cho bên vận hành Barista. Bên đó review mã rồi ghim lên bản cài,
+như mọi mã chạy trong lõi (gói chạy chung tiến trình với lõi).
+
+## Luật
+
+- Khoá API không bao giờ nằm trong mã, test, nhật ký hay câu lỗi. Câu lỗi của bộ nối là câu người đọc được, không chép thân phản hồi.
+- Test dùng hệ ngoài GIẢ (`connectors.use_transport(httpx.MockTransport(...))`) — không gọi mạng thật.
+
+- Mã chạy chỉ import `barista.api`. Thiếu thứ gì thì xin thêm vào lõi, không import `barista.kernel`.
+- Bảng nằm trong schema `@@KEY@@`, bật RLS bằng `core.secure_*`. Migration đã chạy thì không sửa nữa, thay đổi viết vào file số tiếp theo.
+- Không ghi tên khách, email hay số điện thoại thật, khoá API vào mã, test hay dữ liệu mẫu.
+- Phiên bản: tag `@@KEY@@/vX.Y.Z` có chú thích, khớp `version` trong `pyproject.toml`. Không dời tag đã gửi.
+
+Hợp đồng đầy đủ của một gói: `docs/runbooks/12-them-mot-goi.md`. Quy trình cho gói của đối tác: `docs/runbooks/21-goi-cua-doi-tac.md` (cả hai ở repo lõi).

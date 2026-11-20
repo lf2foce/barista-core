@@ -1,0 +1,117 @@
+"""Gói kết nối @@TITLE@@ trên Postgres thật, trong môi trường của lõi, với HỆ NGOÀI GIẢ (``connectors.use_transport``) — không gọi mạng thật.
+Chạy từ thư mục ``backend/`` của repo lõi: ``.venv/bin/python -m pytest <đường dẫn tới gói>/tests``.
+
+Test ở RANH GIỚI: kéo hai lần không ghi trùng · khoá sai ⇒ kết nối báo lỗi, khoá không lộ · gói tắt ⇒ lịch dừng êm, không gọi hệ ngoài · công ty khác
+không thấy dữ liệu · người không có quyền không thêm được kết nối · mã chạy chỉ dùng ``barista.api``."""
+
+import json
+import uuid
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any, LiteralString
+
+import httpx
+import pytest
+
+import @@PKG@@ as pack
+from barista import seed
+from barista.api import connectors
+from barista.db import db
+from barista.kernel import executor, packs
+from barista.kernel.principal import system_principal
+from tests.conftest import ok, owner_val, q
+
+PEOPLE = [("chu", "Chủ mẫu", "admin", "QT", True), ("sale1", "Sale mẫu", "sale", "KD-A", False)]
+TOKEN = "khoa-thu-" + "a" * 24
+HTTP: dict[str, Any] = {"pages": {}, "calls": 0}
+
+
+def _api(request: httpx.Request) -> httpx.Response:
+    HTTP["calls"] += 1
+    if request.headers.get("authorization") != f"Bearer {TOKEN}":
+        return httpx.Response(401, json={"error": "unauthorized"})
+    if request.url.path == "/me":
+        return httpx.Response(200, json={"ok": True})
+    return httpx.Response(200, json=HTTP["pages"].get(request.url.params.get("after", ""), {"data": [], "next": ""}))
+
+
+@pytest.fixture(autouse=True)
+def fake_api() -> Iterator[None]:
+    connectors.use_transport(httpx.MockTransport(_api))
+    HTTP.update(pages={}, calls=0)
+    yield
+    connectors.use_transport(None)
+
+
+async def _exec(sql: LiteralString, params: Any = None) -> None:
+    async with db.owner.connection() as conn:
+        await conn.execute(sql, params)
+
+
+async def _company() -> dict[str, Any]:
+    d = f"{uuid.uuid4().hex[:6]}.demo"
+    tid = await seed.create_tenant(f"Thử @@TITLE@@ {d}", d, people=PEOPLE, packs=(*seed.ALL_PACKS, "@@KEY@@"))
+    chu = await seed.who(tid, "chu", d)
+    out = await ok(chu, "@@KEY@@.connect", label="Kết nối thử", token=TOKEN)
+    return {"tid": tid, "chu": chu, "sale1": await seed.who(tid, "sale1", d), "cid": out["connection_id"]}
+
+
+async def _sync(tid: Any) -> None:
+    await _exec("UPDATE connectors.connections SET next_try_at = now() WHERE tenant_id = %s", (tid,))
+    r = await executor.run(system_principal(tid), "connectors.sync", {})
+    assert r.status == "ok", r.error
+
+
+async def _refs(co: dict[str, Any]) -> list[str]:
+    return sorted(r["id"] for r in (await q(co["chu"], "@@KEY@@.records"))["rows"])
+
+
+async def test_pulling_twice_never_records_twice() -> None:
+    co = await _company()
+    HTTP["pages"] = {"": {"data": [{"id": 1, "title": "Một"}, {"id": 2, "title": "Hai"}], "next": "p2"}, "p2": {"data": [], "next": "p2"}}
+    await _sync(co["tid"])
+    await _exec("UPDATE connectors.connections SET cursor = '' WHERE id = %s", (co["cid"],))   # kéo lại từ đầu
+    await _sync(co["tid"])
+    assert await _refs(co) == ["1", "2"]
+
+
+async def test_a_wrong_key_shows_as_an_error_and_never_leaks() -> None:
+    co = await _company()
+    r = await executor.run(co["chu"], "connectors.set_secret", {"connection_id": co["cid"], "name": "token", "value": "sai-" + "b" * 24})
+    assert r.status == "ok"
+    await _sync(co["tid"])
+    page = await q(co["chu"], "connectors.list")
+    row = next(x for x in page["rows"] if x["id"] == co["cid"])
+    assert row["health"] == "error" and "Khoá API" in row["last_error"]
+    assert TOKEN not in json.dumps(page, default=str) and await _refs(co) == []
+
+
+async def test_a_switched_off_pack_stops_quietly() -> None:
+    co = await _company()
+    HTTP["pages"] = {"": {"data": [{"id": 9, "title": "Chín"}], "next": "x"}}
+    await _exec("DELETE FROM core.tenant_packs WHERE tenant_id = %s AND pack = '@@KEY@@'", (co["tid"],))
+    packs._cache.clear()
+    await _sync(co["tid"])
+    assert HTTP["calls"] == 0
+    assert await owner_val("SELECT cursor FROM connectors.connections WHERE id = %s", (co["cid"],)) == ""
+
+
+async def test_another_company_never_sees_the_records() -> None:
+    co = await _company()
+    HTTP["pages"] = {"": {"data": [{"id": 5, "title": "Chỉ công ty này"}], "next": "y"}}
+    await _sync(co["tid"])
+    other = await _company()
+    assert await _refs(other) == []
+
+
+async def test_a_person_without_the_grant_cannot_connect() -> None:
+    co = await _company()
+    r = await executor.run(co["sale1"], "@@KEY@@.connect", {"label": "x", "token": TOKEN})
+    assert r.status == "denied", (r.status, r.error)
+
+
+def test_runtime_code_imports_only_the_published_surface() -> None:
+    from tests.test_pack_surface import _imports, _internal
+
+    files = sorted(Path(pack.__file__).resolve().parent.rglob("*.py"))
+    assert files and not [f"{p.name}: {n}" for p in files for n in _imports(p) if _internal(n)]

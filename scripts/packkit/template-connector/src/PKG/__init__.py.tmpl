@@ -1,0 +1,116 @@
+"""@@TITLE@@ — GÓI KẾT NỐI Barista (khuôn ``bash scripts/pack.sh new --connector``; khung kết nối chung ADR 0244 của lõi).
+
+Lõi giữ: kết nối của công ty, khoá (mã hoá — quản trị dán trong app), lịch kéo có con trỏ, thử lại từng mục, cửa webhook, nhật ký đồng bộ, màn
+Quản trị › Kết nối ngoài, Sức khoẻ dữ liệu. Gói này chỉ viết ba thứ:
+
+1. ``Api`` — BỘ NỐI: thử khoá (``check``), kéo một lô từ con trỏ (``pull``), đọc webhook (``hook_parse``). Chỉ đổi dữ liệu hệ ngoài về MỤC (dict JSON)
+   — không chạm DB, không biết quyền. HTTP qua ``connectors.client()``. Lỗi ⇒ ``connectors.ConnectorError(loại, câu người đọc được)`` — KHÔNG đưa khoá
+   hay thân phản hồi vào câu lỗi.
+2. ``receive`` — LỆNH NHẬN (``@m.connector(Api)``): lõi giao TỪNG MỤC, quyền hệ thống của công ty, điểm lưu riêng. Chống lặp theo mã của hệ ngoài
+   (khoá chính / ON CONFLICT) — lõi có thể giao lại một mục (kéo lại khi lần trước lỗi). Gói thật GHI QUA LỆNH CỦA MODULE SỞ HỮU dữ liệu (vd lead:
+   ``ctx.call("leadflow.intake", …)``, doanh số: họ ``sale_source``) thay vì bảng riêng; bảng ``records`` ở đây chỉ là ví dụ chạy được.
+3. ``connect`` — FORM TẠO KẾT NỐI: lệnh có đầu vào có kiểu, ô khoá ``audit=False``, gọi ``connectors.save``.
+
+Đẩy ra hệ ngoài (đăng bài, tạo đơn): lệnh khai ``prepare=`` — ở bước chuẩn bị ``inst = await connectors.open(prep, connection_id)`` rồi gọi hàm của bộ
+nối; KHÔNG gọi hệ ngoài trong handler (giao dịch DB đang mở).
+"""
+
+from typing import Any
+
+from barista.api import Action as A
+from barista.api import Ctx, Input, Invalid, Module, NoInput, Pack, Screen, Workspace, connectors, field, ui
+
+Pack("@@KEY@@", "@@TITLE@@", "Mô tả ngắn: kết nối Barista với hệ nào, nhận / gửi dữ liệu gì", kind="capability", requires=(),
+     grants=(("admin", "@@KEY@@", "all", "read write manage"),))
+
+m = Module("@@KEY@@", "@@TITLE@@", pack="@@KEY@@", resources={"@@KEY@@": "Dữ liệu nhận từ @@TITLE@@"})
+m.consumes("connector")
+
+BASE_URL = "https://api.example.com"   # địa chỉ CỐ ĐỊNH của nhà cung cấp. Địa chỉ do công ty tự nhập (site WordPress…) đi qua ``url_settings`` + client_for
+
+
+class Api(connectors.Connector):
+    """Bộ nối mẫu: API JSON, khoá Bearer, kéo theo con trỏ ``after``, webhook có chữ ký (khoá ``webhook``)."""
+    key = "@@KEY@@"
+    label = "@@TITLE@@"
+    secrets = (connectors.Secret("token", "Khoá API", help="Lấy ở trang quản trị của hệ ngoài"),
+               connectors.Secret("webhook", "Khoá webhook", help="Đặt cùng giá trị ở trang webhook của hệ ngoài", required=False))
+    every_min = 15
+    webhook = True
+    url_settings = ("base_url",)   # cài đặt là địa chỉ người nhập ⇒ lõi kiểm lúc lưu (https, không máy nội bộ)
+
+    async def _client(self) -> Any:
+        headers = {"authorization": f"Bearer {self.secret['token']}"}
+        if url := self.settings.get("base_url"):   # địa chỉ người nhập: client_for kiểm lại (phân giải tên) mỗi lần — không gửi khoá vào mạng nội bộ
+            return await connectors.client_for(url, headers)
+        return connectors.client(BASE_URL, headers)
+
+    @staticmethod
+    def _raise_for(status: int) -> None:
+        if status in (401, 403):
+            raise connectors.ConnectorError("auth", "Khoá API sai hoặc hết hạn")
+        if status == 429:
+            raise connectors.ConnectorError("rate_limit", "Hệ ngoài giới hạn số lần gọi", retry_after_s=60)
+        if status >= 500:
+            raise connectors.ConnectorError("transient", f"Hệ ngoài lỗi ({status})")
+        if status >= 400:
+            raise connectors.ConnectorError("invalid", f"Hệ ngoài từ chối yêu cầu ({status})")
+
+    async def check(self) -> str:
+        async with await self._client() as c:
+            r = await c.get("/me")
+        self._raise_for(r.status_code)
+        return "Khoá dùng được"
+
+    async def pull(self, cursor: str) -> connectors.Batch:
+        async with await self._client() as c:
+            r = await c.get("/records", params={"after": cursor, "limit": 100})
+        self._raise_for(r.status_code)
+        body = r.json()
+        items = [{"ref": str(x["id"]), "title": str(x.get("title") or "")[:300]} for x in body.get("data", []) if x.get("id")]
+        return connectors.Batch(items=items, cursor=str(body.get("next") or cursor), more=bool(body.get("has_more")))
+
+    def hook_parse(self, payload: Any) -> connectors.Hook | None:
+        if not isinstance(payload, dict) or not payload.get("event_id"):
+            return None
+        rec = payload.get("record")
+        if isinstance(rec, dict) and rec.get("id"):
+            return connectors.Hook(event_id=str(payload["event_id"]), items=[{"ref": str(rec["id"]), "title": str(rec.get("title") or "")[:300]}])
+        return connectors.Hook(event_id=str(payload["event_id"]), wake=True)   # chuông: dữ liệu kéo theo lô ở lượt kế tiếp
+
+
+@m.connector(Api)
+async def receive(ctx: Ctx, inp: connectors.Delivery) -> dict[str, Any]:
+    """Một mục từ hệ ngoài. Mục hỏng ⇒ ``Invalid`` (lõi đưa vào hàng thử lại, các mục khác vẫn vào). Câu lỗi hiện trên màn Nhật ký đồng bộ: KHÔNG đưa
+    dữ liệu khách (tên, SĐT…) vào câu."""
+    ref, title = inp.item.get("ref"), (inp.item.get("title") or "").strip()
+    if not ref or not title:
+        raise Invalid("Mục thiếu mã hoặc tiêu đề")
+    fresh = await ctx.val("""INSERT INTO @@KEY@@.records (connection_id, ref, title) VALUES (%s, %s, %s)
+                             ON CONFLICT (tenant_id, connection_id, ref) DO NOTHING RETURNING true""", (inp.connection_id, ref, title))
+    return {"recorded": bool(fresh)}
+
+
+class Connect(Input):
+    label: str = field("Tên kết nối", "@@TITLE@@", max_length=120)
+    token: str = field("Khoá API", max_length=2000, audit=False, help="Lưu mã hoá, chỉ hiện bốn ký tự cuối")
+    webhook_key: str = field("Khoá webhook", "", max_length=200, audit=False, help="Không bắt buộc — ≥ 16 ký tự; trống = không nhận webhook")
+
+
+@m.command("connect", resource="@@KEY@@", action="manage", title="Thêm kết nối @@TITLE@@", agent="deny", category="setup")
+async def connect(ctx: Ctx, inp: Connect) -> dict[str, Any]:
+    out = await connectors.save(ctx, Api, label=inp.label, secrets={"token": inp.token, "webhook": inp.webhook_key})
+    hint = f" Địa chỉ webhook: {out['webhook_url']}" if inp.webhook_key else ""
+    return {**out, "summary": f"Đã thêm kết nối {inp.label}.{hint} Thử kết nối ở Quản trị › Kết nối ngoài."}
+
+
+@m.query("records", resource="@@KEY@@", title="Dữ liệu từ @@TITLE@@")
+async def records(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    rows = await ctx.all("SELECT ref AS id, title, received_at FROM @@KEY@@.records ORDER BY received_at DESC LIMIT 500")
+    return ui.table(rows, [ui.col("id", "Mã"), ui.col("title", "Tiêu đề", width=320), ui.col("received_at", "Nhận lúc", "datetime")],
+                    title="Dữ liệu từ @@TITLE@@", limit=500, empty="Chưa có dữ liệu — thêm kết nối rồi bấm “Thử kết nối” ở Quản trị › Kết nối ngoài")
+
+
+m.workspace(Workspace("@@KEY@@", "@@TITLE@@", "link", (
+    Screen("@@KEY@@_records", "Dữ liệu nhận", "tray.full", "@@KEY@@.records", actions=(A("@@KEY@@.connect", style="primary"),)),
+), order=90))

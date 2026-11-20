@@ -1,0 +1,25 @@
+{
+ "name": "demo",
+ "root": "/root/demo",
+ "project": "DEMO",
+ "project_description": "Barista Desk — bản cài mẫu của bộ test (dữ liệu giả)",
+ "db_app": "demo-db",
+ "app_app": "demo-app",
+ "db_host": "demo-postgres",
+ "api_host": "demo-api.vi-du.test",
+ "web_host": "demo.vi-du.test",
+ "demo_company": "Sàn mẫu (dữ liệu giả)",
+ "seed_profile": "san-moi-gioi",
+ "gate_user": "demo",
+ "cron_file": "/etc/cron.d/demo-backup",
+ "backup_cron": "15 3 * * *",
+ "api_env": {
+  "BARISTA_WEB_URL": "https://demo.vi-du.test",
+  "BARISTA_GOOGLE_WEB_CLIENT_ID": "123-fake.apps.googleusercontent.com"
+ },
+ "env": "demo",
+ "packs": {
+  "commission": "v1.0.0",
+  "real_estate": "v1.0.0"
+ }
+}

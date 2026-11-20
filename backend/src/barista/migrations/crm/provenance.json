@@ -1,0 +1,23 @@
+{
+ "retired": [
+  "038_rename_offering_columns.sql"
+ ],
+ "files": {
+  "000_baseline/11_crm.sql": {
+   "from": "base/000_baseline/11_crm.sql",
+   "sha256": "dabe243261d7ffd2f2e36e3b1435d4d8a3c4d854ac835f266a5e4937cb4eabf2"
+  },
+  "000_baseline/12_leadflow.sql": {
+   "from": "base/000_baseline/12_leadflow.sql",
+   "sha256": "77359fd7df60a1a461378b018af0e0f4fc577fdf998c6714b203418127711859"
+  },
+  "024_customer_identity.sql": {
+   "from": "directory/024_crm_capability_identity.sql",
+   "sha256": "3df02aec88d2ad7bf00756ab82bcf6bec0f0653817789660e0a8c010d1eb89d7"
+  },
+  "038_offering_columns.sql": {
+   "from": "crm/038_rename_offering_columns.sql",
+   "sha256": "2564c2ac9819025f521718815bfdb6c5be405c7f791f3adcd399fd4110ed3d97"
+  }
+ }
+}

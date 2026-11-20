@@ -1,0 +1,11 @@
+{
+ "retired": [
+  "024_crm_capability_identity.sql"
+ ],
+ "files": {
+  "024_party_identity.sql": {
+   "from": "directory/024_crm_capability_identity.sql",
+   "sha256": "3df02aec88d2ad7bf00756ab82bcf6bec0f0653817789660e0a8c010d1eb89d7"
+  }
+ }
+}

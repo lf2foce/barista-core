@@ -1,0 +1,40 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+macos/.build/
+.DS_Store
+
+# dữ liệu thật kéo về để thử — KHÔNG commit
+backend/.data/
+
+# trạng thái máy của Claude Code (worktree của agent, cài đặt cục bộ) — không thuộc mã nguồn
+.claude/
+
+# BI local (dữ liệu khách, không commit)
+
+# sed -i -E trên macOS tạo file sao lưu đuôi -E (từng lọt vào commit 8f99666)
+*-E
+
+# tài liệu riêng của khách (hợp đồng, dữ liệu, biên bản) — chỉ để ở máy, không đưa lên repo (10/11/2026)
+docs/clients/
+
+# gói ngoài lõi đặt vào lúc phát hành (deploy/packs.py — 0155); trong repo chỉ có README
+deploy/packs/*
+!deploy/packs/README.md
+
+# coverage
+.coverage
+.coverage.*
+
+# danh mục gói chưa cài — SINH ra lúc phát hành (deploy/packs.py bundle, 0163), không commit
+backend/src/barista/pack_catalog.json
+
+# DB dev giả (runbook 16): môi trường gói dựng riêng + file Excel thử nhập sinh lại mỗi lần reset
+backend/.dev-site/
+backend/dev-fixtures/
+
+# ADR nội bộ ở ../barista-docs/decisions (16/11/2026) — được đặt lối tắt cục bộ docs/decisions trỏ sang đó, không đưa lên repo
+docs/decisions

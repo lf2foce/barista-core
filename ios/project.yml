@@ -1,0 +1,46 @@
+# App iPhone "Barista" — dùng chung mã với app Mac (../macos/Sources/BaristaDesk), chỉ thêm khung điện thoại (Sources/). Quyết định 0041.
+# Dựng project: xcodegen generate   (BaristaPhone.xcodeproj là file sinh ra, không commit)
+name: BaristaPhone
+options:
+  bundleIdPrefix: vn.barista
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+targets:
+  BaristaPhone:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources
+      - path: ../macos/Sources/BaristaDesk
+        group: Shared
+        excludes:
+          - App.swift          # điểm vào + --check-contract của Mac
+    entitlements:   # thông báo đẩy (0044) — xuất bản App Store / TestFlight thì Xcode tự đổi sang production
+      path: Sources/BaristaPhone.entitlements
+      properties:
+        aps-environment: development
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: vn.barista.desk
+        PRODUCT_NAME: Barista
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Barista
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon   # icon vẽ bằng mã (AppIcon.swift), xuất bằng `swift run BaristaDesk --render-icon`
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Nói chuyện với trợ lý Barista bằng giọng nói."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Chụp ảnh gửi vào trao đổi (giấy tờ, hiện trạng căn, phiếu cọc…)."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Nối tới máy chủ Barista trong mạng nội bộ (bản dev)."
+        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES   # dev: http tới máy trong mạng; bản thật dùng HTTPS (A2)
+        ITSAppUsesNonExemptEncryption: NO

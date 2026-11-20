@@ -1,0 +1,186 @@
+{
+  "version": "3.8",
+  "services": {
+    "api": {
+      "image": "barista-api:bootstrap",
+      "stop_grace_period": "100s",
+      "networks": [
+        "edge"
+      ],
+      "environment": {
+        "BARISTA_DATABASE_URL": "${BARISTA_DATABASE_URL}",
+        "BARISTA_OWNER_DATABASE_URL": "${BARISTA_OWNER_DATABASE_URL}",
+        "BARISTA_LLM_API_KEY": "${BARISTA_LLM_API_KEY}",
+        "BARISTA_DEV_AUTH": "true",
+        "BARISTA_DEMO_COMPANY": "{{demo_company}}",
+        "BARISTA_DEMO_KEY": "${BARISTA_DEMO_KEY}",
+        "BARISTA_EDGE_SECRET": "${BARISTA_EDGE_SECRET:?BARISTA_EDGE_SECRET thiếu — chạy lại bootstrap (runbook 11)}",
+        "BARISTA_MIGRATE_ON_START": "false",
+        "BARISTA_FILES_STORE": "${BARISTA_FILES_STORE:?BARISTA_FILES_STORE phải là local hoặc r2 (runbook 11)}",
+        "BARISTA_FILES_DIR": "/var/lib/barista/files",
+        "BARISTA_FILES_SIGN_SECRET": "${BARISTA_FILES_SIGN_SECRET}",
+        "BARISTA_APPS_SIGNING_SECRET": "${BARISTA_APPS_SIGNING_SECRET}",
+        "BARISTA_R2_ACCOUNT_ID": "${BARISTA_R2_ACCOUNT_ID}",
+        "BARISTA_R2_ACCESS_KEY_ID": "${BARISTA_R2_ACCESS_KEY_ID}",
+        "BARISTA_R2_SECRET_ACCESS_KEY": "${BARISTA_R2_SECRET_ACCESS_KEY}",
+        "BARISTA_R2_BUCKET": "${BARISTA_R2_BUCKET}",
+        "BARISTA_R2_BACKUP_BUCKET": "${BARISTA_R2_BACKUP_BUCKET}",
+        "BARISTA_ALERT_TELEGRAM_TOKEN": "${BARISTA_ALERT_TELEGRAM_TOKEN}",
+        "BARISTA_ALERT_TELEGRAM_CHAT": "${BARISTA_ALERT_TELEGRAM_CHAT}",
+        "BARISTA_TURN_CLOUDFLARE_KEY_ID": "${BARISTA_TURN_CLOUDFLARE_KEY_ID}",
+        "BARISTA_TURN_CLOUDFLARE_TOKEN": "${BARISTA_TURN_CLOUDFLARE_TOKEN}",
+        "BARISTA_CONNECTOR_KEY": "${BARISTA_CONNECTOR_KEY}",
+        "BARISTA_META_ADS_APP_SECRET": "${BARISTA_META_ADS_APP_SECRET}",
+        "BARISTA_META_ADS_VERIFY_TOKEN": "${BARISTA_META_ADS_VERIFY_TOKEN}",
+        "BARISTA_META_ADS_APP_ID": "${BARISTA_META_ADS_APP_ID}",
+        "BARISTA_META_ADS_SCOPES": "${BARISTA_META_ADS_SCOPES}",
+        "TZ": "Asia/Ho_Chi_Minh"
+      },
+      "volumes": [
+        "{{root}}/files:/var/lib/barista/files"
+      ],
+      "deploy": {
+        "replicas": 1,
+        "resources": {
+          "limits": {
+            "cpus": "1.0",
+            "memory": "1024M"
+          },
+          "reservations": {
+            "cpus": "0.10",
+            "memory": "192M"
+          }
+        },
+        "update_config": {
+          "parallelism": 1,
+          "order": "start-first",
+          "delay": "5s",
+          "monitor": "30s",
+          "failure_action": "rollback"
+        },
+        "rollback_config": {
+          "parallelism": 1,
+          "order": "start-first",
+          "delay": "5s",
+          "monitor": "30s",
+          "failure_action": "pause"
+        },
+        "restart_policy": {
+          "condition": "on-failure",
+          "delay": "3s",
+          "max_attempts": 3,
+          "window": "120s"
+        },
+        "labels": {
+          "traefik.enable": "true",
+          "traefik.swarm.network": "dokploy-network",
+          "traefik.http.routers.{{name}}-api.rule": "Host(`{{api_host}}`)",
+          "traefik.http.routers.{{name}}-api.entrypoints": "websecure",
+          "traefik.http.routers.{{name}}-api.tls.certresolver": "letsencrypt",
+          "traefik.http.routers.{{name}}-api.priority": "200",
+          "traefik.http.routers.{{name}}-api.service": "{{name}}-api",
+        "traefik.http.routers.{{name}}-api.middlewares": "{{name}}-edge",
+        "traefik.http.middlewares.{{name}}-edge.headers.customrequestheaders.X-Barista-Edge": "${BARISTA_EDGE_SECRET:?BARISTA_EDGE_SECRET thiếu — chạy lại bootstrap (runbook 11)}",
+          "traefik.http.services.{{name}}-api.loadbalancer.server.port": "8300",
+          "traefik.http.services.{{name}}-api.loadbalancer.healthcheck.path": "/health",
+          "traefik.http.services.{{name}}-api.loadbalancer.healthcheck.interval": "2s",
+          "traefik.http.services.{{name}}-api.loadbalancer.healthcheck.timeout": "2s",
+          "traefik.http.routers.{{name}}-api-http.rule": "Host(`{{api_host}}`)",
+          "traefik.http.routers.{{name}}-api-http.entrypoints": "web",
+          "traefik.http.routers.{{name}}-api-http.priority": "200",
+          "traefik.http.routers.{{name}}-api-http.middlewares": "redirect-to-https@file",
+          "traefik.http.routers.{{name}}-api-http.service": "{{name}}-api"
+        }
+      },
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    },
+    "web": {
+      "image": "barista-web:bootstrap",
+      "stop_grace_period": "75s",
+      "networks": [
+        "edge"
+      ],
+      "environment": {
+        "BARISTA_CORE_URL": "${BARISTA_CORE_URL}",
+        "BARISTA_SESSION_SECRET": "${BARISTA_SESSION_SECRET}",
+        "BARISTA_WEB_DEV_LOGIN": "1",
+        "BARISTA_DEMO_KEY": "${BARISTA_DEMO_KEY}",
+        "BARISTA_EDGE_SECRET": "${BARISTA_EDGE_SECRET:?BARISTA_EDGE_SECRET thiếu — chạy lại bootstrap (runbook 11)}",
+        "TZ": "Asia/Ho_Chi_Minh"
+      },
+      "deploy": {
+        "replicas": 1,
+        "resources": {
+          "limits": {
+            "cpus": "1.0",
+            "memory": "512M"
+          },
+          "reservations": {
+            "cpus": "0.10",
+            "memory": "192M"
+          }
+        },
+        "update_config": {
+          "parallelism": 1,
+          "order": "start-first",
+          "delay": "5s",
+          "monitor": "30s",
+          "failure_action": "rollback"
+        },
+        "rollback_config": {
+          "parallelism": 1,
+          "order": "start-first",
+          "delay": "5s",
+          "monitor": "30s",
+          "failure_action": "pause"
+        },
+        "restart_policy": {
+          "condition": "on-failure",
+          "delay": "3s",
+          "max_attempts": 3,
+          "window": "120s"
+        },
+        "labels": {
+          "traefik.enable": "true",
+          "traefik.swarm.network": "dokploy-network",
+          "traefik.http.routers.{{name}}-web.rule": "Host(`{{web_host}}`)",
+          "traefik.http.routers.{{name}}-web.entrypoints": "websecure",
+          "traefik.http.routers.{{name}}-web.tls.certresolver": "letsencrypt",
+          "traefik.http.routers.{{name}}-web.priority": "200",
+          "traefik.http.routers.{{name}}-web.service": "{{name}}-web",
+          "traefik.http.middlewares.{{name}}-gate.basicauth.users": "${BARISTA_BASIC_AUTH:?BARISTA_BASIC_AUTH thiếu — cổng mật khẩu web bắt buộc (runbook 11)}",
+          "traefik.http.middlewares.{{name}}-gate.basicauth.realm": "{{project}}",
+          "traefik.http.routers.{{name}}-web.middlewares": "{{name}}-gate,{{name}}-edge",
+          "traefik.http.services.{{name}}-web.loadbalancer.server.port": "3100",
+          "traefik.http.services.{{name}}-web.loadbalancer.healthcheck.path": "/api/health",
+          "traefik.http.services.{{name}}-web.loadbalancer.healthcheck.interval": "2s",
+          "traefik.http.services.{{name}}-web.loadbalancer.healthcheck.timeout": "2s",
+          "traefik.http.routers.{{name}}-web-http.rule": "Host(`{{web_host}}`)",
+          "traefik.http.routers.{{name}}-web-http.entrypoints": "web",
+          "traefik.http.routers.{{name}}-web-http.priority": "200",
+          "traefik.http.routers.{{name}}-web-http.middlewares": "redirect-to-https@file",
+          "traefik.http.routers.{{name}}-web-http.service": "{{name}}-web"
+        }
+      },
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    }
+  },
+  "networks": {
+    "edge": {
+      "external": true,
+      "name": "dokploy-network"
+    }
+  }
+}

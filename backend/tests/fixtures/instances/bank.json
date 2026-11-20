@@ -1,0 +1,27 @@
+{
+ "name": "bank",
+ "root": "/root/bank",
+ "project": "BANK",
+ "project_description": "Barista Desk — bản cài mẫu thứ hai của bộ test (ngân hàng mẫu, dữ liệu giả)",
+ "db_app": "bank-db",
+ "app_app": "bank-app",
+ "db_host": "bank-postgres",
+ "api_host": "bank-api.vi-du.test",
+ "web_host": "bank.vi-du.test",
+ "demo_company": "Ngân hàng Mẫu (dữ liệu giả)",
+ "seed_profile": "bank",
+ "gate_user": "bank",
+ "cron_file": "/etc/cron.d/bank-backup",
+ "backup_cron": "45 3 * * *",
+ "files_store": "local",
+ "api_env": {
+  "BARISTA_WEB_URL": "https://bank.vi-du.test",
+  "BARISTA_DEMO_TODAY": "2026-11-30"
+ },
+ "packs": {
+  "trade_finance": {
+   "version": "v1.0.0",
+   "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+ }
+}

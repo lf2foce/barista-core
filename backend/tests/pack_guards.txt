@@ -1,0 +1,17 @@
+# Test CẤU TRÚC của lõi quét mã qua tests/module_src.py — kể cả mã của GÓI NGOÀI REPO ĐANG CÀI (0191). Bộ test lõi chạy khi chưa cài gói nào chỉ thấy
+# mã lõi; sau khi cài gói của một bản cài, chạy lại ĐÚNG các file này để gói chịu cùng luật (deploy/release.sh, scripts/check_packs.sh của repo gói):
+#   uv run --no-sync python -m pytest -q $(grep -v '^#' tests/pack_guards.txt)
+# Thêm một test đọc mã qua module_src ⇒ thêm file vào đây (tests/test_meta.py::test_pack_guards_list_names_every_source_scanning_test chặn quên).
+tests/test_ai_budget.py
+tests/test_guards.py
+tests/test_internal_person_ids.py
+tests/test_lead_safety.py
+tests/test_ledger_dates.py
+tests/test_legacy_trial.py
+tests/test_meta.py
+tests/test_phone_display.py
+tests/test_pack_surface.py
+tests/test_packs_industry.py
+tests/test_permission_matrix.py
+tests/test_system_calls.py
+tests/test_timezone.py

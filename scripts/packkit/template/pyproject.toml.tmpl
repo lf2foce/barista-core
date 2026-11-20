@@ -1,0 +1,47 @@
+# @@TITLE@@ — gói Barista, bản phân phối Python riêng, nằm NGOÀI repo lõi (khuôn của `bash scripts/pack.sh new`, lõi barista.api @@API@@).
+# Lõi nạp gói qua điểm vào `barista.packs`; mã chạy của gói chỉ import `barista.api`. Kiểm trước khi gửi: `bash scripts/pack.sh check <thư mục này>`
+# chạy từ repo lõi. Hợp đồng đầy đủ: docs/runbooks/12-them-mot-goi.md và docs/runbooks/21-goi-cua-doi-tac.md của lõi.
+[project]
+name = "@@DIST@@"
+version = "0.1.0"
+description = "@@TITLE@@ — viết lại câu này thành lời giới thiệu gói cho khách (chợ gói hiện đúng chữ này)"
+requires-python = ">=3.14"
+dependencies = ["barista"]   # lõi; cài bằng `uv pip install --no-deps -e` vào môi trường của lõi — không tải gì từ chỉ mục gói
+
+[project.entry-points."barista.packs"]
+@@KEY@@ = "@@PKG@@"
+
+# Hợp đồng với lõi: khoảng phiên bản BỀ MẶT `barista.api.__version__` (semver) gói chạy được. Dùng thứ mới của lõi ⇒ nâng số dưới.
+[tool.barista]
+requires-core = ">=@@API_MINOR@@,<2"
+
+[build-system]
+requires = ["uv_build>=0.9.9,<0.10.0"]
+build-backend = "uv_build"
+
+# Test chạy TRONG môi trường của lõi, từ thư mục backend/ của lõi: `-p tests.conftest` nạp DB test + fixture của lõi.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p tests.conftest -n 2 --dist loadfile"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+
+[tool.ruff]
+line-length = 160
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF", "ASYNC"]
+ignore = ["RUF001", "RUF002", "RUF003", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["barista", "@@PKG@@", "tests"]
+
+# Máy dev: thư mục backend/ của repo lõi (gói `tests` của lõi cho test của gói); trình thông dịch = .venv của lõi.
+# `pack.sh check` tự trỏ lại đường này vào bản lõi sạch nó dựng — sửa ở đây chỉ khi đổi chỗ để repo lõi trên máy mình.
+[tool.pyright]
+include = ["src", "tests"]
+extraPaths = ["tests", "@@CORE_BACKEND@@"]
+pythonVersion = "3.14"
+typeCheckingMode = "standard"

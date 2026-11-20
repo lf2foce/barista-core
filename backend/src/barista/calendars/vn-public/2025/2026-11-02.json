@@ -1,0 +1,33 @@
+{
+  "calendar": "vn-public",
+  "year": 2025,
+  "version": "2026-11-02",
+  "status": "assumption",
+  "verified_by": "",
+  "weekend": [
+    5,
+    6
+  ],
+  "holidays": [
+    "2025-01-01",
+    "2025-01-27",
+    "2025-01-28",
+    "2025-01-29",
+    "2025-01-30",
+    "2025-01-31",
+    "2025-04-07",
+    "2025-04-30",
+    "2025-05-01",
+    "2025-05-02",
+    "2025-09-01",
+    "2025-09-02"
+  ],
+  "working_days": [
+    "2025-04-26"
+  ],
+  "sources": [
+    "https://baochinhphu.vn/chinh-thuc-bo-ldtbxh-thong-bao-lich-nghi-tet-nguyen-dan-at-ty-va-nghi-le-nam-2025-10224120316465192.htm",
+    "https://xaydungchinhsach.chinhphu.vn/lich-nghi-le-30-4-1-5-va-nghi-quoc-khanh-2025-119250204221442901.htm"
+  ],
+  "basis": "Lịch cơ quan hành chính làm việc 5 ngày/tuần; nguồn chính thức kèm theo. Kế toán xác nhận phạm vi áp dụng cho từng nghĩa vụ trước khi dùng thật."
+}

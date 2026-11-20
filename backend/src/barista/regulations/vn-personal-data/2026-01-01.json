@@ -1,0 +1,28 @@
+{
+  "pack": "vn-personal-data",
+  "title": "Bảo vệ dữ liệu cá nhân — Việt Nam",
+  "version": "2026-01-01",
+  "effective_from": "2026-01-01",
+  "published_on": "2026-11-07",
+  "retroactive_reason": "Bản nạp ban đầu của bộ khi dựng hệ thống: chưa có kỳ thật nào tính theo bộ này trước ngày phát hành, nên không đổi số kỳ nào đã mở (dữ liệu lịch sử, không phải văn bản mới hồi tố).",
+  "status": "assumption",
+  "verified_by": "",
+  "summary": "CHỜ LUẬT SƯ XÁC NHẬN, chưa khẳng định tuân thủ. Hai ngưỡng tuổi soạn từ bản đọc thứ cấp (docs/ideas/nghien-cuu-edu-2026.md mục 4), chưa đối chiếu toàn văn. Áp ngưỡng đồng ý kép cho MỌI mục đích là lựa chọn thận trọng của phần mềm: Luật nêu cho việc công bố đời tư, NĐ 330/2026 có thể rộng hơn.",
+  "sources": [
+    {"ref": "Luật Bảo vệ dữ liệu cá nhân 91/2025/QH15, Điều 24 (hiệu lực 01/01/2026)", "url": "https://hethongphapluat.com/luat-bao-ve-du-lieu-ca-nhan-2025.html"},
+    {"ref": "Nghị định 330/2026/NĐ-CP, Điều 60 (theo bản tóm tắt của EY, chưa đọc toàn văn)", "url": "https://www.ey.com/content/dam/ey-unified-site/ey-com/vi-vn/technical/tax/documents/ey-vn-decree-330-providing-sanctions-for-personal-data-protection.pdf"},
+    {"ref": "Bộ luật Dân sự 2015, Điều 20–21 (thành niên từ đủ 18 tuổi); bài giải thích trẻ em dưới 16, chưa thành niên dưới 18", "url": "https://luatminhkhue.vn/o-viet-nam-nguoi-duoi-18-tuoi-la-nguoi-chua-thanh-nien-hay-tre-em.aspx"}
+  ],
+  "params": {
+    "dual_consent_from_age": {
+      "label": "Từ đủ số tuổi này, cần đồng ý của cả trẻ và người giám hộ; dưới tuổi này chỉ người giám hộ đồng ý",
+      "value": 7,
+      "basis": "Luật 91/2025/QH15 Điều 24; NĐ 330/2026 Điều 60 (theo EY). Chờ luật sư: phạm vi áp dụng và nhóm tuổi 16–17"
+    },
+    "majority_age": {
+      "label": "Đủ số tuổi này thì quan hệ giám hộ tự hết; từ đó chỉ chính người này đồng ý",
+      "value": 18,
+      "basis": "Bộ luật Dân sự 2015 Điều 20–21. Chờ luật sư: trường hợp người đủ tuổi vẫn cần giám hộ (mất năng lực hành vi)"
+    }
+  }
+}

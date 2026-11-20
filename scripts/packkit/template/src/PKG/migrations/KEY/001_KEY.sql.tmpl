@@ -1,0 +1,16 @@
+-- module: @@KEY@@
+-- Bảng đầu tiên của gói @@TITLE@@: schema TRÙNG khoá module, mọi bảng qua core.secure_tenant (RLS theo công ty như mọi bảng của lõi).
+-- Migration đã chạy ở bất kỳ DB nào thì KHÔNG sửa (lõi chặn checksum lệch) — thay đổi sau này là file mới 002_…, 003_…
+
+CREATE SCHEMA @@KEY@@;
+GRANT USAGE ON SCHEMA @@KEY@@ TO barista_app;
+
+CREATE TABLE @@KEY@@.notes (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  UUID NOT NULL DEFAULT core.tenant() REFERENCES core.tenants(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL CHECK (btrim(body) <> ''),
+    created_by UUID REFERENCES core.users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CALL core.secure_tenant('@@KEY@@.notes');
+GRANT SELECT, INSERT ON @@KEY@@.notes TO barista_app;

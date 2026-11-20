@@ -1,0 +1,39 @@
+"""@@TITLE@@ — gói Barista (khuôn của ``bash scripts/pack.sh new``; thay phần ghi chú mẫu bằng nghiệp vụ của gói).
+
+Luật của mọi gói, kể cả gói của đối tác:
+- mã chạy CHỈ import ``barista.api`` (bề mặt có phiên bản) — không ``barista.kernel`` / ``barista.agent`` / ``barista.config``;
+- mọi việc đi qua lệnh ``@m.command`` / truy vấn ``@m.query``: lõi kiểm quyền, ghi nhật ký, cho trợ lý dùng theo ``agent=``;
+- bảng nằm trong schema TRÙNG khoá module, bật RLS bằng ``core.secure_*`` (migration ``migrations/@@KEY@@/``); không SQL sang schema khác;
+- ``Pack(...)``: khoá, tên, mô tả là CHUỖI CHỮ, ``kind=`` / ``requires=`` là giá trị chữ — lõi đọc chúng trước khi chạy mã.
+"""
+
+from typing import Any
+
+from barista.api import Ctx, Input, Module, NoInput, Pack, Screen, Workspace, field, ui
+
+Pack("@@KEY@@", "@@TITLE@@", "Mô tả ngắn: gói này làm gì cho công ty dùng nó", kind="industry", requires=(),
+     grants=(("admin", "@@KEY@@", "all", "read write"),))
+
+m = Module("@@KEY@@", "@@TITLE@@", pack="@@KEY@@", resources={"@@KEY@@": "Ghi chú của gói @@TITLE@@"})
+
+
+class AddNote(Input):
+    body: str = field("Nội dung", max_length=2000, example="Gọi lại khách sáng thứ Hai")
+
+
+@m.command("add_note", resource="@@KEY@@", title="Thêm ghi chú", agent="propose")
+async def add_note(ctx: Ctx, inp: AddNote) -> dict[str, Any]:
+    """Thêm một ghi chú. Trợ lý chỉ được ĐỀ XUẤT (``agent="propose"``) — người bấm duyệt mới ghi."""
+    body = inp.body.strip()
+    note_id = await ctx.val("INSERT INTO @@KEY@@.notes (body, created_by) VALUES (%s, core.me()) RETURNING id", (body,))
+    return {"note_id": note_id, "summary": f"Đã thêm ghi chú: {body[:60]}"}
+
+
+@m.query("notes", resource="@@KEY@@", title="Ghi chú")
+async def notes(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    """Ghi chú của công ty đang đăng nhập — RLS của lõi lọc theo công ty, truy vấn không tự viết điều kiện công ty."""
+    rows = await ctx.all("SELECT id::text, body, created_at FROM @@KEY@@.notes ORDER BY created_at DESC LIMIT 200")
+    return ui.table(rows, [ui.col("body", "Ghi chú"), ui.col("created_at", "Lúc", "datetime")], title="Ghi chú", limit=200)
+
+
+m.workspace(Workspace("@@KEY@@", "@@TITLE@@", "star", (Screen("@@KEY@@_notes", "Ghi chú", "note.text", "@@KEY@@.notes"),), order=90))

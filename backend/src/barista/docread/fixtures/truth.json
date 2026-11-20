@@ -1,0 +1,448 @@
+{
+ "bang-gia.pdf": {
+  "kind": "pdf",
+  "pages": [
+   [
+    "BẢNG GIÁ CĂN HỘ DỰ ÁN VƯỜN LAM SƠN",
+    "Áp dụng cho khách hàng mua trực tiếp từ chủ đầu tư, giá đã bao gồm thuế giá trị gia tăng và chưa gồm kinh phí bảo trì 2%.",
+    {
+     "table": {
+      "header": [
+       "STT",
+       "Mã căn",
+       "Diện tích (m²)",
+       "Giá bán (VND)",
+       "Ghi chú"
+      ],
+      "rows": [
+       [
+        "1",
+        "A-0501",
+        "62,4",
+        "2.450.000.000",
+        "Hướng Đông"
+       ],
+       [
+        "2",
+        "A-0502",
+        "58,7",
+        "2.280.000.000",
+        "Hướng Tây"
+       ],
+       [
+        "3",
+        "A-0610",
+        "75,2",
+        "3.120.000.000",
+        "Góc, view sông"
+       ],
+       [
+        "4",
+        "B-0305",
+        "49,5",
+        "1.890.000.000",
+        "Hướng Nam"
+       ],
+       [
+        "5",
+        "B-0306",
+        "49,5",
+        "1.915.000.000",
+        "Hướng Bắc"
+       ],
+       [
+        "6",
+        "B-1208",
+        "83,9",
+        "3.560.000.000",
+        "Penthouse mini"
+       ],
+       [
+        "7",
+        "C-0902",
+        "66,1",
+        "2.640.000.000",
+        "Hướng Đông Nam"
+       ],
+       [
+        "8",
+        "C-0903",
+        "66,1",
+        "2.655.000.000",
+        "Hướng Tây Bắc"
+       ]
+      ]
+     }
+    }
+   ],
+   [
+    "LỊCH THANH TOÁN MẪU CHO CĂN A-0501",
+    "Tổng giá trị căn hộ là 2.450.000.000 đồng. Khách hàng thanh toán theo sáu đợt như bảng dưới đây, mỗi đợt chuyển khoản vào tài khoản của chủ đầu tư.",
+    {
+     "table": {
+      "header": [
+       "Đợt",
+       "Thời điểm thanh toán",
+       "Tỷ lệ",
+       "Số tiền (VND)"
+      ],
+      "rows": [
+       [
+        "Đợt 1",
+        "Khi ký thỏa thuận đặt cọc",
+        "5%",
+        "122.500.000"
+       ],
+       [
+        "Đợt 2",
+        "30 ngày sau khi ký hợp đồng",
+        "15%",
+        "367.500.000"
+       ],
+       [
+        "Đợt 3",
+        "Khi hoàn thành phần móng",
+        "20%",
+        "490.000.000"
+       ],
+       [
+        "Đợt 4",
+        "Khi cất nóc",
+        "25%",
+        "612.500.000"
+       ],
+       [
+        "Đợt 5",
+        "Khi bàn giao căn hộ",
+        "30%",
+        "735.000.000"
+       ],
+       [
+        "Đợt 6",
+        "Khi nhận giấy chứng nhận",
+        "5%",
+        "122.500.000"
+       ]
+      ]
+     }
+    },
+    "Lưu ý: chậm thanh toán quá 15 ngày, chủ đầu tư được tính lãi 0,03% mỗi ngày trên số tiền chậm."
+   ]
+  ],
+  "facts": [
+   "2.450.000.000",
+   "A-0610",
+   "3.560.000.000",
+   "367.500.000",
+   "30 ngày sau khi ký hợp đồng"
+  ],
+  "markers": [
+   [
+    "BẢNG GIÁ"
+   ],
+   [
+    "LỊCH THANH TOÁN"
+   ]
+  ]
+ },
+ "phieu-scan.pdf": {
+  "kind": "pdf",
+  "pages": [
+   [
+    "ĐIỀU KHOẢN ĐẶT CỌC",
+    "Điều 1. Bên đặt cọc nộp cho Bên nhận cọc số tiền 122.500.000 đồng khi ký thỏa thuận.",
+    "Điều 2. Trong vòng 30 ngày kể từ ngày nhận cọc, hai bên ký hợp đồng mua bán chính thức.",
+    "Điều 3. Bên đặt cọc từ chối ký hợp đồng thì mất khoản tiền đặt cọc.",
+    "Điều 4. Bên nhận cọc từ chối ký hợp đồng thì hoàn trả khoản cọc và chịu phạt một lần số tiền đã nhận."
+   ]
+  ],
+  "facts": [
+   "122.500.000",
+   "30 ngày",
+   "Điều 3"
+  ],
+  "markers": [
+   [
+    "ĐẶT CỌC"
+   ]
+  ]
+ },
+ "hon-hop.pdf": {
+  "kind": "pdf",
+  "pages": [
+   [
+    "BẢNG GIÁ CĂN HỘ DỰ ÁN VƯỜN LAM SƠN",
+    "Áp dụng cho khách hàng mua trực tiếp từ chủ đầu tư, giá đã bao gồm thuế giá trị gia tăng và chưa gồm kinh phí bảo trì 2%.",
+    {
+     "table": {
+      "header": [
+       "STT",
+       "Mã căn",
+       "Diện tích (m²)",
+       "Giá bán (VND)",
+       "Ghi chú"
+      ],
+      "rows": [
+       [
+        "1",
+        "A-0501",
+        "62,4",
+        "2.450.000.000",
+        "Hướng Đông"
+       ],
+       [
+        "2",
+        "A-0502",
+        "58,7",
+        "2.280.000.000",
+        "Hướng Tây"
+       ],
+       [
+        "3",
+        "A-0610",
+        "75,2",
+        "3.120.000.000",
+        "Góc, view sông"
+       ],
+       [
+        "4",
+        "B-0305",
+        "49,5",
+        "1.890.000.000",
+        "Hướng Nam"
+       ],
+       [
+        "5",
+        "B-0306",
+        "49,5",
+        "1.915.000.000",
+        "Hướng Bắc"
+       ],
+       [
+        "6",
+        "B-1208",
+        "83,9",
+        "3.560.000.000",
+        "Penthouse mini"
+       ],
+       [
+        "7",
+        "C-0902",
+        "66,1",
+        "2.640.000.000",
+        "Hướng Đông Nam"
+       ],
+       [
+        "8",
+        "C-0903",
+        "66,1",
+        "2.655.000.000",
+        "Hướng Tây Bắc"
+       ]
+      ]
+     }
+    }
+   ],
+   [
+    "ĐIỀU KHOẢN ĐẶT CỌC",
+    "Điều 1. Bên đặt cọc nộp cho Bên nhận cọc số tiền 122.500.000 đồng khi ký thỏa thuận.",
+    "Điều 2. Trong vòng 30 ngày kể từ ngày nhận cọc, hai bên ký hợp đồng mua bán chính thức.",
+    "Điều 3. Bên đặt cọc từ chối ký hợp đồng thì mất khoản tiền đặt cọc.",
+    "Điều 4. Bên nhận cọc từ chối ký hợp đồng thì hoàn trả khoản cọc và chịu phạt một lần số tiền đã nhận."
+   ]
+  ],
+  "facts": [
+   "A-0610",
+   "122.500.000"
+  ],
+  "markers": [
+   [
+    "BẢNG GIÁ"
+   ],
+   [
+    "ĐẶT CỌC"
+   ]
+  ]
+ },
+ "hop-dong.docx": {
+  "kind": "word",
+  "pages": [
+   [
+    "Hợp đồng đặt cọc căn hộ",
+    "Điều 1. Các bên",
+    "Bên nhận cọc là Công ty Phát triển Nhà Vườn Lam Sơn, Bên đặt cọc là khách hàng ghi tại bảng thông tin dưới đây.",
+    {
+     "table": {
+      "header": [
+       "Hạng mục",
+       "Nội dung"
+      ],
+      "rows": [
+       [
+        "Căn hộ",
+        "A-0501, tầng 5, tòa A"
+       ],
+       [
+        "Diện tích",
+        "62,4 m²"
+       ],
+       [
+        "Tiền đặt cọc",
+        "122.500.000 đồng"
+       ],
+       [
+        "Ngày ký",
+        "15/11/2026"
+       ]
+      ]
+     }
+    },
+    "Điều 2. Giá trị và tiến độ",
+    "Giá bán căn hộ A-0501 là 2.450.000.000 đồng, thanh toán theo sáu đợt.",
+    "2.1 Phạt vi phạm",
+    "Bên vi phạm chịu phạt 8% giá trị hợp đồng."
+   ]
+  ],
+  "facts": [
+   "122.500.000 đồng",
+   "8% giá trị hợp đồng"
+  ],
+  "markers": []
+ },
+ "bang-tinh.xlsx": {
+  "kind": "sheet",
+  "pages": [
+   [
+    "Bảng giá",
+    {
+     "table": {
+      "header": [
+       "Mã căn",
+       "Diện tích",
+       "Giá bán"
+      ],
+      "rows": [
+       [
+        "A-0501",
+        "62.4",
+        "2450000000"
+       ],
+       [
+        "A-0502",
+        "58.7",
+        "2280000000"
+       ],
+       [
+        "B-0305",
+        "49.5",
+        "1890000000"
+       ]
+      ]
+     }
+    },
+    "Chính sách",
+    {
+     "table": {
+      "header": [
+       "Chương trình",
+       "Ưu đãi"
+      ],
+      "rows": [
+       [
+        "Thanh toán sớm",
+        "Chiết khấu 2%"
+       ],
+       [
+        "Mua từ căn thứ hai",
+        "Chiết khấu 1%"
+       ]
+      ]
+     }
+    }
+   ]
+  ],
+  "facts": [
+   "A-0501",
+   "Chiết khấu 2%"
+  ],
+  "markers": []
+ },
+ "hoa-don.png": {
+  "kind": "image",
+  "pages": [
+   [
+    "CỬA HÀNG TIỆN LỢI MINH AN",
+    "Số 12 đường Hoa Mai, phường Tân Phú",
+    "HÓA ĐƠN BÁN LẺ",
+    "Số: HD-004217 Ngày: 12/11/2026",
+    {
+     "table": {
+      "header": [
+       "Mặt hàng",
+       "SL",
+       "Đơn giá",
+       "Thành tiền"
+      ],
+      "rows": [
+       [
+        "Nước suối 500ml",
+        "6",
+        "5.000",
+        "30.000"
+       ],
+       [
+        "Mì ly hải sản",
+        "4",
+        "12.500",
+        "50.000"
+       ],
+       [
+        "Bánh gạo vị phô mai",
+        "3",
+        "18.000",
+        "54.000"
+       ],
+       [
+        "Sữa tươi không đường",
+        "5",
+        "9.500",
+        "47.500"
+       ],
+       [
+        "Khăn giấy",
+        "2",
+        "22.000",
+        "44.000"
+       ]
+      ]
+     }
+    },
+    "Thuế GTGT 8%: 18.040",
+    "Tổng cộng: 225.500 đ"
+   ]
+  ],
+  "facts": [
+   "HD-004217",
+   "12/11/2026",
+   "225.500",
+   "18.040"
+  ],
+  "markers": []
+ },
+ "phoi-canh.jpg": {
+  "kind": "image",
+  "pages": [
+   []
+  ],
+  "facts": [],
+  "markers": [],
+  "caption_any": [
+   "hồ bơi",
+   "bể bơi",
+   "toà nhà",
+   "tòa nhà",
+   "chung cư",
+   "căn hộ"
+  ]
+ }
+}

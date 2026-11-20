@@ -1,0 +1,36 @@
+{
+  "calendar": "vn-public",
+  "year": 2026,
+  "version": "2026-11-02",
+  "status": "assumption",
+  "verified_by": "",
+  "weekend": [
+    5,
+    6
+  ],
+  "holidays": [
+    "2026-01-01",
+    "2026-01-02",
+    "2026-02-16",
+    "2026-02-17",
+    "2026-02-18",
+    "2026-02-19",
+    "2026-02-20",
+    "2026-04-27",
+    "2026-04-30",
+    "2026-05-01",
+    "2026-08-31",
+    "2026-09-01",
+    "2026-09-02"
+  ],
+  "working_days": [
+    "2026-01-10",
+    "2026-08-22"
+  ],
+  "sources": [
+    "https://xaydungchinhsach.chinhphu.vn/lich-nghi-tet-duong-lich-2026-119251225111725138.htm",
+    "https://xaydungchinhsach.chinhphu.vn/bao-dam-chi-tra-kip-thoi-luong-thuong-tet-cac-dia-phuong-quyet-dinh-to-chuc-ban-phao-hoa-119251225210821627.htm",
+    "https://xaydungchinhsach.chinhphu.vn/lich-nghi-le-gio-to-hung-vuong-30-4-1-5-quoc-khanh-2-9-nam-2026-119260222115822151.htm"
+  ],
+  "basis": "Lịch cơ quan hành chính làm việc 5 ngày/tuần; nguồn chính thức kèm theo. Kế toán xác nhận phạm vi áp dụng cho từng nghĩa vụ trước khi dùng thật."
+}

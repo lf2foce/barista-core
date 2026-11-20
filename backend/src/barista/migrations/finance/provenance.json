@@ -1,0 +1,15 @@
+{
+ "retired": [
+  "017_acct_payables.sql"
+ ],
+ "files": {
+  "000_baseline/07_acct.sql": {
+   "from": "base/000_baseline/07_acct.sql",
+   "sha256": "f16c6ba196fd3b6c90a8028757875f326492aeaa4f660d6bd068d739857267b1"
+  },
+  "017_payables.sql": {
+   "from": "finance/017_acct_payables.sql",
+   "sha256": "2a56a9e6299d39dbe28087dd8282d271309bab97e4c94f854e18d8eed559145b"
+  }
+ }
+}

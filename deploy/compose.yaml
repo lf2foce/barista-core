@@ -1,0 +1,30 @@
+# CHỈ database — Dokploy compose "{{project}} Database". API + web là stack Swarm riêng (deploy/stack.json), deploy không bao giờ đụng DB.
+# Không `compose down -v`, không dựng lại DB khi phát hành. Sao lưu: {{cron_file}} (deploy/ops/backup.sh).
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    cpus: {{db_cpus}}
+    mem_limit: {{db_mem_limit}}
+    command: ["postgres", "-c", "shared_buffers={{db_shared_buffers}}"]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      OWNER_PASSWORD: ${OWNER_PASSWORD}
+      APP_PASSWORD: ${APP_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - {{root}}/ops/initdb:/docker-entrypoint-initdb.d:ro
+    networks:
+      edge:
+        aliases: [{{db_host}}]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+volumes:
+  pgdata:
+networks:
+  edge:
+    external: true
+    name: dokploy-network

@@ -1,0 +1,35 @@
+{
+  "about": "Bộ câu hỏi tiếng Việt đo tìm trong kho tài liệu (ADR 0141): người hỏi dùng từ KHÁC tài liệu (đồng nghĩa, cách nói thường ngày, gõ không dấu, viết tắt). Kho = tài liệu mẫu BĐS của seed (profile san-moi-gioi-demo) + extra_docs (hỏi đáp khách hàng, GIẢ). Đoạn đúng = đoạn có chữ (đã bỏ dấu) chứa một trong các cụm 'expect'. Người hỏi: giamdoc (đọc mọi kệ). Chạy: scripts/eval_kb_search.py.",
+  "extra_docs": [
+    {"title": "Hỏi đáp khách hàng — giữ chỗ, hợp đồng, bàn giao (mẫu)", "shelf": "common", "kind": "faq",
+     "body": "# Hoàn tiền đặt chỗ\nKhách đã nộp tiền giữ chỗ nhưng chưa ký thỏa thuận đặt cọc trong 7 ngày được hoàn lại 100% tiền giữ chỗ trong 10 ngày làm việc. Đã ký thỏa thuận đặt cọc mà khách đơn phương không mua tiếp thì mất khoản đặt cọc theo thỏa thuận.\n# Chuyển nhượng hợp đồng\nKhách được chuyển nhượng hợp đồng mua bán cho người khác trước khi nhận bàn giao; chủ đầu tư thu phí xác nhận văn bản chuyển nhượng 0,5% giá trị hợp đồng.\n# Bàn giao\nDự kiến bàn giao căn hộ quý IV/2027; chủ đầu tư gửi thông báo bàn giao trước 30 ngày.\n# Phí dịch vụ tòa nhà\nPhí quản lý vận hành 12.000 đồng/m²/tháng tính trên diện tích thông thủy, thu từ ngày bàn giao."}
+  ],
+  "queries": [
+    {"q": "huỷ cọc có được trả lại tiền không", "expect": ["duoc hoan lai 100% tien giu cho"]},
+    {"q": "khach muon rut lai tien giu cho", "expect": ["duoc hoan lai 100% tien giu cho"]},
+    {"q": "mua 2 căn có được giảm thêm không", "expect": ["chiet khau them 1% cho can thu hai"]},
+    {"q": "trả hết tiền sớm thì được bớt bao nhiêu", "expect": ["thanh toan som 95%"]},
+    {"q": "ngân hàng cho mượn mấy phần trăm giá nhà", "expect": ["cho vay toi da 70%"]},
+    {"q": "được miễn lãi trong bao lâu", "expect": ["lai suat 0% trong 12 thang"]},
+    {"q": "lịch đóng tiền từng đợt", "expect": ["ky hdmb 25%"]},
+    {"q": "CĐT được thu cọc tối đa bao nhiêu", "expect": ["tien dat coc khong\nqua 5%", "tien dat coc khong qua 5%"]},
+    {"q": "lần trả đầu tiên tối đa mấy phần trăm", "expect": ["lan thanh toan dau tien khong qua 30%"]},
+    {"q": "mẫu HĐ mua chung cư theo nghị định nào", "expect": ["mau so ia"]},
+    {"q": "nhân viên kinh doanh ứng trước tiền thưởng được bao nhiêu", "expect": ["tam ung toi da 50%"]},
+    {"q": "khach bo coc thi hoa hong cua sale the nao", "expect": ["bi thu hoi va tru vao vi"]},
+    {"q": "thưởng doanh số trên 50 tỷ là bao nhiêu phần trăm", "expect": ["tu 50 ty 2,8%"]},
+    {"q": "bắt đầu cuộc gọi tư vấn nên hỏi khách gì", "expect": ["mua de o hay dau tu"]},
+    {"q": "khách kêu đắt thì trả lời sao", "expect": ["khach che gia"]},
+    {"q": "căn nào hợp người ít tiền", "expect": ["neu duoi 4,5 ty"]},
+    {"q": "chủ đầu tư trả phí trễ thì bị phạt thế nào", "expect": ["lai cham tra 0,03%"]},
+    {"q": "khi nào phải gửi giấy đòi CĐT trả phí", "expect": ["giay de nghi thanh toan phi moi gioi trong 3 ngay"]},
+    {"q": "nợ dây dưa hơn một tháng thì làm gì", "expect": ["qua han tren 30 ngay"]},
+    {"q": "tiền khách chuyển vào tài khoản thì ghi sổ thế nào", "expect": ["phieu thu nhap theo sao ke"]},
+    {"q": "quà khi mua căn 3 phòng ngủ", "expect": ["goi noi that"]},
+    {"q": "chi tiêu quảng cáo quý đầu năm sau", "expect": ["ngan sach marketing"]},
+    {"q": "tiền phí quản lý chung cư mỗi tháng", "expect": ["phi quan ly van hanh"]},
+    {"q": "bán lại suất mua cho người khác trước khi nhận nhà", "expect": ["chuyen nhuong hop dong mua ban cho nguoi khac"]},
+    {"q": "bao giờ được nhận nhà", "expect": ["du kien ban giao can ho"]},
+    {"q": "phi moi gioi CDT tra cho san bao nhieu", "expect": ["phi moi gioi 3%", "phi moi gioi 2,5%"]}
+  ]
+}

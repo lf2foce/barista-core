@@ -1,0 +1,8 @@
+{
+ "files": {
+  "000_baseline/10_training.sql": {
+   "from": "base/000_baseline/10_training.sql",
+   "sha256": "71d99b5e9a582013f014bd652f7b2f0558e10c49f39a53787dd7cf8b6c7fa47c"
+  }
+ }
+}

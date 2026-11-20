@@ -1,0 +1,57 @@
+"""Gói @@TITLE@@ trên Postgres thật, trong môi trường của lõi. Chạy từ thư mục ``backend/`` của repo lõi:
+
+    .venv/bin/python -m pytest <đường dẫn tới gói>/tests
+
+Test ở RANH GIỚI, không chỉ đường thuận: người không có quyền bị từ chối, công ty khác không thấy dữ liệu, mã chạy chỉ dùng ``barista.api``.
+Test được dùng thứ nội bộ của lõi (``barista.seed``, ``barista.kernel.executor``, ``tests.conftest``) — chỉ MÃ CHẠY của gói bị giới hạn ở ``barista.api``.
+"""
+
+import uuid
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import @@PKG@@ as pack
+from barista import seed
+from barista.kernel import executor
+from tests.conftest import ok, q
+
+PEOPLE = [("chu", "Chủ mẫu", "admin", "QT", True), ("sale1", "Sale mẫu", "sale", "KD-A", False)]
+
+
+async def _company() -> dict[str, Any]:
+    d = f"{uuid.uuid4().hex[:6]}.demo"
+    tid = await seed.create_tenant(f"Thử @@TITLE@@ {d}", d, people=PEOPLE, packs=(*seed.ALL_PACKS, "@@KEY@@"))
+    return {"tid": tid, "chu": await seed.who(tid, "chu", d), "sale1": await seed.who(tid, "sale1", d)}
+
+
+@pytest.fixture(scope="module")
+async def co() -> dict[str, Any]:
+    return await _company()
+
+
+async def test_the_admin_adds_a_note_and_sees_it(co: dict[str, Any]) -> None:
+    out = await ok(co["chu"], "@@KEY@@.add_note", body="Gọi lại khách sáng thứ Hai")
+    assert out["note_id"]
+    page = await q(co["chu"], "@@KEY@@.notes")
+    assert "Gọi lại khách sáng thứ Hai" in [r["body"] for r in page["rows"]]
+
+
+async def test_a_person_without_the_grant_is_refused(co: dict[str, Any]) -> None:
+    r = await executor.run(co["sale1"], "@@KEY@@.add_note", {"body": "không được ghi"})
+    assert r.status == "denied", (r.status, r.error)
+
+
+async def test_another_company_never_sees_the_notes(co: dict[str, Any]) -> None:
+    await ok(co["chu"], "@@KEY@@.add_note", body="Chỉ công ty này thấy")
+    other = await _company()
+    page = await q(other["chu"], "@@KEY@@.notes")
+    assert "Chỉ công ty này thấy" not in [r["body"] for r in page["rows"]]
+
+
+def test_runtime_code_imports_only_the_published_surface() -> None:
+    from tests.test_pack_surface import _imports, _internal
+
+    files = sorted(Path(pack.__file__).resolve().parent.rglob("*.py"))
+    assert files and not [f"{p.name}: {n}" for p in files for n in _imports(p) if _internal(n)]

@@ -1,0 +1,200 @@
+{
+  "pack": "vn-tax",
+  "title": "Thuế & BHXH — Việt Nam",
+  "version": "2025-07-01",
+  "effective_from": "2025-07-01",
+  "published_on": "2026-11-02",
+  "retroactive_reason": "Bản nạp ban đầu của bộ khi dựng hệ thống: chưa có kỳ thật nào tính theo bộ này trước ngày phát hành, nên không đổi số kỳ nào đã mở (dữ liệu lịch sử, không phải văn bản mới hồi tố).",
+  "status": "assumption",
+  "verified_by": "",
+  "summary": "Luật Thuế GTGT 48/2024/QH15 và Luật BHXH 41/2024/QH15 hiệu lực 01/07/2025: ngưỡng thanh toán không dùng tiền mặt hạ xuống 5 triệu; hạn đóng BHXH tháng sang ngày cuối cùng của tháng tiếp theo.",
+  "sources": [
+    {
+      "ref": "Luật Quản lý thuế 38/2019/QH14",
+      "url": ""
+    },
+    {
+      "ref": "Nghị định 126/2020/NĐ-CP",
+      "url": ""
+    },
+    {
+      "ref": "Luật Thuế GTGT 48/2024/QH15",
+      "url": ""
+    },
+    {
+      "ref": "Luật Bảo hiểm xã hội 41/2024/QH15",
+      "url": ""
+    }
+  ],
+  "profile": {
+    "entity_kind": {
+      "label": "Loại hình",
+      "options": {
+        "company": "Doanh nghiệp",
+        "household": "Hộ / cá nhân kinh doanh"
+      },
+      "default": "company",
+      "basis": "Khai ở Thiết lập dịch vụ"
+    },
+    "vat_cadence": {
+      "label": "Kỳ khai thuế GTGT",
+      "options": {
+        "quarterly": "Theo quý",
+        "monthly": "Theo tháng"
+      },
+      "default": "quarterly",
+      "basis": "Nghị định 126/2020/NĐ-CP Điều 9 — khai quý khi doanh thu năm trước ≤ 50 tỷ hoặc mới kinh doanh"
+    },
+    "pit_cadence": {
+      "label": "Kỳ khai thuế TNCN khấu trừ",
+      "options": {
+        "quarterly": "Theo quý",
+        "monthly": "Theo tháng",
+        "none": "Không trả thu nhập phải khấu trừ"
+      },
+      "default": "quarterly",
+      "basis": "Nghị định 126/2020/NĐ-CP Điều 9 (cùng kỳ với GTGT)"
+    },
+    "bhxh": {
+      "label": "Có lao động đóng BHXH",
+      "options": {
+        "yes": "Có",
+        "no": "Không"
+      },
+      "default": "yes",
+      "basis": "Hồ sơ lao động của khách"
+    }
+  },
+  "calendar": {
+    "id": "vn-public",
+    "shift": "next_workday",
+    "basis": "Bộ luật Dân sự Điều 148 khoản 5; lịch nghỉ / ngày làm bù được quản lý theo năm, tách khỏi phiên bản quy định (0068)."
+  },
+  "obligations": [
+    {
+      "code": "GTGT",
+      "label": "Tờ khai thuế GTGT",
+      "cadence": "quarterly",
+      "due": {
+        "months": 1,
+        "day": 31
+      },
+      "when": {
+        "entity_kind": "company",
+        "vat_cadence": "quarterly"
+      },
+      "basis": "Luật Quản lý thuế 38/2019/QH14 Điều 44 khoản 1 điểm b — ngày cuối cùng của tháng đầu quý sau"
+    },
+    {
+      "code": "GTGT",
+      "label": "Tờ khai thuế GTGT",
+      "cadence": "monthly",
+      "due": {
+        "months": 1,
+        "day": 20
+      },
+      "when": {
+        "entity_kind": "company",
+        "vat_cadence": "monthly"
+      },
+      "basis": "Luật Quản lý thuế 38/2019/QH14 Điều 44 khoản 1 điểm a — ngày 20 tháng sau"
+    },
+    {
+      "code": "TNCN",
+      "label": "Tờ khai thuế TNCN khấu trừ",
+      "cadence": "quarterly",
+      "due": {
+        "months": 1,
+        "day": 31
+      },
+      "when": {
+        "entity_kind": "company",
+        "pit_cadence": "quarterly"
+      },
+      "basis": "Luật Quản lý thuế 38/2019/QH14 Điều 44 khoản 1 điểm b"
+    },
+    {
+      "code": "TNCN",
+      "label": "Tờ khai thuế TNCN khấu trừ",
+      "cadence": "monthly",
+      "due": {
+        "months": 1,
+        "day": 20
+      },
+      "when": {
+        "entity_kind": "company",
+        "pit_cadence": "monthly"
+      },
+      "basis": "Luật Quản lý thuế 38/2019/QH14 Điều 44 khoản 1 điểm a"
+    },
+    {
+      "code": "QT-TNDN",
+      "label": "Quyết toán thuế TNDN năm",
+      "cadence": "yearly",
+      "due": {
+        "months": 3,
+        "day": 31
+      },
+      "when": {
+        "entity_kind": "company"
+      },
+      "basis": "Luật Quản lý thuế 38/2019/QH14 Điều 44 khoản 2 điểm a — ngày cuối cùng tháng thứ 3 sau năm tài chính"
+    },
+    {
+      "code": "QT-TNCN",
+      "label": "Quyết toán thuế TNCN năm (tổ chức trả thu nhập)",
+      "cadence": "yearly",
+      "due": {
+        "months": 3,
+        "day": 31
+      },
+      "when": {
+        "entity_kind": "company",
+        "pit_cadence": [
+          "quarterly",
+          "monthly"
+        ]
+      },
+      "basis": "Luật Quản lý thuế 38/2019/QH14 Điều 44 khoản 2 điểm a"
+    },
+    {
+      "code": "BCTC",
+      "label": "Báo cáo tài chính năm",
+      "cadence": "yearly",
+      "due": {
+        "months": 3,
+        "day": 31
+      },
+      "when": {
+        "entity_kind": "company"
+      },
+      "basis": "Nộp cùng hồ sơ quyết toán TNDN (Luật Quản lý thuế 38/2019/QH14 Điều 44 khoản 2 điểm a; Luật Kế toán 88/2015/QH13) — kế toán xác nhận điều khoản"
+    },
+    {
+      "code": "BHXH",
+      "label": "Đóng BHXH, BHYT, BHTN",
+      "cadence": "monthly",
+      "due": {
+        "months": 1,
+        "day": 31
+      },
+      "when": {
+        "entity_kind": "company",
+        "bhxh": "yes"
+      },
+      "basis": "Luật Bảo hiểm xã hội 41/2024/QH15 Điều 34 — chậm nhất ngày cuối cùng của tháng tiếp theo (kế toán xác nhận)"
+    }
+  ],
+  "params": {
+    "non_cash_min_vnd": {
+      "label": "Mua vào từ mức này phải có chứng từ thanh toán không dùng tiền mặt mới được khấu trừ GTGT",
+      "value": 5000000,
+      "basis": "Luật Thuế GTGT 48/2024/QH15 — điều kiện khấu trừ thuế đầu vào (kế toán xác nhận điều khoản)"
+    },
+    "quarterly_vat_revenue_max_vnd": {
+      "label": "Doanh thu năm trước tối đa để khai GTGT theo quý",
+      "value": 50000000000,
+      "basis": "Nghị định 126/2020/NĐ-CP Điều 9"
+    }
+  }
+}

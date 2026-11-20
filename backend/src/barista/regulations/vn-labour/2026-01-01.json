@@ -1,0 +1,96 @@
+{
+  "pack": "vn-labour",
+  "title": "Thời giờ làm việc, nghỉ lễ, nghỉ phép — Việt Nam (Bộ luật Lao động)",
+  "version": "2026-01-01",
+  "effective_from": "2026-01-01",
+  "published_on": "2026-11-10",
+  "retroactive_reason": "Bản nạp ban đầu của bộ khi dựng hệ thống: chưa có kỳ thật nào tính theo bộ này trước ngày phát hành, nên không đổi số kỳ nào đã mở (dữ liệu lịch sử, không phải văn bản mới hồi tố).",
+  "status": "assumption",
+  "verified_by": "",
+  "summary": "CHỜ KẾ TOÁN / NHÂN SỰ XÁC MINH TỪNG QUY TẮC (ADR 0150 §4.3, Phụ lục A1). Ngày nghỉ lễ hưởng lương theo Bộ luật Lao động — TÁCH khỏi lịch cơ quan hành chính (vn-public: ngày hoán đổi của công chức không phải ngày lễ của doanh nghiệp). Trần làm thêm giờ, phép năm. ",
+  "sources": [
+    {
+      "ref": "Bộ luật Lao động 45/2019/QH14 Điều 105–107 (giờ làm, giờ đêm, làm thêm), 111–115 (nghỉ hằng tuần, lễ, phép năm) — bản chép lại trên hethongphapluat.com, chưa đối chiếu Công báo"
+    },
+    {
+      "ref": "Lịch nghỉ Tết, Giỗ Tổ, 30/4–1/5, Quốc khánh 2026 — xaydungchinhsach.chinhphu.vn (như calendars/vn-public/2026); ngày nghỉ bù khi lễ trùng nghỉ hằng tuần: BLLĐ Đ111.3"
+    }
+  ],
+  "params": {
+    "PUBLIC_HOLIDAYS": {
+      "label": "Ngày nghỉ lễ, Tết hưởng nguyên lương của người lao động (kể cả ngày nghỉ bù khi lễ trùng ngày nghỉ hằng tuần)",
+      "value": {
+        "dates": [
+          {
+            "date": "2026-01-01",
+            "label": "Tết Dương lịch"
+          },
+          {
+            "date": "2026-02-16",
+            "label": "Tết Âm lịch"
+          },
+          {
+            "date": "2026-02-17",
+            "label": "Tết Âm lịch"
+          },
+          {
+            "date": "2026-02-18",
+            "label": "Tết Âm lịch"
+          },
+          {
+            "date": "2026-02-19",
+            "label": "Tết Âm lịch"
+          },
+          {
+            "date": "2026-02-20",
+            "label": "Tết Âm lịch"
+          },
+          {
+            "date": "2026-04-27",
+            "label": "Nghỉ bù Giỗ Tổ Hùng Vương (10/3 âm lịch rơi vào Chủ nhật 26/4)"
+          },
+          {
+            "date": "2026-04-30",
+            "label": "Ngày Chiến thắng"
+          },
+          {
+            "date": "2026-05-01",
+            "label": "Quốc tế Lao động"
+          },
+          {
+            "date": "2026-09-01",
+            "label": "Quốc khánh (ngày liền kề)"
+          },
+          {
+            "date": "2026-09-02",
+            "label": "Quốc khánh"
+          }
+        ]
+      },
+      "basis": "BLLĐ Đ112 (11 ngày: Tết Dương lịch 1, Tết Âm lịch 5, Giỗ Tổ 1, 30/4, 1/5, Quốc khánh 2) + Đ111.3 (nghỉ bù). Ngày cụ thể của Tết Âm lịch và ngày liền kề Quốc khánh theo thông báo của Chính phủ cho năm 2026 (doanh nghiệp được chọn khác — CÂU HỎI cho nhân sự). Chờ xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "OT_CAPS": {
+      "label": "Trần làm thêm giờ: ≤ 50% giờ làm bình thường trong ngày, ≤ 40 giờ/tháng, ≤ 200 giờ/năm (ngành được liệt kê ≤ 300 giờ/năm — dữ kiện của công ty)",
+      "value": {
+        "day_ratio_bps": 5000,
+        "month_hours": 40,
+        "year_hours": 200
+      },
+      "basis": "BLLĐ Đ107 khoản 2 (bản chép lại); NQ 17/2022/UBTVQH15 từng nâng tạm 60 giờ/tháng, 300 giờ/năm tới 31/12/2022 (đã hết hiệu lực — theo bài tổng hợp). Làm thêm cần người lao động đồng ý. Chờ xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    },
+    "ANNUAL_LEAVE": {
+      "label": "Phép năm: 12 ngày làm việc / năm đủ 12 tháng (điều kiện bình thường), thêm 1 ngày mỗi đủ 5 năm; chưa đủ năm thì theo tỉ lệ tháng",
+      "value": {
+        "days": 12,
+        "extra_every_years": 5
+      },
+      "basis": "BLLĐ Đ113 khoản 1, 2 và Đ114 (bản chép lại). Nghề nặng nhọc / người khuyết tật 14–16 ngày: chưa có trong bộ này. Chờ xác minh",
+      "status": "assumption",
+      "verified_by": ""
+    }
+  }
+}
