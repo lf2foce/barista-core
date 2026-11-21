@@ -515,7 +515,7 @@ export function FormBody({
           })}
         </div>
       ) : spec ? (
-        <p className="t14 text-muted-foreground">Không cần điền gì thêm — bấm “{action.title}” để xác nhận.</p>
+        <p className="t14 text-muted-foreground">{action.confirm || `Không cần điền gì thêm — bấm “${action.title}” để xác nhận.`}</p>
       ) : null}
       {error ? <ErrorLine>{error}</ErrorLine> : null}
       {step === "intent" ? (

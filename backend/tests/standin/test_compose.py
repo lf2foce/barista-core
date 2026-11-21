@@ -113,7 +113,9 @@ async def test_order_slip_reads_live_numbers_and_issues_once(who: Who) -> None:
     assert hole["layer"] == "missing" and [a["preset"]["key"] for a in sheet["actions"]] == ["customer_address"]   # ô thiếu: chạm điền ngay trên giấy
     plan = next(b for b in sheet["blocks"] if b["type"] == "table")
     assert plan["columns"] == ["Đợt", "Nội dung", "Hạn", "Số tiền"] and plan["total"] == ["Tổng cộng", "5.000.000.000 đồng"]
-    assert {a["command"] for a in page["actions"]} == {"papers.void"}                         # sale lập được, không phát hành (thẩm quyền loại giấy)
+    assert page["actions"] == []                                                            # sale lập được, không phát hành (thẩm quyền loại giấy)
+    mine = next(r for r in (await q(sale, "papers.list"))["rows"] if str(r["id"]) == pid)
+    assert mine["can_discard"] is True and mine["can_issue"] is False                        # bỏ bản đang lập: nút của dòng, không ở thanh trên
     issue_btn = next(a for a in (await q(admin, "papers.view", paper_id=pid))["actions"] if a["command"] == "papers.issue")
     assert issue_btn["title"] == "Phát hành" and issue_btn["basis"]
     assert (await executor.query(await who("giamdoc"), "papers.view", {"paper_id": pid})).status == "not_found"   # chỉ người lập + người phát hành thấy

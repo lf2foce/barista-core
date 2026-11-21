@@ -42,7 +42,7 @@ export function DetailView({ page, onClose, onChanged }: { page: DetailPage; onC
               {page.ask.title}
             </button>
           ) : null}
-          {page.actions.filter((a) => a !== replaceAction).map((a) => (
+          {page.actions.filter((a) => a !== replaceAction && a.style !== "destructive").map((a) => (
             <button key={a.command + a.title} type="button" className={actionClass(a.style)} onClick={() => desk.openForm(a, { onDone: onChanged })}>
               {a.title}
             </button>
@@ -80,6 +80,12 @@ export function DetailView({ page, onClose, onChanged }: { page: DetailPage; onC
             </button>
           ))}
           {isDoc ? <CopyButton text={`${page.title}\n\n${documentText}`} label="Sao chép cả tài liệu" /> : null}
+          {/* nút huỷ / hết hiệu lực đứng CUỐI hàng, sau Tải — nút chính luôn là nút đầu tiên người thấy */}
+          {page.actions.filter((a) => a !== replaceAction && a.style === "destructive").map((a) => (
+            <button key={a.command + a.title} type="button" className={actionClass(a.style)} onClick={() => desk.openForm(a, { onDone: onChanged })}>
+              {a.title}
+            </button>
+          ))}
         </div>
       ) : null}
       {page.original ? (
@@ -210,7 +216,7 @@ function FieldValue({ f, onChanged }: { f: DetailField; onChanged?: () => void }
 const LAYER: Record<string, string> = {
   record: "border-b border-sky-500/60 bg-sky-500/10",
   company: "border-b border-dashed border-neutral-400",
-  missing: "rounded bg-amber-400/30 px-1 text-amber-800 dark:text-amber-200",
+  missing: "rounded bg-amber-300/60 px-1 text-amber-900",   // tờ giấy luôn nền sáng (cả giao diện tối) ⇒ màu chữ cố định, không theo dark
   person: "border-b border-violet-500/60 bg-violet-500/10",
 };
 
@@ -249,7 +255,7 @@ function SheetView({ sheet, onChanged }: { sheet: Sheet; onChanged?: () => void 
         <p className="t12 text-center text-neutral-500">{sheet.number}</p>
         {sheet.blocks.map((b, i) =>
           b.type === "heading" ? <h3 key={i} className="t14m mt-2">{runs(b)}</h3>
-          : b.type === "table" && b.columns ? <Grid key={i} rows={[b.columns, ...(b.rows ?? []), ...(b.total?.length ? [b.total] : [])]} />
+          : b.type === "table" && b.columns ? <PaperTable key={i} block={b} />
           : <p key={i} className={cn("leading-relaxed", b.type === "bullet" && "pl-4")}>{b.type === "bullet" ? "– " : null}{runs(b)}</p>)}
         {sheet.notes.map((n) => <p key={n} className="t12 text-neutral-500">{n}</p>)}
         {sheet.signers.length ? (
@@ -264,6 +270,31 @@ function SheetView({ sheet, onChanged }: { sheet: Sheet; onChanged?: () => void 
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** Bảng trên tờ giấy: nền giấy sáng ở cả giao diện tối (không dùng màu bề mặt của app), cột số canh phải theo ``align`` server gửi, hàng tổng đậm. */
+function PaperTable({ block }: { block: Sheet["blocks"][number] }) {
+  const align = (j: number) => ({ r: "text-right", c: "text-center" } as Record<string, string>)[block.align?.[j] ?? "l"] ?? "text-left";
+  const total = block.total ?? [];
+  const span = (block.columns?.length ?? 0) - Math.max(total.length - 1, 0);
+  return (
+    <table className="t14 my-1 w-full border-collapse border border-neutral-300">
+      <thead className="bg-neutral-100">
+        <tr>{block.columns?.map((c, j) => <th key={j} scope="col" className={cn("t12m border border-neutral-300 px-2 py-1 text-neutral-600", align(j))}>{c}</th>)}</tr>
+      </thead>
+      <tbody>
+        {(block.rows ?? []).map((r, i) => (
+          <tr key={i}>{r.map((c, j) => <td key={j} className={cn("tnum border border-neutral-300 px-2 py-1", align(j))}>{c}</td>)}</tr>
+        ))}
+        {total.length ? (
+          <tr className="font-medium">
+            <td colSpan={span} className="border border-neutral-300 px-2 py-1 text-center">{total[0]}</td>
+            {total.slice(1).map((c, j) => <td key={j} className="tnum border border-neutral-300 px-2 py-1 text-right">{c}</td>)}
+          </tr>
+        ) : null}
+      </tbody>
+    </table>
   );
 }
 

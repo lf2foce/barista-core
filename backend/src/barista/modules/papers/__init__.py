@@ -284,7 +284,8 @@ def rows_of(ctx: Ctx, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     hide = ("template_version_id", "subject_kind", "subject_id", "created_by")
     return [{**{k: v for k, v in r.items() if k not in hide}, "family": family_of(r["authority"]), "state": f"{family_of(r['authority'])}.{r['status']}",
              "about": about(r), "on": r["issued_on"] or r["created_at"].astimezone(zone()).date(),
-             "can_issue": r["status"] == "draft" and r["layout"] != "handout" and can_issue(ctx, r)} for r in rows]
+             "can_issue": r["status"] == "draft" and r["layout"] != "handout" and can_issue(ctx, r),
+             "can_discard": r["status"] == "draft" and can_discard(ctx, r)} for r in rows]
 
 
 def about(r: dict[str, Any]) -> str:
@@ -331,6 +332,7 @@ async def pending(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     rows = [r for r in rows_of(ctx, await compose.visible(ctx, rows)) if r["can_issue"]]
     for r in rows:
         r["what"] = " ".join(x for x in (r["kind_label"], r["ref"], "đã lập sẵn") if x)
+        r["about"] = r["summary"].removeprefix(r["kind_label"] + " — ") if r["ref"] else r["about"]   # mã đã ở cột Giấy ⇒ chỉ tên hồ sơ
     return ui.table(rows, [ui.col("what", "Giấy", width=320), ui.col("about", "Về", width=300), ui.col("author", "Người lập"),
                            ui.col("created_at", "Lập lúc", "datetime")],
                     title="Giấy chờ ban hành / phát hành", limit=300, kpis=[ui.kpi("Chờ bạn", len(rows), tone="orange" if rows else None)])
@@ -342,14 +344,15 @@ def _attn_pending(o: Any) -> Any:
 
 
 def issue_action(d: dict[str, Any], basis: str = "") -> dict[str, Any]:
-    return ui.act("papers.issue", FAMILIES[family_of(d["authority"])]["issue"], {"paper_id": str(d["id"])}, "primary", basis=basis)
+    verb = FAMILIES[family_of(d["authority"])]["issue"]
+    return ui.act("papers.issue", verb, {"paper_id": str(d["id"])}, "primary", basis=basis,
+                  confirm=f"{verb} = cấp số và khoá nội dung đúng như tờ giấy bạn đang xem; sau đó không sửa được, chỉ cho hết hiệu lực.")
 
 
 def tail_actions(ctx: Ctx, d: dict[str, Any]) -> list[dict[str, Any]]:
-    """Nút phụ (sau nút chính + Tải): bỏ bản chưa cấp số / cho hết hiệu lực — chỉ người được làm thấy."""
+    """Nút phụ của trang giấy: chỉ "Cho hết hiệu lực" trên giấy đã cấp số (người có thẩm quyền). Bỏ bản chưa cấp số là nút của DÒNG ở danh sách —
+    thanh trên của tờ giấy chỉ giữ nút chính + Tải (anh Anh 21/11/2026)."""
     ref = {"paper_id": str(d["id"])}
-    if d["status"] == "draft" and can_discard(ctx, d):
-        return [ui.act("papers.void", FAMILIES[family_of(d["authority"])]["discard"], ref, "destructive")]
     if d["status"] == "issued" and can_issue(ctx, d):
         return [ui.act("papers.void", VOID, ref, "destructive")]
     return []
@@ -638,12 +641,14 @@ def _render_handout(d: dict[str, Any], s: dict[str, Any]) -> bytes:
 # ---- Màn hình (0069): module tự khai phân hệ / góp màn vào phân hệ khác; workspaces.py chỉ ráp và lọc theo quyền
 ISSUE_ROW = tuple(A("papers.issue", f["issue"], bind={"paper_id": "id"}, when={"can_issue": [True], "family": [k]}, style="primary")
                   for k, f in FAMILIES.items())
+DISCARD_ROW = tuple(A("papers.void", f["discard"], bind={"paper_id": "id"}, when={"can_discard": [True], "family": [k]}, style="destructive")
+                    for k, f in FAMILIES.items())
 m.screens("docs", (
     # MỘT màn cho mọi giấy tờ, lọc theo họ (ADR 0251). Nút tạo DUY NHẤT ở đây: công văn (văn bản công ty, không có hồ sơ). Chứng từ lập TỪ
     # HỒ SƠ (nút trên thẻ hồ sơ của gói, ``papers.start_draft``), không còn hộp chọn mẫu + chọn hồ sơ từ danh sách dài. Khoá cũ ⇒ ``aliases`` giữ ghim.
     Screen("papers", "Giấy tờ & công văn", "doc.richtext", "papers.list", aliases=("compose",),
            actions=(A("papers.draft_letter", style="primary"),),
-           row_actions=ISSUE_ROW, row_click="open", open=Open("papers.view", {"paper_id": "id"}, "Xem giấy tờ")),
+           row_actions=ISSUE_ROW + DISCARD_ROW, row_click="open", open=Open("papers.view", {"paper_id": "id"}, "Xem giấy tờ")),
 ), rank=-3)   # 0231: văn bản có số hiệu đứng ĐẦU phân hệ "Văn bản & tài liệu" (trước kho tài liệu — màn của chủ phân hệ, rank 0)
 m.screens("work", (
     Screen("papers_pending", "Giấy chờ ban hành / phát hành", "checkmark.seal", "papers.pending", desk=Desk("decide", say=_attn_pending, rank=120),

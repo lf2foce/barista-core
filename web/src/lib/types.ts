@@ -57,6 +57,8 @@ export type ActionSpec = {
   route?: string;
   /** CĂN CỨ người xem đang thấy (0071 / 0251): gửi lại nguyên chữ ở tiêu đề `X-Expect-Basis` khi chạy — số đã đổi ⇒ server trả `conflict`. */
   basis?: string;
+  /** Câu hỏi lại của nút không có ô nào để điền (server soạn — vd "Phát hành = cấp số và khoá nội dung…"); trống ⇒ câu chung. */
+  confirm?: string;
 };
 
 export type OpenSpec = { query: string; bind: Record<string, string>; title: string };

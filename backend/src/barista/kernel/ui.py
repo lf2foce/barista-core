@@ -320,7 +320,7 @@ def compact(page: Any, rows: int = COMPACT_ROWS) -> dict[str, Any] | None:
 
 
 def act(command: str, title: str, preset: dict[str, Any] | None = None, style: str = "default", *,
-        values: dict[str, Any] | None = None, import_only: bool = False, basis: str = "") -> dict[str, Any]:
+        values: dict[str, Any] | None = None, import_only: bool = False, basis: str = "", confirm: str = "") -> dict[str, Any]:
     """Nút gọi một lệnh (form mở sẵn các trường ``preset`` — cố định, ẩn). ``values``: ô ĐIỀN SẴN mà người vẫn thấy + sửa được (vd tiêu đề việc lấy
     từ tin nhắn) — như phần trợ lý soạn sẵn trên thẻ đề xuất. Quyền / duyệt vẫn do executor — app chỉ vẽ."""
     out = {"command": command, "title": title, "style": style, "bind": {}, "preset": preset or {}, "when": {}, "importable": False}
@@ -328,6 +328,8 @@ def act(command: str, title: str, preset: dict[str, Any] | None = None, style: s
         out["import_only"] = True   # chỉ THÊM trường: nút mở thẳng màn "Nhập từ Excel" (lệnh nhập cả bảng — không có form nhập một)
     if values:
         out["values"] = values   # chỉ THÊM trường (bất biến 7): app cũ bỏ qua ⇒ form trống như trước
+    if confirm:
+        out["confirm"] = confirm   # câu hỏi lại của nút không có ô nào để điền (vd "Cấp số và khoá nội dung…") — app cũ hỏi câu chung như trước
     if basis:
         # CĂN CỨ người xem đang thấy (0071 / 0251 — ``executor.basis_token``): app gửi lại nguyên chữ ở tiêu đề ``X-Expect-Basis`` khi bấm ⇒ số đã đổi
         # giữa lúc xem và lúc bấm thì lệnh trả ``conflict``, không chạy. App cũ không gửi ⇒ lệnh chạy như trước (không so)

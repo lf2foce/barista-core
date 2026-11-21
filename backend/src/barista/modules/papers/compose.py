@@ -452,8 +452,8 @@ async def template_view(ctx: Ctx, inp: TemplateRef) -> dict[str, Any]:
 
 class StartDraft(Input):
     """Lập TỪ HỒ SƠ (ADR 0251): nút trên thẻ hồ sơ của gói điền sẵn hồ sơ + loại; mẫu tự chọn = mẫu đang dùng của công ty cho loại đó (nhiều mẫu mới hỏi)."""
-    template_id: UUID | None = ffield("Mẫu", None, options_query="papers.template_options", options_with=("subject_kind",),
-                                      help="Để trống — dùng mẫu đang dùng của công ty cho loại hồ sơ này (có nhiều mẫu thì chọn)")
+    template_id: UUID | None = ffield("Lập giấy gì", None, options_query="papers.template_options", options_with=("subject_kind",),
+                                      help="Các mẫu công ty đang dùng cho hồ sơ này — công ty chỉ có một mẫu thì để trống")
     ref: str = ffield("Hồ sơ", max_length=60, options_query="papers.draft_ref_options", options_with=("template_id", "subject_kind"),
                       help="Hồ sơ lấy số liệu cho giấy — chỉ hiện hồ sơ bạn xem được")
     subject_kind: str = ffield("Loại hồ sơ", "", hidden=True, agent=False)
@@ -620,7 +620,7 @@ async def issue_basis(ctx: Ctx, paper_id: UUID) -> dict[str, str]:
 class SetField(Input):
     paper_id: UUID = ffield("Giấy", hidden=True)
     key: str = ffield("Ô cần điền", hidden=True, max_length=60)
-    value: str = ffield("Giá trị", max_length=500, help="Số tiền: 50.000.000 · ngày: 08/11/2026")
+    value: str = ffield("Nội dung điền vào ô", max_length=500, help="Ghi đúng như sẽ in trên giấy — số tiền: 50.000.000 · ngày: 08/11/2026")
     reason: str = ffield("Căn cứ", "", max_length=500, help="Vd “khách cung cấp khi ký” — lưu cùng giấy, không in lên giấy")
 
 
@@ -696,7 +696,7 @@ def _when(ts: Any) -> str:
 async def _belongs(ctx: Ctx, d: dict[str, Any], subj: Subject | None, title: str) -> dict[str, Any]:
     """Dòng "Thuộc: <loại hồ sơ> <mã> — <tên>" — chạm mở hồ sơ khi loại đó khai đối tượng (``m.subject``) và người xem thấy nó."""
     label = subj.label if subj else d["subject_kind"]
-    text = f"{label} {d['ref']}" + (f" — {title}" if title and title != d["ref"] else "")
+    text = f"{label} {d['ref']}" + (f" · {title}" if title and title != d["ref"] else "")
     got = await ctx.call_as_optional(registry.SUBJECTS[d["subject_kind"]][1], ctx.p, subject_id=d["subject_id"]) \
         if d["subject_kind"] in registry.SUBJECTS else None
     opened = (got or {}).get("open")

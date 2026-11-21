@@ -65,6 +65,7 @@ export function decodeAction(raw: unknown): ActionSpec {
     ...(o.import_only === true ? { import_only: true } : {}),
     ...(typeof o.route === "string" && ROUTE.test(o.route) ? { route: o.route } : {}),
     ...(typeof o.basis === "string" && o.basis ? { basis: o.basis } : {}),
+    ...(typeof o.confirm === "string" && o.confirm ? { confirm: o.confirm } : {}),
   };
 }
 
