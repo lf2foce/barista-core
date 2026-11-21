@@ -380,13 +380,15 @@ function Bubble({ message }: { message: ChatMessage }) {
         (card) => desk.proposalEdits[card.id] ?? card.input ?? {},
         newKey,
         (card, o) => {
-          desk.setConfirmed(card.id, o.message, o.approvalId);
+          desk.setConfirmed(card.id, o.message, o.approvalId, o.status);
           chat.addSystem(`✓ ${o.message}`);
         },
       );
       if (r.failed) {
         desk.show(r.failed.outcome.message || r.failed.outcome.status, true);
-        desk.openCard(r.failed.card, true); // mở thẻ lỗi cho người sửa
+        const { card, outcome } = r.failed;
+        if (outcome.done) desk.setConfirmed(card.id, outcome.message, outcome.approvalId, outcome.status);
+        else desk.openCard(card, true); // mở thẻ lỗi cho người sửa
       }
       void desk.refreshInbox();
     } finally {
@@ -536,12 +538,12 @@ function AsideRow({ card }: { card: ChatCard }) {
   const desk = useDesk();
   const chat = useChat();
   const [busy, setBusy] = useState<"confirm" | "dismiss" | null>(null);
-  const done = desk.settled(card)?.label;
+  const done = desk.settled(card);
   const decide = async (d: "confirm" | "dismiss") => {
     setBusy(d);
     try {
       const o = await chat.decide(card, d, d === "confirm" ? desk.proposalEdits[card.id] ?? card.input ?? {} : {}, newKey());
-      if (o.done) desk.setConfirmed(card.id, d === "confirm" ? o.message || "Đã xong" : "Đã bỏ qua");
+      if (o.done) desk.setConfirmed(card.id, o.message, o.approvalId, o.status);
       else {
         desk.show(o.message || o.status, true);
         desk.openCard(card, true); // lỗi (vd khách đã chuyển người) ⇒ mở thẻ để xem / sửa
@@ -550,17 +552,16 @@ function AsideRow({ card }: { card: ChatCard }) {
       setBusy(null);
     }
   };
-  const settled = done !== undefined;
-  const dropped = done === "Đã bỏ qua" || done === "Đã bỏ đề xuất"; // mở lại cuộc trò chuyện cũ: server ghi "Đã bỏ đề xuất"
+  const dropped = done?.label === "Đã bỏ qua" || done?.label === "Đã bỏ đề xuất";
   const verb = card.verb || "Đồng ý";
   return (
-    <div className={cn("flex items-center gap-2.5 rounded-[12px] border border-dashed border-border px-2.5 py-1.5", settled && "opacity-70")}>
+    <div className={cn("flex items-center gap-2.5 rounded-[12px] border border-dashed border-border px-2.5 py-1.5", done && "opacity-70")}>
       <Brain className="size-4 shrink-0" style={{ color: "#ff2d55" }} aria-hidden />
       <button type="button" onClick={() => desk.openCard(card, true)} className="t12 min-w-0 flex-1 truncate text-left outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring" title={card.title}>
         {card.title}
       </button>
-      {settled ? (
-        <span className={cn("t12m shrink-0", dropped ? "text-muted-foreground" : "text-ok")}>{dropped ? "Đã bỏ qua" : `✓ Đã ${verb.toLowerCase()}`}</span>
+      {done ? (
+        <span className={cn("t12m shrink-0", done.tone === "muted" ? "text-muted-foreground" : "text-ok")}>{dropped ? "Đã bỏ qua" : done.label}</span>
       ) : (
         <span className="flex shrink-0 items-center gap-1.5">
           <button type="button" disabled={busy !== null} onClick={() => void decide("confirm")} className={cn(actionClass("primary"), "h-6 px-2 text-[12px]")}>

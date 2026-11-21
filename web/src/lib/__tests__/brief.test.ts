@@ -36,4 +36,8 @@ describe("bản chạy thử chuẩn (ADR 0253)", () => {
     expect(undoOfOutput({ undo: { command: "", input: {} } })).toBeNull();
     expect(undoOfOutput(null)).toBeNull();
   });
+  it.each(["running", "failed", "needs_reconciliation"])("khôi phục thẻ %s từ server, giữ nguyên nhãn trạng thái", (state) => {
+    expect(settledOf(decodeCard(card({ state, state_label: "Trạng thái từ server" })))).toEqual({ label: "Trạng thái từ server", tone: "muted" });
+    expect(settledOf(card({ state: "proposed" }), { status: state, message: "Trạng thái từ lần bấm" })).toEqual({ label: "Trạng thái từ lần bấm", tone: "muted" });
+  });
 });

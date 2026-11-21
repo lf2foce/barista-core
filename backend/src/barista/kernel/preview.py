@@ -15,6 +15,8 @@ Nguồn của từng phần (một chỗ, không lệnh nào tự dựng thẻ):
 Luật xác nhận của nút không ô nào (``confirm_rule``) cũng ở đây — ``forms.form_spec`` chỉ đọc, app chỉ vẽ.
 """
 
+import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from barista.kernel import registry
@@ -26,6 +28,15 @@ if TYPE_CHECKING:
     from barista.kernel.executor import Ctx
 
 UNKNOWN = {"ok": None, "how": ""}
+EXTERNAL_DECISION_S = 300
+RECONCILIATION = "needs_reconciliation"
+RECONCILIATION_LABEL = "Cần đối soát với hệ ngoài trước khi thực hiện lại"
+
+
+def running_state(started_at: datetime | float | None) -> str:
+    """Lượt quá hạn (kể cả khi tiến trình chết) cần đối soát, vẫn giữ chặn chạy lại."""
+    start = started_at.timestamp() if isinstance(started_at, datetime) else started_at
+    return "running" if start is not None and time.time() - start < EXTERNAL_DECISION_S else RECONCILIATION
 
 
 def reversibility(op: registry.Op) -> dict[str, Any]:
@@ -107,7 +118,7 @@ def _title(op: registry.Op, payload: dict[str, Any], given: dict[str, Any], subj
 
 def state_of(status: str, approval_id: Any = None) -> dict[str, Any]:
     """TRẠNG THÁI "đã quyết" của một thẻ đề xuất, đọc từ SERVER (không giữ ở trình duyệt) — một từ vựng cho thẻ chat lẫn thẻ sáng: ``proposed`` (chờ) ·
-    ``running`` (đang gọi hệ ngoài) · ``executed`` (đã làm) · ``sent`` (đã gửi duyệt — kèm ``approval_id`` để mở ĐÚNG phiếu) · ``dismissed`` · ``expired`` · ``failed``."""
+    ``running`` · ``needs_reconciliation`` · ``executed`` (đã làm) · ``sent`` (đã gửi duyệt — kèm ``approval_id``) · ``dismissed`` · ``expired`` · ``failed``."""
     if status == "done" and approval_id:
         return {"state": "sent", "approval_id": str(approval_id)}
-    return {"state": {"open": "proposed", "running": "running", "done": "executed", "dismissed": "dismissed", "expired": "expired", "failed": "failed"}.get(status, status)}
+    return {"state": {"open": "proposed", "done": "executed"}.get(status, status)}

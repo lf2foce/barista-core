@@ -694,6 +694,15 @@ async def load_thread(p: Principal, thread_id: UUID) -> dict[str, Any] | None:
         return await cur.fetchone()
 
 
+def _decision_status(entry: dict[str, Any]) -> str:
+    status = entry.get("status", "waiting")
+    return preview.running_state(entry.get("started_at")) if status == "running" else status
+
+
+def _decision_message(entry: dict[str, Any], status: str) -> str:
+    return preview.RECONCILIATION_LABEL if status == preview.RECONCILIATION else entry.get("message", "")
+
+
 def with_states(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Gắn TRẠNG THÁI ĐÃ QUYẾT từ chính server vào thẻ đề xuất của cuộc trò chuyện (``state`` · ``approval_id`` — cùng từ vựng ``morning.state_of``): người
     mở lại cuộc trò chuyện (hoặc mở từ máy khác) thấy đúng thẻ nào đã làm / đã bỏ / đã gửi duyệt — web không giữ trạng thái này trong trình duyệt."""
@@ -703,10 +712,11 @@ def with_states(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
             e = known.get(card.get("id"))
             if card.get("kind") != "proposal" or e is None:
                 continue
-            status = {"waiting": "open", "ok": "done", "pending_approval": "done", "dismissed": "dismissed"}.get(e.get("status", ""), "open")
-            card.update(preview.state_of(status, e.get("approval_id")))
-            if e.get("message"):
-                card["state_label"] = e["message"]
+            status = _decision_status(e)
+            stored = {"waiting": "open", "ok": "done", "pending_approval": "done"}.get(status, status)
+            card.update(preview.state_of(stored, e.get("approval_id")))
+            if message := _decision_message(e, status):
+                card["state_label"] = message
     return turns
 
 
@@ -1186,6 +1196,13 @@ async def decide(p: Principal, card_id: str, decision: str, input: dict[str, Any
     secret_card: dict[str, Any] | None = None
     turns: list[dict[str, Any]] = []
     idx = init_idx
+
+    async def replay(entry: dict[str, Any]) -> None:
+        status = _decision_status(entry)
+        await emit({"type": "decided", "card_id": card_id, "status": status, "message": _decision_message(entry, status), "replayed": True,
+                    **({"approval_id": entry["approval_id"]} if entry.get("approval_id") else {})})
+        await emit({"type": "done", "thread_id": str(thread_id)})
+
     if decision == "dismiss":
         async with db.tenant_tx(p) as conn:
             cur = await conn.execute("SELECT turns FROM core.chat_threads WHERE id = %s FOR UPDATE", (thread_id,))
@@ -1197,9 +1214,7 @@ async def decide(p: Principal, card_id: str, decision: str, input: dict[str, Any
             turns = locked["turns"]
             idx, call_id, entry = spot
             if call_id is None or entry["status"] != "waiting":
-                await emit({"type": "decided", "card_id": card_id, "status": entry["status"], "message": entry.get("message", ""), "replayed": True,
-                            **({"approval_id": entry["approval_id"]} if entry.get("approval_id") else {})})
-                await emit({"type": "done", "thread_id": str(thread_id)})
+                await replay(entry)
                 return
             outcome = {"status": "dismissed", "message": "Đã bỏ đề xuất", "result": None}
             with executor.tracing(f"chat:{turns[idx].get('trace', '')}"):   # tín hiệu "bỏ" cùng vết với lúc soạn (0091)
@@ -1209,7 +1224,7 @@ async def decide(p: Principal, card_id: str, decision: str, input: dict[str, Any
             else:
                 pend = turns[idx]["pending"]
                 pend["calls"][call_id].update(outcome)
-                if all(c["status"] not in ("waiting", "running") for c in pend["calls"].values()) and idx == len(turns) - 1 and not pend.get("resumed"):
+                if all(_decision_status(c) not in ("waiting", "running") for c in pend["calls"].values()) and idx == len(turns) - 1 and not pend.get("resumed"):
                     pend["resumed"] = resume = True
             await conn.execute("UPDATE core.chat_threads SET turns = %s, updated_at = now() WHERE id = %s", (Jsonb(turns), thread_id))
     else:
@@ -1217,9 +1232,7 @@ async def decide(p: Principal, card_id: str, decision: str, input: dict[str, Any
         # CÙNG giao dịch với lệnh (``executor.run(..., claim=, on_prepare=, on_done=, on_fail=)``). Với lệnh có ``op.prepare`` gọi hệ ngoài,
         # ``on_prepare`` chuyển thẻ sang ``running`` và commit TRƯỚC khi gọi mạng (Bỏ / Xác nhận thứ hai bị chặn); lỗi ⇒ ``failed``.
         if init_call_id is None or init_entry["status"] != "waiting":
-            await emit({"type": "decided", "card_id": card_id, "status": init_entry["status"], "message": init_entry.get("message", ""), "replayed": True,
-                        **({"approval_id": init_entry["approval_id"]} if init_entry.get("approval_id") else {})})
-            await emit({"type": "done", "thread_id": str(thread_id)})
+            await replay(init_entry)
             return
         already: dict[str, Any] | None = None
         gone = False
@@ -1234,7 +1247,7 @@ async def decide(p: Principal, card_id: str, decision: str, input: dict[str, Any
                 assert locked_call_id is not None
                 pend = turns[idx]["pending"]
                 pend["calls"][locked_call_id].update(upd)
-                if may_resume and all(c["status"] not in ("waiting", "running") for c in pend["calls"].values()) and idx == len(turns) - 1 and not pend.get("resumed"):
+                if may_resume and all(_decision_status(c) not in ("waiting", "running") for c in pend["calls"].values()) and idx == len(turns) - 1 and not pend.get("resumed"):
                     pend["resumed"] = resume = True
 
         async def _claim(conn: Conn, prepared: bool) -> executor.Result | None:
@@ -1254,7 +1267,7 @@ async def decide(p: Principal, card_id: str, decision: str, input: dict[str, Any
             return None
 
         async def _on_prepare(conn: Conn) -> None:
-            _set_card({"status": "running", "message": "Đang thực hiện…"}, may_resume=False)
+            _set_card({"status": "running", "message": "Đang thực hiện…", "started_at": time.time()}, may_resume=False)
             await conn.execute("UPDATE core.chat_threads SET turns = %s, updated_at = now() WHERE id = %s", (Jsonb(turns), thread_id))
 
         async def _on_done(conn: Conn, r: executor.Result) -> None:
@@ -1267,18 +1280,20 @@ async def decide(p: Principal, card_id: str, decision: str, input: dict[str, Any
             await conn.execute("UPDATE core.chat_threads SET turns = %s, updated_at = now() WHERE id = %s", (Jsonb(turns), thread_id))
 
         async def _on_fail(conn: Conn, r: executor.Result) -> None:
+            nonlocal outcome
             cur = await conn.execute("SELECT turns FROM core.chat_threads WHERE id = %s FOR UPDATE", (thread_id,))
             locked = await cur.fetchone()
             sp = _locate(locked["turns"], card_id) if locked else None
             if locked is None or sp is None or sp[1] is None or sp[2]["status"] != "running":
                 return
             t_idx, t_cid, _ = sp
-            fail_out = {"status": "failed", "message": r.error or "Thực hiện lỗi",
-                        "result": {"status": r.status, **outcome_of(r.status), "output": None, "error": r.error}}
+            status = preview.RECONCILIATION if r.status == preview.RECONCILIATION else "failed"
+            outcome = {"status": status, "message": _decision_message({"message": r.error or "Thực hiện lỗi"}, status),
+                       "result": {"status": r.status, **outcome_of(r.status), "output": None, "error": r.error}}
             if t_cid == ASIDE:
-                locked["turns"][t_idx]["asides"][card_id].update(fail_out)
+                locked["turns"][t_idx]["asides"][card_id].update(outcome)
             else:
-                locked["turns"][t_idx]["pending"]["calls"][t_cid].update(fail_out)
+                locked["turns"][t_idx]["pending"]["calls"][t_cid].update(outcome)
             await conn.execute("UPDATE core.chat_threads SET turns = %s, updated_at = now() WHERE id = %s", (Jsonb(locked["turns"]), thread_id))
 
         edited = "input" in init_entry and init_entry["input"] != executor.jsonable(input)
@@ -1289,15 +1304,14 @@ async def decide(p: Principal, card_id: str, decision: str, input: dict[str, Any
             await emit({"type": "error", "message": "Đề xuất này không còn chờ (cuộc trò chuyện đã cũ hoặc không phải của bạn)."})
             return
         if already is not None:
-            await emit({"type": "decided", "card_id": card_id, "status": already["status"], "message": already.get("message", ""), "replayed": True,
-                        **({"approval_id": already["approval_id"]} if already.get("approval_id") else {})})
-            await emit({"type": "done", "thread_id": str(thread_id)})
+            await replay(already)
             return
-        if r.status not in ("ok", "pending_approval"):
+        if not r.ok and not outcome:
             await emit({"type": "rejected", "card_id": card_id, "status": r.status, "message": r.error})
             return
         replayed = r.replayed
-        secret_card = await _once_card(p, locked_entry["command"], r.output)
+        if r.ok:
+            secret_card = await _once_card(p, locked_entry["command"], r.output)
     await emit({"type": "decided", "card_id": card_id, "status": outcome["status"], "message": outcome["message"], "replayed": replayed,
                 "resuming": resume, **({"approval_id": outcome["approval_id"]} if outcome.get("approval_id") else {})})
     if secret_card is not None:   # thẻ có bí mật một lần (link gửi khách): CHỈ trên luồng trực tiếp — không vào lịch sử chat, không tới model
@@ -1316,6 +1330,8 @@ async def _resume(p: Principal, thread_id: UUID, idx: int, turns: list[dict[str,
     for call_id, c in calls.items():
         if c["status"] == "dismissed":
             approvals[call_id] = ToolDenied("Người dùng đã BỎ đề xuất này — không có gì được ghi. Đừng soạn lại y hệt trừ khi họ yêu cầu.")
+        elif _decision_status(c) == preview.RECONCILIATION:
+            approvals[call_id] = ToolDenied(preview.RECONCILIATION_LABEL + ". Không tự gửi lại lệnh.")
         else:
             approvals[call_id] = ToolApproved()
             meta[call_id] = {"executed": c["result"]}

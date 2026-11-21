@@ -7,12 +7,13 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
+import pytest
 from psycopg.types.json import Jsonb
 
 from barista import seed
 from barista.agent import chat, morning
 from barista.db import db
-from barista.kernel import executor
+from barista.kernel import executor, preview
 from barista.kernel.clock import today
 from tests.conftest import Who, edge, fresh_phone, owner_val
 from tests.test_admin_owner_approval import PEOPLE, _company
@@ -187,6 +188,12 @@ async def _file_custom_card(p: Any, command: str, inp: dict[str, Any], title: st
     return row["id"]
 
 
+async def _reopened_chat_card(p: Any, first: Log, card_id: str) -> dict[str, Any]:
+    thread = await chat.load_thread(p, UUID(first.of("done")[-1]["thread_id"]))
+    assert thread is not None
+    return next(c for t in chat.with_states(thread["turns"]) for c in t.get("cards", ()) if c["id"] == card_id)
+
+
 async def test_morning_prepare_dismiss_wins_sends_zero_external_calls(who: Who, monkeypatch: Any) -> None:
     """Rà Codex 21/11: Bỏ thắng trước Xác nhận ⇒ hệ ngoài nhận ĐÚNG 0 lệnh."""
     ext_calls: list[str] = []
@@ -291,6 +298,7 @@ async def test_chat_prepare_confirm_wins_blocks_dismiss_and_duplicate_confirm_wi
     confirm_task = asyncio.create_task(chat.decide(sale, card["id"], "confirm", card["input"], "chat-ext-1", emit=log_confirm, model=model))
     try:
         await asyncio.wait_for(entered.wait(), timeout=5)
+        assert (await _reopened_chat_card(sale, first, card["id"]))["state"] == "running"
         await chat.decide(sale, card["id"], "dismiss", card["input"], "chat-ext-d", emit=log_dismiss, model=model)
         await chat.decide(sale, card["id"], "confirm", card["input"], "chat-ext-2", emit=log_dup, model=model)
         assert log_dismiss.of("decided")[0]["status"] == "running" and log_dismiss.of("decided")[0]["replayed"] is True
@@ -347,6 +355,80 @@ async def test_chat_prepare_dismiss_wins_sends_zero_external_calls_and_failure_m
     l2, l2_retry = Log(), Log()
     await chat.decide(sale, c2["id"], "confirm", c2["input"], "chat-f1", emit=l2, model=m2)
     await chat.decide(sale, c2["id"], "confirm", c2["input"], "chat-f2", emit=l2_retry, model=m2)
-    assert l2.of("rejected")[0]["status"] == "conflict"
+    assert l2.of("decided")[0]["status"] == "failed"
     assert l2_retry.of("decided")[0]["status"] == "failed" and l2_retry.of("decided")[0]["replayed"] is True
+    reloaded = await _reopened_chat_card(sale, f2, c2["id"])
+    assert reloaded["state"] == "failed" and reloaded["state_label"] == "Kênh ngoài tạm lỗi"
     assert ext_calls == [p2]
+
+
+async def test_cancelled_external_decision_needs_reconciliation(who: Who, monkeypatch: Any) -> None:
+    entered = asyncio.Event()
+    calls: list[str] = []
+
+    async def prepare(_prep: Any, inp: Any) -> None:
+        calls.append(inp.target)
+        entered.set()
+        await asyncio.Event().wait()
+
+    cmd = _register_ext_op(monkeypatch, prepare)
+    sale = await who("sale1")
+    card = await _file_custom_card(sale, cmd, {"target": "cancel-after-send"}, "Hủy tác vụ giữa lúc gọi")
+    task = asyncio.create_task(morning.decide(sale, card, "confirm", None, "cancel-first"))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+    finally:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert await owner_val("SELECT result->>'status' FROM core.proposals WHERE id = %s", (card,)) == preview.RECONCILIATION
+    for decision in ("confirm", "dismiss"):
+        res = await morning.decide(sale, card, decision, None, f"cancel-{decision}")
+        assert res["status"] == "conflict" and res["error"] == preview.RECONCILIATION_LABEL
+    assert calls == ["cancel-after-send"]
+
+
+async def test_abandoned_external_decision_needs_reconciliation_after_deadline(who: Who, monkeypatch: Any) -> None:
+    async def prepare(_prep: Any, inp: Any) -> None:
+        raise AssertionError("Không gửi lại lệnh của lượt bị gián đoạn")
+
+    cmd = _register_ext_op(monkeypatch, prepare)
+    sale = await who("sale1")
+    card = await _file_custom_card(sale, cmd, {"target": "abandoned"}, "Tiến trình ngừng giữa chừng")
+    async with db.owner_tx() as conn:
+        await conn.execute("UPDATE core.proposals SET status = 'running', decided_at = now() - (%s * interval '1 second') WHERE id = %s",
+                           (preview.EXTERNAL_DECISION_S + 1, card))
+    for decision in ("confirm", "dismiss"):
+        res = await morning.decide(sale, card, decision, None, f"stale-{decision}")
+        assert res["status"] == "conflict" and res["error"] == preview.RECONCILIATION_LABEL
+    turns = [{"cards": [{"id": "stale", "kind": "proposal"}], "asides": {
+        "stale": {"card_id": "stale", "status": "running", "started_at": 0},
+    }}]
+    assert chat.with_states(turns)[0]["cards"][0]["state"] == preview.RECONCILIATION
+
+
+async def test_approval_rule_added_during_external_call_applies_to_next_decision(who: Who, monkeypatch: Any) -> None:
+    sale = await who("sale1")
+    calls: list[str] = []
+
+    async def prepare(_prep: Any, inp: Any) -> dict[str, Any]:
+        calls.append(inp.target)
+        async with db.owner_tx() as conn:
+            await conn.execute("INSERT INTO core.approval_rules (tenant_id, command, chain) VALUES (%s, %s, 'access_change')",
+                               (sale.tenant_id, cmd))
+        return {"sent": True}
+
+    cmd = _register_ext_op(monkeypatch, prepare)
+    try:
+        first = await _file_custom_card(sale, cmd, {"target": "ad-first"}, "Quyết định trước khi đổi luật")
+        current = await morning.decide(sale, first, "confirm", None, "rule-first")
+        assert current["status"] == "ok" and current["approval_id"] is None
+
+        second = await _file_custom_card(sale, cmd, {"target": "ad-next"}, "Quyết định sau khi đổi luật")
+        next_decision = await morning.decide(sale, second, "confirm", None, "rule-next")
+        assert next_decision["status"] == "pending_approval" and next_decision["approval_id"]
+        assert calls == ["ad-first"]
+    finally:
+        async with db.owner_tx() as conn:
+            await conn.execute("DELETE FROM core.approval_rules WHERE tenant_id = %s AND command = %s", (sale.tenant_id, cmd))

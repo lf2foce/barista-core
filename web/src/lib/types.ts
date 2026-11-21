@@ -631,7 +631,7 @@ export type ChatCard = {
   kind: string; // page · proposal
   /** Bản chạy thử chuẩn của đề xuất (server dựng lúc chạy thử). */
   brief?: Brief | null;
-  /** TRẠNG THÁI do server nói: proposed · executed · sent (đã gửi duyệt — kèm `approval_id`) · dismissed · expired. */
+  /** Trạng thái do server gửi. Thẻ chờ xác nhận có state là proposed. */
   state?: string;
   state_label?: string;
   approval_id?: string;

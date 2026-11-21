@@ -19,10 +19,13 @@ export function decodeBrief(raw: unknown): Brief | null {
 }
 
 export type Settled = { label: string; tone: "ok" | "muted"; approvalId?: string };
+export type DecisionLabel = { message: string; approvalId?: string; status?: string };
 
 /** Thẻ đã quyết chưa — SERVER nói (`state`); `local` chỉ là chữ vừa bấm (trước khi tải lại), không phải nguồn sự thật. */
-export function settledOf(card: ChatCard, local?: { message: string; approvalId?: string }): Settled | null {
-  switch (card.state) {
+export function settledOf(card: ChatCard, local?: DecisionLabel): Settled | null {
+  const state = card.state && card.state !== "proposed" ? card.state : local?.status;
+  const label = state === card.state ? card.state_label : local?.message;
+  switch (state) {
     case "executed":
       return { label: card.state_label || "Đã xong", tone: "ok" };
     case "sent":
@@ -31,6 +34,12 @@ export function settledOf(card: ChatCard, local?: { message: string; approvalId?
       return { label: "Đã bỏ đề xuất", tone: "muted" };
     case "expired":
       return { label: "Đề xuất đã hết hạn", tone: "muted" };
+    case "running":
+      return { label: label || "Đang thực hiện…", tone: "muted" };
+    case "failed":
+      return { label: label || "Thực hiện lỗi", tone: "muted" };
+    case "needs_reconciliation":
+      return { label: label || "Cần đối soát với hệ ngoài", tone: "muted" };
   }
   if (!local) return null;
   return { label: local.message, tone: local.message === "Đã bỏ đề xuất" ? "muted" : "ok", approvalId: local.approvalId };

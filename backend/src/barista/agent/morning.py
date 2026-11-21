@@ -137,8 +137,9 @@ async def outside_status(p: Principal, source: str, proposal_id: UUID) -> dict[s
     không đọc được) — để ứng dụng biết người đã bấm chưa rồi làm tiếp."""
     mine = f"{OUTSIDE}:{source[:40]}:".replace("\\", "").replace("%", "").replace("_", "\\_")
     async with db.tenant_tx(p, read_only=True) as conn:
-        cur = await conn.execute("SELECT status, title, decided_at FROM core.proposals WHERE id = %s AND key LIKE %s", (proposal_id, mine + "%"))
-        return await cur.fetchone()
+        cur = await conn.execute("SELECT status, title, decided_at, result FROM core.proposals WHERE id = %s AND key LIKE %s", (proposal_id, mine + "%"))
+        row = await cur.fetchone()
+    return {"status": _proposal_status(row), "title": row["title"], "decided_at": row["decided_at"]} if row else None
 
 
 async def open_titles(p: Principal, prefix: str) -> list[dict[str, Any]]:
@@ -204,7 +205,26 @@ def card_of(r: dict[str, Any], p: Principal, op: registry.Op) -> dict[str, Any]:
     brief = r["preview"] or {"title": r["title"], "subject": None, "changes": [], "reason": r["reason"], "reversible": previews.reversibility(op)}
     return {"id": str(r["id"]), "kind": "proposal", "source": "morning", "command": r["command"], "title": brief["title"], "subtitle": r["reason"],
             "reason": r["reason"], "brief": brief, "input": r["input"], "fields": field_specs(op, p.vocab, p.fields), "basis": r["basis"],
-            **previews.state_of(r["status"], (r.get("result") or {}).get("approval_id") if isinstance(r.get("result"), dict) else None)}
+            **previews.state_of(_proposal_status(r), (r.get("result") or {}).get("approval_id") if isinstance(r.get("result"), dict) else None)}
+
+
+def _proposal_status(row: dict[str, Any]) -> str:
+    if row["status"] == "running":
+        return previews.running_state(row.get("decided_at"))
+    if row["status"] == "failed" and (row.get("result") or {}).get("status") == previews.RECONCILIATION:
+        return previews.RECONCILIATION
+    return row["status"]
+
+
+def _unavailable(row: dict[str, Any] | None) -> executor.Result | None:
+    status = _proposal_status(row) if row else None
+    if status == "open":
+        return None
+    if status == "running":
+        return executor.Result("conflict", error=RUNNING)
+    if status == previews.RECONCILIATION:
+        return executor.Result("conflict", error=previews.RECONCILIATION_LABEL)
+    return executor.Result("not_found", error=GONE)
 
 
 async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str, Any] | None, key: str) -> dict[str, Any]:
@@ -219,10 +239,9 @@ async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str,
         async with db.tenant_tx(p) as conn:
             cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s FOR UPDATE", (proposal_id,))
             row = await cur.fetchone()
-            if row is None or row["status"] not in ("open", "running"):
-                return _result("not_found", GONE)
-            if row["status"] == "running":
-                return _result("conflict", RUNNING)
+            if unavailable := _unavailable(row):
+                return _result(unavailable.status, unavailable.error)
+            assert row is not None
             with executor.tracing(_trace(row["user_id"], row["day"], row["key"])):   # cùng vết với lúc soạn: "trợ lý soạn → người quyết"
                 await executor.record_dismissed(p, row["command"], row["input"], conn=conn)   # tín hiệu "bỏ" (0091) — dùng chung kết nối
                 await _close(conn, proposal_id, "dismissed", None)
@@ -231,22 +250,17 @@ async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str,
     async with db.tenant_tx(p, read_only=True) as conn:
         cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s", (proposal_id,))
         row = await cur.fetchone()
-    if row is None or row["status"] not in ("open", "running"):
-        return _result("not_found", GONE)
-    if row["status"] == "running":
-        return _result("conflict", RUNNING)
+    if unavailable := _unavailable(row):
+        return _result(unavailable.status, unavailable.error)
+    assert row is not None
     inp: dict[str, Any] = data if isinstance(data, dict) and data else row["input"]
 
     async def _claim(conn: Conn, prepared: bool) -> executor.Result | None:
-        cur = await conn.execute("SELECT status FROM core.proposals WHERE id = %s FOR UPDATE", (proposal_id,))
+        cur = await conn.execute("SELECT status, decided_at, result FROM core.proposals WHERE id = %s FOR UPDATE", (proposal_id,))
         got = await cur.fetchone()
         if prepared:
             return None if got is not None and got["status"] == "running" else executor.Result("not_found", error=GONE)
-        if got is None:
-            return executor.Result("not_found", error=GONE)
-        if got["status"] == "running":
-            return executor.Result("conflict", error=RUNNING)
-        return None if got["status"] == "open" else executor.Result("not_found", error=GONE)
+        return _unavailable(got)
 
     async def _on_prepare(conn: Conn) -> None:
         await conn.execute("UPDATE core.proposals SET status = 'running', decided_at = now() WHERE id = %s AND status = 'open'", (proposal_id,))

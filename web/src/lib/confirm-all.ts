@@ -20,7 +20,9 @@ export async function confirmAll(
   const confirmed: ConfirmAllResult["confirmed"] = [];
   for (const card of cards) {
     const outcome = await decide(card, inputOf(card), newKey());
-    if (!outcome.done) return { confirmed, failed: { card, outcome } };
+    if (!outcome.done || (outcome.status !== "ok" && outcome.status !== "pending_approval")) {
+      return { confirmed, failed: { card, outcome } };
+    }
     confirmed.push({ card, outcome });
     onConfirmed?.(card, outcome);
   }

@@ -5,6 +5,7 @@ luật duyệt (nếu lệnh bị đặt luật: tạo phiếu thay vì chạy) 
 Truy vấn (``query``): kiểm quyền → giao dịch READ ONLY (handler đọc không ghi được — DB chặn).
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -1220,7 +1221,7 @@ async def run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None =
     ``claim`` / ``on_prepare`` / ``on_done`` / ``on_fail``: CHỈ đường xác nhận thẻ đề xuất (``morning.decide``, ``chat.decide``) — khoá dòng thẻ
     (``FOR UPDATE``) và đóng thẻ trong CÙNG một giao dịch / MỘT kết nối với lệnh (không giữ kết nối 1 rồi mượn kết nối 2). Với lệnh có ``op.prepare``
     gọi hệ ngoài: ``on_prepare`` ghi nhận thẻ ``running`` và commit TRƯỚC khi nhả kết nối gọi mạng (chặn Bỏ / Xác nhận thứ hai chen vào giữa);
-    nếu bước gọi ngoài hoặc bước ghi sau đó lỗi ⇒ ``on_fail`` chuyển thẻ sang ``failed`` để phản ánh đúng trạng thái và bấm lại không gửi thêm lệnh."""
+    ``on_fail`` đóng thẻ khi lỗi, yêu cầu đối soát nếu kết quả ghi ngoài chưa rõ. Cả hai trường hợp đều chặn bấm chạy lại."""
     door(p, f"run {name}")
     if dry_run and not p.system:
         return Result("denied", error="Chạy thử không ghi chỉ dành cho lệnh vận hành chạy bằng quyền hệ thống")
@@ -1318,19 +1319,24 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
             # chạy thử (cửa nhà vận hành ``--dry-run``) KHÔNG chạy bước chuẩn bị: bước đó gọi ra ngoài (đổi quảng cáo, gửi chuyển đổi, gọi hãng giao…)
             # và không hoàn được ⇒ handler chạy với ``ctx.prepared = None`` (nhánh "chưa chuẩn bị" — không gửi gì) trong điểm lưu rồi hoàn
             ready = op.prepare is None or prepared is not _UNPREPARED or dry_run   # handler sắp chạy thật mà chưa chuẩn bị ⇒ _Prepare
-            chain, what = await approval_for(ctx, op, model)
+            # Thẻ đã chiếm quyền thực thi trước khi gọi hệ ngoài. Căn cứ và luật duyệt chốt ở pha đó.
+            # Pha ghi kết quả không sinh phiếu duyệt cho một thay đổi đã gửi.
+            finishing_claim = is_prepared and on_prepare is not None
+            chain, what = (None, "") if finishing_claim else await approval_for(ctx, op, model)
             if chain and p.via == "app":
                 # app không gửi phiếu duyệt: lệnh sau duyệt chạy lại bằng quyền NGƯỜI xin — app không phải thành viên để nạp lại (0140)
                 raise Denied(f"“{op.title}” phải qua duyệt ở công ty này — ứng dụng không gửi phiếu duyệt; người trong công ty làm lệnh này")
             if chain and await approvals.sole_owner(conn, p, chain):
                 # chủ tài khoản DUY NHẤT tự đổi: không ai trên để duyệt (0029) ⇒ chạy ngay, ghi rõ trong nhật ký, báo mọi quản trị
                 chain, note = None, approvals.SOLE_OWNER_NOTE + (f": {what}" if what else "")
-            basis = await basis_of(ctx, op, model) if (chain or expect_basis is not None or op.basis_required) else None
-            if op.basis_required and expect_basis is None and basis:
-                raise Conflict(op.basis_required)   # 0251: lệnh chốt thứ người bấm phải nhìn trước — không nêu căn cứ đã thấy ⇒ không chạy
-            if changed := basis_changed(expect_basis, basis, shared_only=edited):
-                # người bấm (thẻ đề xuất / nút trang) đã thấy căn cứ khác hiện tại — không phải phiếu xin duyệt ⇒ "từ lúc bạn xem"
-                raise Conflict(f"Căn cứ đã đổi từ lúc bạn xem: {', '.join(changed)} — xem lại rồi làm lại")
+            basis = None
+            if not finishing_claim:
+                if chain or expect_basis is not None or op.basis_required:
+                    basis = await basis_of(ctx, op, model)
+                if op.basis_required and expect_basis is None and basis:
+                    raise Conflict(op.basis_required)   # 0251: lệnh chốt thứ người bấm phải nhìn trước
+                if changed := basis_changed(expect_basis, basis, shared_only=edited):
+                    raise Conflict(f"Căn cứ đã đổi từ lúc bạn xem: {', '.join(changed)} — xem lại rồi làm lại")
             if chain:
                 brief = await _brief_for_approval(conn, p, op, model, payload)
                 if what and not brief["changes"]:   # mô tả của luật duyệt (``sensitive``) là "đổi gì" — thẻ phiếu hiện nó như dòng thay đổi
@@ -1396,26 +1402,34 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
             await _system_error(p, name, payload, r, e)
         else:
             await _audit_alone(p, name, payload, r.status, r.error)
-        if is_prepared and on_fail is not None:
-            await _mark_failed(p, on_fail, r)
         return r
-    # Lệnh có bước chuẩn bị (ADR 0200, review F10): gọi mạng không giữ kết nối / khoá dòng. Lần chạy lại kiểm lại mọi thứ (quyền, gói, duyệt, căn cứ,
-    # khoá chống lặp) — giữa hai lần có thay đổi thì handler thấy trạng thái mới và tự kiểm lại điều nó dựa vào trong ``ctx.prepared``.
+    # ADR 0200: nhả kết nối trước khi gọi mạng. Thẻ đã chiếm được ghi kết quả trong một giao dịch mới.
     assert op.prepare is not None
+    prepared_outside = False
     try:
-        value = await op.prepare(_prep(p, op.module), model)
+        async with asyncio.timeout(previews.EXTERNAL_DECISION_S if need_prepare else None):
+            value = await op.prepare(_prep(p, op.module), model)
+            prepared_outside = True
+            finished = await _run(p, name, inp, key=given_key, quiet=quiet, expect_basis=expect_basis, edited=edited, files=files, attended=attended,
+                                  background=background, keep_output=keep_output, prepared=value, dry_run=dry_run, claim=claim, on_prepare=on_prepare,
+                                  on_done=on_done, on_fail=on_fail)
+    except asyncio.CancelledError:
+        if need_prepare and on_fail is not None:
+            await asyncio.shield(_mark_failed(p, on_fail, Result(previews.RECONCILIATION, error=previews.RECONCILIATION_LABEL)))
+        raise
     except Exception as e:
         r = map_error(e, op.input)
+        if need_prepare and on_fail is not None:
+            failure = Result(previews.RECONCILIATION, error=r.error) if prepared_outside or isinstance(e, TimeoutError) else r
+            await _mark_failed(p, on_fail, failure)
         if r.status == "error":
             await _system_error(p, name, payload, r, e)
         else:
             await _audit_alone(p, name, payload, r.status, r.error)
-        if on_fail is not None:
-            await _mark_failed(p, on_fail, r)
         return r
-    return await _run(p, name, inp, key=given_key, quiet=quiet, expect_basis=expect_basis, edited=edited, files=files, attended=attended,
-                      background=background, keep_output=keep_output, prepared=value, dry_run=dry_run, claim=claim, on_prepare=on_prepare,
-                      on_done=on_done, on_fail=on_fail)
+    if finished.status not in ("ok", "pending_approval") and need_prepare and on_fail is not None:
+        await _mark_failed(p, on_fail, Result(previews.RECONCILIATION, error=finished.error))
+    return finished
 
 
 async def propose(p: Principal, name: str, inp: dict[str, Any], *, reason: str = "") -> Result:

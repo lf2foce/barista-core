@@ -1,6 +1,6 @@
 "use client";
 
-import { settledOf, type Settled } from "@/lib/brief";
+import { settledOf, type DecisionLabel, type Settled } from "@/lib/brief";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, auth, listenSignals, sessionGone } from "@/lib/api";
 import { undoOfOutput } from "@/lib/autonomy";
@@ -120,8 +120,8 @@ type DeskValue = {
   /** Tăng mỗi lần một tệp vừa gắn vào hồ sơ từ ngoài thẻ (thả vào chat) — thẻ đang mở tải lại. */
   recordFilesRev: number;
   bumpRecordFiles: () => void;
-  confirmed: Record<string, string>;
-  setConfirmed: (id: string, message: string, approvalId?: string) => void;
+  confirmed: Record<string, DecisionLabel>;
+  setConfirmed: (id: string, message: string, approvalId?: string, status?: string) => void;
   /** Thẻ chờ duyệt đã quyết chưa — SERVER nói (`state`), chữ vừa bấm chỉ lấp khoảng trước khi tải lại (ADR 0253). */
   settled: (card: ChatCard) => Settled | null;
   proposalEdits: Record<string, Input>;
@@ -179,8 +179,7 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
   const setOpenRecord = useCallback((r: OpenRecord | null, owner?: string) =>
     setOpenRecordState((cur) => (r ? r : owner && cur && cur.subjectId !== owner ? cur : null)), []);
   const bumpRecordFiles = useCallback(() => setRecordFilesRev((n) => n + 1), []);
-  const [confirmed, setConfirmedMap] = useState<Record<string, string>>({});
-  const [confirmedApproval, setConfirmedApproval] = useState<Record<string, string>>({});
+  const [confirmed, setConfirmedMap] = useState<Record<string, DecisionLabel>>({});
   const [proposalEdits, setProposalEdits] = useState<Record<string, Input>>({});
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [section, setSection] = useState<Section>({ kind: "assistant" });
@@ -533,11 +532,10 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
     toast, show, inboxCount, changes, deskPage, deskFailed, refreshDesk, refreshInbox, notices, unread, refreshNotices, openNotice, markAllNoticesRead,
     askPrompt, ask, shareTarget, setShareTarget, openRecord, setOpenRecord, recordFilesRev, bumpRecordFiles,
     confirmed,
-    setConfirmed: (id, message, approvalId) => {
-      setConfirmedMap((c) => ({ ...c, [id]: message }));
-      if (approvalId) setConfirmedApproval((c) => ({ ...c, [id]: approvalId }));
+    setConfirmed: (id, message, approvalId, status) => {
+      setConfirmedMap((c) => ({ ...c, [id]: { message, approvalId, status } }));
     },
-    settled: (card) => settledOf(card, confirmed[card.id] === undefined ? undefined : { message: confirmed[card.id], approvalId: confirmedApproval[card.id] }),
+    settled: (card) => settledOf(card, confirmed[card.id]),
     proposalEdits, setProposalEdit: (id, input) => setProposalEdits((p) => ({ ...p, [id]: input })),
     paletteOpen, setPaletteOpen, logout, switchTenant,
   };

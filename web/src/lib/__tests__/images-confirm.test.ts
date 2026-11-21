@@ -85,4 +85,19 @@ describe("xác nhận cả N đề xuất", () => {
     expect(r.failed?.card.id).toBe("b");
     expect(r.failed?.outcome.message).toBe("Trùng lịch");
   });
+  it.each(["running", "failed", "needs_reconciliation"])("dừng cả khi thẻ đã khoá ở trạng thái %s", async (status) => {
+    const calls: string[] = [];
+    const r = await confirmAll(
+      [card("a"), card("b")],
+      async (c) => {
+        calls.push(c.id);
+        return { status, done: true, message: "Lệnh đã được nhận", replayed: true };
+      },
+      (c) => c.input ?? {},
+      () => crypto.randomUUID(),
+    );
+    expect(calls).toEqual(["a"]);
+    expect(r.confirmed).toEqual([]);
+    expect(r.failed?.outcome.status).toBe(status);
+  });
 });

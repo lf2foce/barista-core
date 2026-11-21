@@ -2,7 +2,7 @@
 
 import { Check, ChevronDown, ChevronLeft, Maximize2, Minimize2, Pin, PinOff, RefreshCw, Sparkles, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ChatCard, ScreenSpec } from "@/lib/types";
+import type { ChatCard, Input, ScreenSpec } from "@/lib/types";
 import { api } from "@/lib/api";
 import { IconTile, moduleTint, screenTint, SfIcon } from "@/components/icons";
 import { actionClass, Spinner } from "@/components/primitives";
@@ -319,19 +319,23 @@ function ProposalBody({ card }: { card: ChatCard }) {
   const resumable = card.resumable === true;
   const morning = card.source === "morning"; // đề xuất soạn sẵn buổi sáng (0074 A) — quyết qua morning/{id}/decide
   if (done) return <SettledLine settled={done} className="t16" />;
-  const finish = (message: string, approvalId?: string) => {
-    desk.setConfirmed(card.id, message, approvalId);
-    chat.addSystem(`✓ ${message}`);
+  const finish = (message: string, approvalId?: string, status?: string) => {
+    desk.setConfirmed(card.id, message, approvalId, status);
+    if (status === "dismissed") chat.addSystem(`✕ Đã bỏ đề xuất: ${card.title}`);
+    else if (!status || status === "ok" || status === "pending_approval") chat.addSystem(`✓ ${message}`);
     void desk.refreshInbox();
+  };
+  const confirm = async (input: Input, key: string) => {
+    const o = morning ? await chat.decideMorning(card, "confirm", input, key) : await chat.decide(card, "confirm", input, key);
+    if (o.done) finish(o.message, o.approvalId, o.status);
+    return o;
   };
   const dismiss = async () => {
     setDismissing(true);
     try {
       const o = morning ? await chat.decideMorning(card, "dismiss", {}, newKey()) : await chat.decide(card, "dismiss", {}, newKey());
-      if (o.done) {
-        desk.setConfirmed(card.id, "Đã bỏ đề xuất");
-        chat.addSystem(`✕ Đã bỏ đề xuất: ${card.title}`);
-      } else desk.show(o.message || o.status, true);
+      if (o.done) finish(o.message, o.approvalId, o.status);
+      else desk.show(o.message || o.status, true);
     } finally {
       setDismissing(false);
     }
@@ -352,10 +356,8 @@ function ProposalBody({ card }: { card: ChatCard }) {
         embedded
         onEdit={(v) => desk.setProposalEdit(card.id, v)}
         // lượt đang dừng (0049): Xác nhận chạy lệnh bằng quyền NGƯỜI qua `decide` rồi trợ lý làm tiếp; thẻ cũ: gọi lệnh trực tiếp
-        submitter={
-          morning ? (input, key) => chat.decideMorning(card, "confirm", input, key) : resumable ? (input, key) => chat.decide(card, "confirm", input, key) : undefined
-        }
-        onDone={(m) => finish(m.replace("Xác nhận: ", ""))}
+        submitter={morning || resumable ? confirm : undefined}
+        onDone={(m) => { if (!morning && !resumable) finish(m.replace("Xác nhận: ", "")); }}
       />
       {resumable || morning ? (
         <div className="flex flex-wrap items-center gap-2.5">

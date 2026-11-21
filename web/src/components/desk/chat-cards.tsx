@@ -12,8 +12,6 @@ import { BriefView, SettledLine } from "./brief";
 import { useDesk } from "./desk-context";
 import { useChat } from "./chat-context";
 
-const DISMISSED = "Đã bỏ đề xuất";
-
 /**
  * Đề xuất MỘT CHẠM (0144): nút Xác nhận nằm ngay trong câu trả lời, kèm vì sao việc này chờ người (`why` server viết từ `decide`). Xác nhận chạy lệnh
  * bằng quyền NGƯỜI qua `proposals/decide` rồi trợ lý làm tiếp; "Sửa" mở thẻ đầy đủ trên khung làm việc để chỉnh ô trước khi xác nhận.
@@ -34,7 +32,7 @@ export function ProposalRow({ card, onEdit }: { card: ChatCard; onEdit?: () => v
       // MỘT đường quyết cho mọi nơi: thẻ buổi sáng quyết qua morning/{id}/decide, thẻ trong lượt chat qua proposals/decide
       const o = card.source === "morning" ? await chat.decideMorning(card, d, input, newKey()) : await chat.decide(card, d, input, newKey());
       if (o.done) {
-        desk.setConfirmed(card.id, d === "dismiss" ? DISMISSED : o.message || "Đã xong", o.approvalId);
+        desk.setConfirmed(card.id, o.message, o.approvalId, o.status);
         void desk.refreshInbox();
       } else setError(o.message || o.status);
     } finally {
@@ -81,7 +79,7 @@ export function ResultRow({ card }: { card: ChatCard }) {
   const desk = useDesk();
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
-  const undone = desk.confirmed[card.id];
+  const undone = desk.confirmed[card.id]?.message;
   const undo = card.undo;
 
   async function run() {
