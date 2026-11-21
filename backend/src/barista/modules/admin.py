@@ -8,6 +8,7 @@ khách của cả đội, bắt huỷ giao dịch phải qua giám đốc… B�
 
 import base64
 import re
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import date, timedelta
 from typing import Any, Literal
@@ -682,7 +683,7 @@ async def set_grant(ctx: Ctx, inp: SetGrant) -> dict[str, Any]:
     cur = await ctx.one("SELECT scope, actions FROM core.grants WHERE role = %s AND resource = %s", (inp.role, inp.resource))
     await _apply_grant(ctx, inp)
 
-    def show(scope: str, acts: list[str]) -> str:
+    def show(scope: str, acts: Sequence[str]) -> str:
         return f"{SCOPE_LABEL[scope]} · " + ", ".join(ACTION_LABEL[a] for a in ACTIONS if a in acts)
 
     return {"role": inp.role, "resource": inp.resource,

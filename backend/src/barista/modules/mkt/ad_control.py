@@ -253,8 +253,8 @@ def _brief(t: dict[str, Any], action: str, before: dict[str, Any], after: dict[s
         return {"subject": subject, "changes": [{"label": "Ngân sách ngày", "before": money_text(major(before.get("daily_budget"), unit), ccy),
                                                  "after": money_text(major(after["daily_budget"], unit), ccy)}]}
     names = {"active": "Đang chạy", "paused": "Tạm dừng"}
-    return {"subject": subject, "changes": [{"label": "Trạng thái", "before": names.get(before.get("status"), str(before.get("status") or "")),
-                                             "after": names.get(after.get("status"), str(after.get("status") or ""))}]}
+    return {"subject": subject, "changes": [{"label": "Trạng thái", "before": names.get(str(before.get("status") or ""), str(before.get("status") or "")),
+                                             "after": names.get(str(after.get("status") or ""), str(after.get("status") or ""))}]}
 
 
 async def _finding(ctx: Ctx, finding_id: UUID | None) -> dict[str, Any] | None:
