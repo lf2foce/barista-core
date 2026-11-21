@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, auth, listenSignals, sessionGone } from "@/lib/api";
 import { droppedScreenKeys } from "@/lib/form";
-import { leaveSession } from "@/lib/session";
+import { leaveSession, takePrimedDesk } from "@/lib/session";
 import type { OpenRecord } from "@/lib/documents";
 import { decodeInbox, noticeIdsForSubject, talkAvailable, talkItemFor, type Section, type TalkInbox, type TalkItem } from "@/lib/talk";
 import type { ActionSpec, ChatCard, DeskPage, Input, Json, Manifest, Notice, Row, ScreenSpec, SessionInfo } from "@/lib/types";
@@ -419,18 +419,24 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // tải lần đầu: manifest → màn ghim đầu của vai (không để khung làm việc trống chờ người hỏi)
+  // tải lần đầu: manifest → màn ghim đầu của vai (không để khung làm việc trống chờ người hỏi). Vừa đăng nhập dev ⇒ dùng luôn manifest + phiên
+  // mà bước đăng nhập đã đọc (một lần, ngắn hạn — lib/session.ts), không hỏi lại core. Hộp thông báo không cần manifest ⇒ hỏi song song.
   useEffect(() => {
     let alive = true;
+    void refreshNotices();
     (async () => {
-      await reloadManifest();
+      const primed = takePrimedDesk();
+      if (primed) {
+        manifestRef.current = primed.manifest;
+        setManifest(primed.manifest);
+        setSession(primed.session);
+      } else await reloadManifest();
       if (!alive || !manifestRef.current) return;
       // mở app là thấy việc của mình ngay (màn ghim đầu của vai) — không để khung làm việc trống chờ người hỏi
       const home = pinnedScreens(manifestRef.current)[0];
       if (home) setCanvas((cur) => (cur.length ? cur : [{ id: screenItemId(home), kind: "screen", spec: home }]));
       setActiveId((a) => a ?? (home ? screenItemId(home) : null));
       void refreshInbox();
-      void refreshNotices();
       void refreshTalk();
     })();
     return () => {

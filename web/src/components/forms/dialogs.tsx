@@ -13,7 +13,7 @@ import { menuChanged, resultView } from "@/lib/form";
 import type { ImportReport } from "@/lib/types";
 import { useDesk, type FormRequest, type ImportRequest, type PageRequest } from "@/components/desk/desk-context";
 import { FormBody } from "./form-body";
-import { ImportWizard } from "./import-wizard";
+import { ImportWizard } from "@/components/blocks/lazy";
 
 /** Mọi hộp thoại đang mở (form lệnh, mở chi tiết, nhập Excel) — dựng một lần ở gốc Desk. */
 export function DialogHost() {

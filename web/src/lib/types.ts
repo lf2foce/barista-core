@@ -658,7 +658,14 @@ export type NoticeInbox = { unread: number; items: Notice[] };
 
 // ── đăng nhập ──
 
-export type AuthConfig = { google: { client_id: string } | null; dev: boolean; /** 0205 §5c: bản cài gửi được mã đăng nhập qua email */ email?: boolean };
+export type AuthConfig = {
+  google: { client_id: string } | null;
+  dev: boolean;
+  /** 0205 §5c: bản cài gửi được mã đăng nhập qua email */
+  email?: boolean;
+  /** BFF kèm sẵn danh sách vai khi đăng nhập dev bật (một lượt hỏi thay vì hai) */
+  dev_logins?: DevLogin[];
+};
 export type TenantChoice = { id: string; name: string; role_label: string };
 export type DevLogin = {
   tenant_id: string;

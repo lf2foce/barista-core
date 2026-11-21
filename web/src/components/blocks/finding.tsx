@@ -2,7 +2,7 @@
 
 import { ExternalLink, FileSearch, ScanLine } from "lucide-react";
 import { useState } from "react";
-import { PdfDialog } from "@/components/blocks/pdf-viewer";
+import { PdfDialog } from "@/components/blocks/lazy";
 import { actionClass } from "@/components/primitives";
 import { cardToneVar } from "@/lib/format";
 import { documentFileUrl } from "@/lib/links";
