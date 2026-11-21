@@ -62,7 +62,7 @@ from barista.kernel import executor
 from barista.kernel.errors import OpError
 from barista.kernel.executor import jsonable
 from barista.kernel.principal import Principal, elevate
-from barista.modules.compose import check, kinds, layout, paged, render, stock
+from barista.modules.compose import check, fit, kinds, layout, paged, render, stock
 from barista.modules.compose import html as htmlpage
 
 # Gói riêng, TÙY CHỌN, mặc định TẮT (công ty chưa có dòng core.tenant_packs ⇒ tắt; quản trị bật ở "Store"): màn, thao tác, công cụ trợ lý của
@@ -834,6 +834,87 @@ async def _settle(p: Principal, sid: UUID, base: int, out: dict[str, Any]) -> di
     return {"ok": False, "error": out["error"] or CRASH}
 
 
+FIT_TIMEOUT_S = 120.0   # trần cả vòng vừa trang (đo + vài lượt rút gọn + đo lại) — hết giờ ⇒ giữ bản đã soạn, báo trang còn tràn
+
+
+def _paged(kind: str) -> bool:
+    tpl = layout.TEMPLATES.get(kinds.of(kind).template)
+    return bool(tpl and tpl.get("pages"))
+
+
+async def _shorten(p: Principal, job: dict[str, Any], title: str, blocks: list[dict[str, Any]],
+                   steps: list[tuple[str, int]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Rút gọn từng đoạn theo ``steps`` bằng đường sửa MỘT khối đã có (``_compose`` chế độ viết lại: quyền người soạn, qua kiểm số ``check.py``, khối mới đánh dấu "AI viết").
+    Kết quả không hợp (không còn là MỘT đoạn, dài hơn, còn số lệch) ⇒ giữ đoạn cũ. Trả (khối mới, mã khối đã rút)."""
+    done: list[str] = []
+    for bid, to in steps:
+        cur = next((b for b in blocks if b["id"] == bid), None)
+        if cur is None or cur["type"] != "paragraph":
+            continue
+        j = {"op": "revise", "kind": job["kind"], "brief": job["brief"], "title": title, "blocks": blocks, "from_record": job.get("from_record", False), "block": bid,
+             "mode": "rewrite", "instruction": f"Rút gọn đoạn này còn khoảng {to} từ (hiện {fit.words(cur)} từ) để vừa khung trang in; giữ ý chính và giọng văn, "
+                                               "KHÔNG thêm con số mới, giữ nguyên mọi con số đã có."}
+        try:
+            _, new, _ = await _compose(Writer(p, _known(blocks)), j)
+        except Exception:   # bước phụ: model lỗi không được làm hỏng bản đã soạn xong — giữ nguyên, người dùng vẫn rút gọn tay được
+            log.warning("compose: rút gọn khối %s để vừa trang không được", bid, exc_info=True)
+            break
+        idx = next(i for i, b in enumerate(blocks) if b["id"] == bid)
+        if len(new) == len(blocks) and new[idx]["type"] == "paragraph" and not new[idx]["flags"] and len(new[idx]["text"]) < len(cur["text"]):
+            blocks = new
+            done.append(bid)
+    return blocks, done
+
+
+async def _fit(p: Principal, sid: UUID, res: dict[str, Any], job: dict[str, Any], out: dict[str, Any],
+               emit: Callable[[dict[str, Any]], Awaitable[None]] | None) -> dict[str, Any] | None:
+    """VÒNG VỪA TRANG (một vòng, không lặp): sau khi lượt soạn đã ghi, mẫu nhiều trang cố định mà có trang TRÀN ⇒ rút gọn đoạn chữ của đúng trang đó (đường sửa khối ``revise`` — AI
+    viết lại, quyền người soạn, qua kiểm số), ghi thành phiên bản mới, đo lại. Còn tràn ⇒ KHÔNG làm thêm: lượt trả lời nói cụ thể trang / khối nào và bấm gì (``fit.describe``).
+    Thiếu trình duyệt / đo lỗi / hết giờ ⇒ giữ nguyên bản đã soạn, không báo lỗi (cửa chặn lúc xuất vẫn đo lại). Trả kết quả ``fit_done`` cuối (có lượt trả lời) hoặc None."""
+    version = int(res["version"])
+    try:
+        async with asyncio.timeout(FIT_TIMEOUT_S):
+            if emit is not None:
+                await emit({"type": "status", "text": "Đang kiểm các trang có vừa khung in không…"})
+            r = await executor.query(p, "compose.overflow", {"session_id": str(sid)})
+            if r.status != "ok" or not isinstance(r.output, dict) or r.output.get("fits"):
+                return None
+            blocks, title = json.loads(out["blocks_json"]), out["title"]
+            steps = fit.plan(r.output["pages"])
+            done: list[str] = []
+            if steps:
+                if emit is not None:
+                    await emit({"type": "status", "text": "Trang tràn khung — AI đang rút gọn chữ cho vừa…"})
+                blocks, done = await _shorten(p, job, title, blocks, steps)
+            if done:
+                saved = await _fit_save(p, sid, version, json.dumps(blocks, ensure_ascii=False, default=str), "Rút gọn chữ cho vừa khung trang in", "")
+                if saved is None:
+                    return None   # bản đã đổi trong lúc rút gọn — bỏ kết quả
+                version, out["blocks_json"] = int(saved["version"]), json.dumps(blocks, ensure_ascii=False, default=str)
+                r = await executor.query(p, "compose.overflow", {"session_id": str(sid)})
+            left = r.output["pages"] if r.status == "ok" and isinstance(r.output, dict) else []
+    except (TimeoutError, convert.Unavailable):
+        log.info("compose: vòng vừa trang của bản soạn %s dừng (hết giờ / không đo được)", sid)
+        return None
+    if not done:
+        text = "Chưa vừa khung in — " + fit.describe(left)
+    elif left:
+        text = f"Bản {version}: đã rút gọn {len(done)} đoạn chữ cho vừa khung in, còn chưa vừa — " + fit.describe(left)
+    else:
+        text = f"Xong bản {version}: đã rút gọn {len(done)} đoạn chữ (AI viết lại) để mọi trang vừa khung in."
+    return await _fit_save(p, sid, version, "", "", text[:600])
+
+
+async def _fit_save(p: Principal, sid: UUID, base: int, blocks_json: str, note: str, text: str) -> dict[str, Any] | None:
+    try:
+        r = await executor.run(elevate(p), "compose.fit_done", {"session_id": str(sid), "base_version": base, "blocks_json": blocks_json, "note": note, "text": text})
+        if r.status == "ok" and isinstance(r.output, dict) and r.output.get("ok"):
+            return r.output
+    except Exception:   # ghi bước phụ lỗi ⇒ log; bản đã soạn xong vẫn còn nguyên
+        log.exception("compose: không ghi được kết quả vòng vừa trang của bản soạn %s", sid)
+    return None
+
+
 async def _job(p: Principal, sid: UUID, base: int, job: dict[str, Any],
                emit: Callable[[dict[str, Any]], Awaitable[None]] | None = None) -> None:
     """Việc sau commit của start / revise: lượt model có trần thời gian, rồi ghi kết quả bằng lệnh nội bộ (transaction ngắn). Mọi lỗi ⇒ bản soạn
@@ -901,6 +982,9 @@ async def _job(p: Principal, sid: UUID, base: int, job: dict[str, Any],
         _release(p.tenant_id, sid)
     out["steps_json"] = json.dumps(settle_steps(trail), ensure_ascii=False)
     res = await _settle(p, sid, base, out)
+    if res.get("ok") and out["status"] == "ready" and _paged(job["kind"]):
+        if (fitted := await _fit(p, sid, res, job, out, emit)) is not None and fitted.get("turn"):
+            res = {**res, "turn": fitted["turn"]}
     if emit is None:
         return
     if res.get("ok") and (blocks := json.loads(out["blocks_json"])):
@@ -973,6 +1057,30 @@ async def finish(ctx: Ctx, inp: Finish) -> dict[str, Any]:
         text = f"Mới soạn được một phần (bản {out['version']}, {len(blocks)} khối). {inp.partial} Bấm “Tiếp tục” để AI làm nốt."
     turn = {"role": "assistant", "status": "ready", "text": text, "version": out["version"], "steps": steps, "at": _now(), **({"partial": True} if inp.partial else {})}
     await _add_turn(ctx, s["id"], turn)
+    return {**out, "ok": True, "turn": turn}
+
+
+class FitDone(Input):
+    session_id: UUID
+    base_version: int = Field(ge=0)
+    blocks_json: str = field("Khối", "", audit=False, max_length=2_000_000)   # có ⇒ ghi thành phiên bản mới (đoạn đã rút gọn); trống ⇒ không đổi khối
+    note: str = Field("", max_length=300)
+    text: str = Field("", max_length=600)   # có ⇒ thêm một lượt "AI" vào cuộc trò chuyện nói kết quả vòng vừa trang
+
+
+@m.command("fit_done", resource=None, title="Ghi kết quả vòng vừa trang", internal=True, agent="allow")
+async def fit_done(ctx: Ctx, inp: FitDone) -> dict[str, Any]:
+    """Chỉ ``_fit`` của module này gọi, sau lượt soạn (quyền hệ thống của CHÍNH người soạn — như ``finish``): ghi các đoạn đã rút gọn thành phiên bản mới (đánh dấu AI viết) và / hoặc
+    lượt trả lời nói đã làm gì. Bản đã đổi trong lúc rút gọn ⇒ bỏ kết quả, không ghi đè."""
+    s = await ctx.one("SELECT * FROM compose.sessions WHERE id = %s FOR UPDATE", (inp.session_id,))
+    if s is None or s["version"] != inp.base_version:
+        return {"ok": False}
+    out: dict[str, Any] = {"version": s["version"]}
+    if inp.blocks_json:
+        out = await _save(ctx, s, s["title"], json.loads(inp.blocks_json), inp.note, ai=True)
+    turn = {"role": "assistant", "status": "ready", "text": inp.text, "version": out["version"], "steps": [], "at": _now()} if inp.text else None
+    if turn:
+        await _add_turn(ctx, s["id"], turn)
     return {**out, "ok": True, "turn": turn}
 
 
@@ -1160,7 +1268,7 @@ async def _html(ctx: Ctx, s: dict[str, Any], blocks: list[dict[str, Any]], *, on
     if not only:
         if page.count('class="illus"') < ai_appearances(page, blocks, images):
             raise Invalid("Ảnh minh hoạ thiếu chú thích “Ảnh minh hoạ” trên bản xuất — không xuất / gửi được")
-        await _guard_overflow(layout.template_of(s["layout"]), page)
+        await _guard_overflow(layout.template_of(s["layout"]), page, str(s["id"]), blocks)
     return page
 
 
@@ -1171,16 +1279,38 @@ def ai_appearances(page: str, blocks: list[dict[str, Any]], images: dict[str, tu
     return sum(page.count(u) for u in urls)
 
 
-async def _guard_overflow(tpl: dict[str, Any] | None, page: str) -> None:
-    """Mẫu nhiều trang có khung trang cố định: chữ dài hơn khung bị đè / mất mà không báo ⇒ đo bằng trình duyệt trước khi cho xuất / gửi, tràn thì CHẶN và nói trang nào."""
+async def _guard_overflow(tpl: dict[str, Any] | None, page: str, sid: str, blocks: list[dict[str, Any]]) -> None:
+    """Mẫu nhiều trang có khung trang cố định: chữ dài hơn khung bị đè / mất mà không báo ⇒ đo bằng trình duyệt trước khi cho xuất / gửi, tràn thì CHẶN và nói CỤ THỂ trang nào,
+    khối nào, bấm gì (``fit.describe``) — chỉ nêu trang đo ra tràn."""
     if not (tpl and tpl.get("pages")):
         return
     try:
-        over = await paged.overflow(page)
+        overs = await paged.measure(page)
     except convert.Unavailable as e:
         raise Invalid(str(e)) from None
-    if over:
-        raise Invalid("Trang " + ", ".join(map(str, over)) + " tràn nội dung (chữ bị đè hoặc mất khi in) — " + paged.OVERFLOW_HELP)
+    if overs:
+        raise Invalid(fit.describe(fit.report(sid, overs, blocks)))
+
+
+class Overflow(SessionRef):
+    pass
+
+
+@m.query("overflow", resource=None, title="Trang nào tràn khung", agent="allow")
+async def overflow(ctx: Ctx, inp: Overflow) -> dict[str, Any]:
+    """Đo bản hiện hành bằng đúng trình duyệt sẽ in PDF: trang nào tràn khung (mẫu nhiều trang cố định), khối nào gây tràn, và hành động bấm được cho từng khối
+    (``action`` = lệnh ``compose.revise`` + đầu vào viết sẵn: rút gọn đúng khối đó). Ấn phẩm không có khung trang cố định ⇒ ``measured`` sai, không có trang nào tràn."""
+    s = await _load(ctx, inp.session_id)
+    tpl = layout.template_of(s["layout"])
+    if not (tpl and tpl.get("pages")):
+        return {"measured": False, "fits": True, "pages": [], "summary": ""}
+    blocks = flag_numbers([b for b in s["blocks"] if b["type"] != "placeholder"])
+    try:
+        overs = await paged.measure(htmlpage.page(s["title"], blocks, await brand(ctx), await _images(ctx, blocks), layout.clean(s["layout"])))
+    except convert.Unavailable as e:
+        raise Invalid(str(e)) from None
+    pages = fit.report(str(s["id"]), overs, blocks)
+    return {"measured": True, "fits": not pages, "pages": pages, "summary": fit.describe(pages)}
 
 
 @m.command("export", resource=None, title="Xuất tệp", agent="allow")

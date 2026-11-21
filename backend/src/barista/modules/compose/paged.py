@@ -4,6 +4,7 @@ tiêu đề trang là một câu kết luận, số CHỈ in từ khối số li
 Cùng MỘT trang HTML cho xem trước, bản gửi và PDF: ``@page`` quyết khổ giấy, trình duyệt không giao diện in ra PDF (``kernel/convert.html_to_pdf``). Một tệp, không script, không tải gì
 từ ngoài. Trên màn hình các trang xếp dọc như tờ giấy (thu nhỏ theo bề rộng); khi in thì mỗi trang đúng một tờ."""
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -134,10 +135,11 @@ def _tiles_only(b: dict[str, Any]) -> bool:
     return b["type"] == "data" and bool(d.get("kpis")) and not d.get("rows") and not d.get("texts")
 
 
-def _strip(items: list[dict[str, str]]) -> str:
+def _strip(items: list[dict[str, str]], bid: str = "") -> str:
     n = max(len(items), 1)
     cells = "".join(f'<div><dt>{esc(i["label"])}</dt><dd class="{"num" if any(ch.isdigit() for ch in i["value"]) else "txt"}">{esc(i["value"])}</dd></div>' for i in items)
-    return f'<dl class="strip{" many" if n > 4 else ""}" style="--n:{min(n, 6)}">{cells}</dl>'
+    mark = f' data-b="{esc(bid)}"' if bid else ""
+    return f'<dl class="strip{" many" if n > 4 else ""}"{mark} style="--n:{min(n, 6)}">{cells}</dl>'
 
 
 def _figure(b: dict[str, Any], images: dict[str, tuple[bytes, str]]) -> str:
@@ -146,7 +148,7 @@ def _figure(b: dict[str, Any], images: dict[str, tuple[bytes, str]]) -> str:
         return ""
     im = b.get("image") or {}
     cap = f"<figcaption>{esc(im['caption'])}</figcaption>" if im.get("caption") else ""
-    return f'<figure class="ph"><img src="{data_url(img)}" alt="{esc(im.get("caption") or "Hình minh hoạ")}">{html.badge(b)}{cap}</figure>'
+    return f'<figure class="ph" data-b="{esc(b["id"])}"><img src="{data_url(img)}" alt="{esc(im.get("caption") or "Hình minh hoạ")}">{html.badge(b)}{cap}</figure>'
 
 
 def _txt(t: str) -> str:
@@ -155,7 +157,7 @@ def _txt(t: str) -> str:
 
 def _data(b: dict[str, Any], style: str, *, with_tiles: bool) -> str:
     d = b.get("data") or {}
-    parts: list[str] = ['<section class="data">']
+    parts: list[str] = [f'<section class="data" data-b="{esc(b["id"])}">']
     if d.get("title"):
         parts.append(f"<h3>{esc(d['title'])}</h3>")
     if with_tiles and d.get("kpis"):
@@ -181,25 +183,27 @@ def _headline(ids: list[str], by: dict[str, dict[str, Any]]) -> tuple[str, list[
 
 
 def _body(ids: list[str], by: dict[str, dict[str, Any]], images: dict[str, tuple[bytes, str]], media: str, style: str, tpl: dict[str, Any]) -> str:
-    text, figs, strips, datas = [], [], [], []
+    text: list[tuple[str, str, str]] = []   # (loại, html, mã khối) — mã khối để phép đo tràn chỉ ra ĐÚNG khối gây tràn
+    figs, strips, datas = [], [], []
     for i in ids:
         b = by[i]
         t = b["type"]
         if t == "paragraph":
-            text.append(("p" if any(k in ("lede", "p") for k, _ in text) else "lede", _txt(b["text"])))
+            text.append(("p" if any(k in ("lede", "p") for k, _, _ in text) else "lede", _txt(b["text"]), i))
         elif t == "heading":
-            text.append(("h", _txt(b["text"])))
+            text.append(("h", _txt(b["text"]), i))
         elif t == "quote":
             q = b.get("quote") or {}
-            text.append(("q", f'<blockquote>{esc(q.get("text", ""))}<cite>{esc(q.get("cite", ""))}</cite></blockquote>'))
+            text.append(("q", f'<blockquote data-b="{esc(i)}">{esc(q.get("text", ""))}<cite>{esc(q.get("cite", ""))}</cite></blockquote>', i))
         elif t == "image" and i in images:
             figs.append(b)
         elif _tiles_only(b):
             strips.append(b)
         elif t == "data":
             datas.append(b)
-    paras = sum(1 for k, _ in text if k in ("p", "lede"))
-    inner = "".join(f'<h3>{x}</h3>' if k == "h" else x if k == "q" else f'<p class="lede">{x}</p>' if k == "lede" else f"<p>{x}</p>" for k, x in text)
+    paras = sum(1 for k, _, _ in text if k in ("p", "lede"))
+    inner = "".join(f'<h3 data-b="{esc(i)}">{x}</h3>' if k == "h" else x if k == "q" else f'<p class="lede" data-b="{esc(i)}">{x}</p>' if k == "lede"
+                    else f'<p data-b="{esc(i)}">{x}</p>' for k, x, i in text)
     split_media = media in ("right", "left") and figs
     parts: list[str] = []
     if figs and not split_media:   # trang không dành chỗ ảnh cạnh chữ ⇒ ảnh thành dải ngang phía trên
@@ -210,7 +214,7 @@ def _body(ids: list[str], by: dict[str, dict[str, Any]], images: dict[str, tuple
         media_html = f'<div class="media">{"".join(_figure(b, images) for b in figs[:3])}</div>' if split_media else ""
         parts.append(f'<div class="{cls}"><div class="text{two}">{inner}</div>{media_html}</div>' if inner or split_media else "")
     for b in strips:
-        parts.append(_strip(vn.tiles((b.get("data") or {}).get("kpis") or [], render.fmt, style)) + _src(b))
+        parts.append(_strip(vn.tiles((b.get("data") or {}).get("kpis") or [], render.fmt, style), b["id"]) + _src(b))
     parts += [_data(b, style, with_tiles=True) for b in datas]
     return "".join(parts)
 
@@ -262,31 +266,86 @@ def page(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images
 
 
 def _body_text(ids: list[str], by: dict[str, dict[str, Any]]) -> str:
-    return "".join(f'<p>{_txt(by[i]["text"])}</p>' for i in ids if by[i]["type"] == "paragraph")
+    return "".join(f'<p data-b="{esc(i)}">{_txt(by[i]["text"])}</p>' for i in ids if by[i]["type"] == "paragraph")
 
 
 # Đo TRÀN bằng chính trình duyệt sẽ in PDF: khung mỗi trang cao cố định (210 mm) nên nội dung dài hơn sẽ đè lên khối bên dưới hoặc rơi khỏi trang — mất chữ mà không báo.
-# Trang bị coi là tràn khi một khung nội dung có phần chữ / ảnh vượt hộp của nó (scrollHeight / scrollWidth lớn hơn khung) hoặc có phần tử nằm dưới đáy vùng nội dung.
-# Cũng là chỗ cắm cho bước tự soát bằng agent sau này (cùng phép đo, cùng bản HTML).
-MEASURE_JS = """(async()=>{try{await document.fonts.ready}catch(e){}
-const bad=[];
+# Phép đo phải ĐÚNG hình học lúc in (nếu không sẽ báo tràn giả — người dùng không hiểu vì sao, xem trước vẫn đẹp):
+#   * cửa sổ đo đủ rộng (``MEASURE_SIZE``) và ép ``zoom:1`` cho từng trang — trang web thu nhỏ theo bề rộng màn hình (``.page{zoom:.45}`` ở cửa sổ mặc định 800 px) làm số đo
+#     lệch vì làm tròn; lúc in không có zoom;
+#   * đo SAU khi phông + ảnh đã tải (ép bố cục một lần rồi mới chờ ``document.fonts.ready`` / đợi ảnh ``complete``);
+#   * chỉ so với hộp nội dung ``.pad`` của TỪNG trang; bỏ phần tử trang trí / ``position:absolute`` có chủ đích (nhãn "Ảnh minh hoạ", chú thích ảnh) và mọi thứ
+#     nằm trong khung ảnh (``.ph`` tự cắt ảnh theo khung — không phải tràn);
+#   * tràn = (a) một khung có nội dung vượt hộp của nó (``scrollHeight`` / ``scrollWidth``) hơn dung sai — dọc ``BOX_TOL`` (cỡ lề cuối đoạn + một phần khoảng cách giữa khối 5 mm: vượt ít hơn
+#     thế mắt không thấy đè), ngang ``TOL``; hoặc (b) một phần tử chạm tới CHÂN TRANG (``.ft``) — đáy ``.pad`` còn 6 mm đệm trước chân trang, lấn vào đệm chưa phải mất / đè chữ.
+# Ra: mỗi trang tràn một bản ghi ``trang|px|trục|khối gây tràn|cao từng khối`` (mã khối từ ``data-b`` — để tự rút gọn / báo ĐÚNG khối). Cũng là chỗ cắm cho bước tự soát bằng agent.
+TOL = 2
+BOX_TOL = 10
+MEASURE_SIZE = (1400, 1000)
+MEASURE_JS = """(async()=>{
+const TOL=__TOL__, BOX_TOL=__BOX_TOL__, BOXES='.main,.split,.text,.media,.close,.toc,.contact,.data,.banner';
+try{
+ document.querySelectorAll('.page').forEach(p=>{p.style.zoom='1'});
+ void document.body.offsetHeight;
+ try{await document.fonts.ready}catch(e){}
+ try{await Promise.race([Promise.all([...document.images].map(i=>i.complete?0:new Promise(r=>{i.onload=i.onerror=r}))),new Promise(r=>setTimeout(r,2000))])}catch(e){}
+ void document.body.offsetHeight;
+}catch(e){}
+const recs=[];
 document.querySelectorAll('.page').forEach(pg=>{
  const pad=pg.querySelector('.pad'); if(!pad)return;
- const lim=pad.getBoundingClientRect().bottom;
- let over=false;
- for(const el of [pad,...pad.querySelectorAll('.main,.split,.text,.media,.close,.toc,.contact,.data,.banner')]){
-  if(el.scrollHeight>el.clientHeight+1||el.scrollWidth>el.clientWidth+1){over=true;break}
+ const bottom=pad.getBoundingClientRect().bottom, ft=pg.querySelector('.ft'), limit=ft?ft.getBoundingClientRect().top-1:bottom+TOL;
+ const boxes=[];
+ for(const el of [pad,...pad.querySelectorAll(BOXES)]){
+  const h=el.scrollHeight-el.clientHeight, w=el.scrollWidth-el.clientWidth;
+  if(h>BOX_TOL||w>TOL)boxes.push({el,ex:Math.max(h>BOX_TOL?h:0,w>TOL?w:0),axis:h>BOX_TOL?'h':'w'});
  }
- if(!over){for(const el of pad.querySelectorAll('*')){if(el.getBoundingClientRect().bottom>lim+1){over=true;break}}}
- if(over)bad.push(pg.getAttribute('data-n'));
+ const low=[];
+ for(const el of pad.querySelectorAll('*')){
+  if(el.closest('.ph'))continue;
+  const pos=getComputedStyle(el).position; if(pos==='absolute'||pos==='fixed')continue;
+  const r=el.getBoundingClientRect(); if(!r.width&&!r.height)continue;
+  if(r.bottom>limit)low.push({el,ex:r.bottom-bottom,axis:'h',box:el.closest(BOXES)});
+ }
+ const all=[...boxes,...low]; if(!all.length)return;
+ const inner=all.filter(a=>!all.some(b=>b!==a&&a.el!==b.el&&a.el.contains(b.el)));
+ const cul=new Set();
+ for(const a of inner){const root=a.box||a.el;root.querySelectorAll('[data-b]').forEach(x=>cul.add(x.getAttribute('data-b')));const c=a.el.closest('[data-b]');if(c)cul.add(c.getAttribute('data-b'))}
+ const best=all.reduce((m,a)=>a.ex>m.ex?a:m);
+ const hs=[...pg.querySelectorAll('[data-b]')].map(x=>x.getAttribute('data-b')+':'+Math.round(x.getBoundingClientRect().height));
+ recs.push([pg.getAttribute('data-n'),Math.round(best.ex),best.axis,[...cul].join(','),hs.join(',')].join('|'));
 });
-document.documentElement.setAttribute('data-overflow',bad.join(','));
-})();"""
+document.documentElement.setAttribute('data-overflow',recs.join(';'));
+})();""".replace("__TOL__", str(TOL)).replace("__BOX_TOL__", str(BOX_TOL))
 
-OVERFLOW_HELP = "rút gọn đoạn chữ, bỏ bớt khối (bảng / ảnh) hoặc chuyển bớt khối sang trang khác rồi xuất lại"
+
+@dataclass
+class Over:
+    """Một trang TRÀN: ``px`` = phần vượt (px CSS ở khổ in), ``axis`` ``h`` (dọc) / ``w`` (ngang), ``blocks`` = mã khối gây tràn, ``heights`` = chiều cao từng khối trên trang."""
+
+    page: int
+    px: int
+    axis: str = "h"
+    blocks: tuple[str, ...] = ()
+    heights: dict[str, int] = field(default_factory=dict)
+
+
+def parse(got: str) -> list[Over]:
+    out: list[Over] = []
+    for rec in got.split(";"):
+        f = rec.split("|")
+        if len(f) < 5 or not f[0].isdigit():
+            continue
+        hs = {k: int(v) for k, _, v in (x.partition(":") for x in f[4].split(",") if x) if v.isdigit()}
+        out.append(Over(int(f[0]), int(f[1]) if f[1].isdigit() else 0, f[2] or "h", tuple(x for x in f[3].split(",") if x), hs))
+    return out
+
+
+async def measure(page_html: str) -> list[Over]:
+    """Các trang bị TRÀN (rỗng = vừa hết) kèm phần vượt và khối gây tràn. Thiếu trình duyệt / đo lỗi ⇒ ``convert.Unavailable`` — không coi là "không tràn"."""
+    return parse(await convert.html_measure(page_html, MEASURE_JS, "data-overflow", size=MEASURE_SIZE))
 
 
 async def overflow(page_html: str) -> list[int]:
-    """Số thứ tự các trang bị TRÀN trong trang HTML nhiều trang (rỗng = vừa hết). Thiếu trình duyệt / đo lỗi ⇒ ``convert.Unavailable`` — không coi là "không tràn"."""
-    got = await convert.html_measure(page_html, MEASURE_JS, "data-overflow")
-    return [int(x) for x in got.split(",") if x.strip().isdigit()]
+    """Số thứ tự các trang bị TRÀN trong trang HTML nhiều trang (rỗng = vừa hết)."""
+    return [o.page for o in await measure(page_html)]
