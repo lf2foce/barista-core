@@ -46,7 +46,7 @@ def test_intent_is_one_declaration_and_forms_without_it_are_unchanged() -> None:
     assert {f["key"] for f in spec["fields"]} >= {"title", "goal", "tasks"}                         # form đủ ô vẫn còn (app chưa biết ⇒ vẽ như cũ)
     task = registry.get("flow.create_task")
     assert task is not None and not task.intent
-    assert set(form_spec(task)) == {"command", "title", "description", "importable", "fields"}       # không khai ⇒ hợp đồng y như trước
+    assert set(form_spec(task)) == {"command", "title", "description", "importable", "fields", "confirm"}   # không khai ⇒ y như trước, chỉ THÊM luật xác nhận (0253)
 
     class In(Input):
         title: str = field("Tên")

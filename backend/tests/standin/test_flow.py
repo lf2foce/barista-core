@@ -134,7 +134,7 @@ async def test_cancelling_the_order_cancels_the_case_and_its_open_tasks(who: Who
     o, case = await _open(who)
     r = await executor.run(admin, "orderdesk.cancel", {"code": o["code"], "reason": "Khách đổi ý"})
     assert r.status == "pending_approval"                                           # luật duyệt mặc định của gói
-    assert any(n["kind"] == "approval" and "Huỷ đơn dịch vụ" in n["title"] and not n["read"] for n in await _inbox(giamdoc))   # nhãn theo từ vựng của gói
+    assert any(n["kind"] == "approval" and f"Huỷ đơn {o['code']}" in n["title"] and not n["read"] for n in await _inbox(giamdoc))   # thông báo nói đúng việc + hồ sơ (mã đơn), không còn "<người>: <tên lệnh>"
     before = len([n for n in await _inbox(admin) if n["kind"] == "approval_done"])
     await ok(edge(giamdoc), "core.decide", approval_id=r.approval_id, approve=True)
     done = [n for n in await _inbox(admin) if n["kind"] == "approval_done"]
