@@ -50,7 +50,7 @@ export function clientIp(incoming: Headers, secret = edgeSecret()): string | nul
 /** Header gửi core: danh tính (Bearer hoặc X-Dev-User) + công ty; chỉ chuyển các header nghiệp vụ cần thiết. */
 export function upstreamHeaders(session: Session, incoming: Headers, target = ""): Headers {
   const h = new Headers();
-  for (const name of ["content-type", "accept", "idempotency-key", "x-filename"]) {
+  for (const name of ["content-type", "accept", "idempotency-key", "x-filename", "x-expect-basis"]) {
     const v = incoming.get(name);
     if (v) h.set(name, v);
   }

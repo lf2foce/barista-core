@@ -396,8 +396,10 @@ async def ops(request: Request, x_dev_user: DevUser = None, x_tenant_id: TenantI
 async def command(request: Request, name: str, body: Annotated[dict[str, Any], Body()], x_dev_user: DevUser = None, x_tenant_id: TenantId = None,
                   idempotency_key: Annotated[str | None, Header()] = None) -> JSONResponse:
     p = await current(x_dev_user, x_tenant_id, request, apps=True)
+    # nút trang mang CĂN CỨ người xem đã thấy (``ui.act(basis=)`` — 0071 / 0251): app gửi lại ở ``X-Expect-Basis`` ⇒ căn cứ đổi thì ``conflict``, không chạy
+    expect = executor.basis_of_token(request.headers.get("x-expect-basis"))
     # app CHỈ GHI NHẬN (0207): cấu hình người vận hành đặt trên app — không phải ô đầu vào; lệnh chạy như nạp lịch sử (không báo, không hạn, không webhook)
-    return _result(await executor.run(p, name, body, key=idempotency_key, historical=p.via == "app" and p.shadow))
+    return _result(await executor.run(p, name, body, key=idempotency_key, historical=p.via == "app" and p.shadow, expect_basis=expect))
 
 
 # ── Link gửi khách (0064): KHÔNG đăng nhập — quyền = cầm đúng link. Người gọi via="link" chỉ chạy thao tác public của đúng loại link (executor),

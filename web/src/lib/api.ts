@@ -157,9 +157,10 @@ export const api = {
   form: async (command: string): Promise<FormSpec> => jsonOf<FormSpec>(await raw(`/v1/forms/${command}`)),
 
   /** Lệnh trả kết quả nghiệp vụ (kể cả bị từ chối) — chỉ ném lỗi khi mạng / máy chủ hỏng. */
-  command: async (name: string, input: Input, key: string, route?: string): Promise<CommandResult> => {
+  command: async (name: string, input: Input, key: string, route?: string, basis?: string): Promise<CommandResult> => {
     // `route`: lệnh có đường riêng của gói (vd chấm công — máy chủ đọc địa chỉ mạng của kết nối); cùng hình kết quả như đường lệnh chung
-    const res = await post(route && ROUTE.test(route) ? route : `/v1/commands/${name}`, input, { "idempotency-key": key });
+    // `basis`: căn cứ nút trang mang theo (0071 / 0251) — server so với hiện tại, khác ⇒ `conflict` ("xem lại"), không chạy
+    const res = await post(route && ROUTE.test(route) ? route : `/v1/commands/${name}`, input, { "idempotency-key": key, ...(basis ? { "x-expect-basis": basis } : {}) });
     if (res.status === 403 && !(res.headers.get("content-type") ?? "").includes("json")) throw new ApiError(await detailOf(res, "Không có quyền"), 403);
     const body = await jsonOf<Partial<CommandResult> & { detail?: string }>(res);
     if (body.status === undefined) throw new ApiError(body.detail ?? `Không thực hiện được (${res.status})`, res.status);

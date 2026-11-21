@@ -8,7 +8,7 @@ import { pipeTable } from "@/lib/markdown";
 import { api } from "@/lib/api";
 import { saveBlob } from "@/lib/download";
 import * as fmt from "@/lib/format";
-import type { DetailLink, DetailOriginal, DetailPage, DetailSection, SectionTable } from "@/lib/types";
+import type { ActionSpec, DetailField, DetailLink, DetailOriginal, DetailPage, DetailSection, SectionTable, Sheet } from "@/lib/types";
 import { actionClass, CopyButton } from "@/components/primitives";
 import { Markdown } from "@/components/markdown";
 import { useDesk } from "@/components/desk/desk-context";
@@ -27,7 +27,9 @@ export function DetailView({ page, onClose, onChanged }: { page: DetailPage; onC
   // 0102: có bản gốc ⇒ hai góc nhìn. Chữ bóc / OCR ("extracted") là bản phụ ⇒ mặc định mở BẢN GỐC; giấy tờ tự soạn ⇒ mặc định NỘI DUNG, thêm "Bản in"
   const extracted = page.textRole === "extracted";
   const [view, setView] = useState<"original" | "content">(page.original && extracted ? "original" : "content");
-  const content = isDoc ? <Markdown text={documentText} /> : page.sections.map((s, i) => <Record key={`${s.title}-${i}`} s={s} />);
+  const sections = page.sections.map((s, i) => <Record key={`${s.title}-${i}`} s={s} onChanged={onChanged} />);
+  // 0251: giấy lập từ hồ sơ ⇒ CHÍNH TỜ GIẤY là nội dung (ô thiếu chạm điền ngay trên giấy); các mục (Thuộc, còn thiếu, nguồn số) đi kèm dưới / trên
+  const content = isDoc ? <Markdown text={documentText} /> : page.sheet ? <>{sections.slice(0, 1)}<SheetView sheet={page.sheet} onChanged={onChanged} />{sections.slice(1)}</> : sections;
 
   return (
     <div className={cn("flex flex-col gap-4", isDoc && "max-w-[720px]")}>
@@ -84,7 +86,7 @@ export function DetailView({ page, onClose, onChanged }: { page: DetailPage; onC
         <div className="flex w-fit gap-0.5 rounded-lg bg-surface2 p-0.5" role="tablist" aria-label="Góc nhìn tài liệu">
           {(extracted
             ? [["original", page.original.title], ["content", "Văn bản trích"]]
-            : [["content", "Nội dung"], ["original", page.original.title]]).map(([k, label]) => (
+            : [["content", page.sheet ? "Tờ giấy" : "Nội dung"], ["original", page.original.title]]).map(([k, label]) => (
             <button key={k} type="button" role="tab" aria-selected={view === k} onClick={() => setView(k as "original" | "content")}
                     className={cn("t12m rounded-md px-3 py-1", view === k ? "bg-surface shadow-sm" : "text-muted-foreground hover:text-foreground")}>
               {label}
@@ -154,20 +156,23 @@ function OriginalViewer({ original }: { original: DetailOriginal }) {
   );
 }
 
-function Record({ s }: { s: DetailSection }) {
-  const fields = s.fields.filter((f) => fmt.cell(f.value, f.format).trim() !== "");
+function Record({ s, onChanged }: { s: DetailSection; onChanged?: () => void }) {
+  // ô trống bỏ — trừ ô bấm được (ô thiếu chạm để điền: chỗ trống là chính thứ cần thấy)
+  const fields = s.fields.filter((f) => fmt.cell(f.value, f.format).trim() !== "" || f.action);
   return (
     <section className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <h3 className="t16">{s.title}</h3>
-        {s.text ? <CopyButton text={s.text} label="Sao chép" /> : null}
-      </div>
+      {s.title || s.text ? (
+        <div className="flex items-center justify-between">
+          <h3 className="t16">{s.title}</h3>
+          {s.text ? <CopyButton text={s.text} label="Sao chép" /> : null}
+        </div>
+      ) : null}
       {fields.length ? (
         <dl className="grid grid-cols-[minmax(0,max-content)_1fr] gap-x-6 gap-y-1.5">
           {fields.map((f) => (
             <div key={f.label} className="contents">
               <dt className="t14 text-muted-foreground">{f.label}</dt>
-              <dd className="t14m tnum select-text">{fmt.cell(f.value, f.format)}</dd>
+              <dd className="t14m tnum select-text"><FieldValue f={f} onChanged={onChanged} /></dd>
             </div>
           ))}
         </dl>
@@ -175,6 +180,90 @@ function Record({ s }: { s: DetailSection }) {
       {s.text ? <SectionText text={s.text} /> : null}
       {s.table ? <TableBlock table={s.table} /> : null}
     </section>
+  );
+}
+
+/** Giá trị một ô; ô bấm được (0251): `action` ⇒ mở form của đúng ô (ô trống hiện `placeholder` nổi, chạm để điền), `open` ⇒ mở trang (vd hồ sơ). */
+function FieldValue({ f, onChanged }: { f: DetailField; onChanged?: () => void }) {
+  const desk = useDesk();
+  const text = fmt.cell(f.value, f.format);
+  if (f.action) {
+    const a = f.action;
+    return (
+      <button type="button" onClick={() => desk.openForm(a, { onDone: onChanged })}
+              className={cn("rounded px-1.5 py-0.5 text-left", text ? "underline decoration-dotted underline-offset-4 hover:bg-surface2" : "bg-amber-400/20 text-amber-700 hover:bg-amber-400/30 dark:text-amber-300")}>
+        {text || f.placeholder || a.title}
+      </button>
+    );
+  }
+  if (f.open) {
+    const o = f.open;
+    return (
+      <button type="button" onClick={() => desk.openPage(o.query, o.input, o.title ?? f.label)} className="text-left text-primary underline-offset-4 hover:underline">
+        {text}
+      </button>
+    );
+  }
+  return <>{text}</>;
+}
+
+const LAYER: Record<string, string> = {
+  record: "border-b border-sky-500/60 bg-sky-500/10",
+  company: "border-b border-dashed border-neutral-400",
+  missing: "rounded bg-amber-400/30 px-1 text-amber-800 dark:text-amber-200",
+  person: "border-b border-violet-500/60 bg-violet-500/10",
+};
+
+/** CHÍNH TỜ GIẤY (0251): nền giấy, chữ chia mẩu theo lớp — số từ hồ sơ (khoá, sửa ở hồ sơ) · ô thiếu (chạm điền) · người nhập. Server quyết hết; ô thiếu
+ *  chỉ bấm được khi server gửi nút điền của ô đó (`sheet.actions`, khoá = `preset.key`). */
+function SheetView({ sheet, onChanged }: { sheet: Sheet; onChanged?: () => void }) {
+  const desk = useDesk();
+  const fills = new Map<string, ActionSpec>(sheet.actions.map((a) => [String(a.preset.key ?? ""), a]));
+  const runs = (b: Sheet["blocks"][number]) =>
+    (b.runs ?? [{ t: b.text }]).map((r, i) => {
+      if (!r.k) return <span key={i}>{r.t}</span>;
+      const fill = r.layer === "missing" ? fills.get(r.k) : undefined;
+      if (fill) {
+        return (
+          <button key={i} type="button" className={cn(LAYER.missing, "hover:bg-amber-400/50")} onClick={() => desk.openForm(fill, { onDone: onChanged })}>
+            chạm để điền
+          </button>
+        );
+      }
+      const open = sheet.open;
+      if (r.layer === "record" && open) {
+        return (
+          <button key={i} type="button" title="Số từ hồ sơ — chạm để mở hồ sơ và sửa ở đó" className={cn(LAYER.record, "hover:bg-sky-500/20")}
+                  onClick={() => desk.openPage(open.query, open.input, open.title ?? "")}>
+            {r.t}
+          </button>
+        );
+      }
+      return <span key={i} className={LAYER[r.layer ?? "record"]} title={r.layer === "company" ? "Thông tin công ty — sửa ở Quản trị" : undefined}>{r.t}</span>;
+    });
+  return (
+    <div className="flex flex-col gap-2">
+      <article className="t14 mx-auto flex w-full max-w-[720px] flex-col gap-2 rounded-lg border border-border bg-[#fbfaf6] p-8 text-neutral-900 select-text">
+        {sheet.draftMark ? <p className="t12m self-end text-neutral-500">{sheet.draftMark}</p> : null}
+        <h2 className="t16 text-center">{sheet.title}</h2>
+        <p className="t12 text-center text-neutral-500">{sheet.number}</p>
+        {sheet.blocks.map((b, i) =>
+          b.type === "heading" ? <h3 key={i} className="t14m mt-2">{runs(b)}</h3>
+          : b.type === "table" && b.columns ? <Grid key={i} rows={[b.columns, ...(b.rows ?? []), ...(b.total?.length ? [b.total] : [])]} />
+          : <p key={i} className={cn("leading-relaxed", b.type === "bullet" && "pl-4")}>{b.type === "bullet" ? "– " : null}{runs(b)}</p>)}
+        {sheet.notes.map((n) => <p key={n} className="t12 text-neutral-500">{n}</p>)}
+        {sheet.signers.length ? (
+          <div className="mt-6 grid gap-4" style={{ gridTemplateColumns: `repeat(${sheet.signers.length}, minmax(0, 1fr))` }}>
+            {sheet.signers.map((s) => <p key={s} className="t14m text-center">{s}</p>)}
+          </div>
+        ) : null}
+      </article>
+      {sheet.legend.length ? (
+        <div className="t12 flex flex-wrap justify-center gap-4 text-muted-foreground">
+          {sheet.legend.map((l) => <span key={l.layer} className="flex items-center gap-1.5"><span className={cn("inline-block size-3", LAYER[l.layer])} />{l.label}</span>)}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

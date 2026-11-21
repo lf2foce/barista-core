@@ -160,8 +160,19 @@ def calendar_view(date: str, title: str, subtitle: str = "", *, overdue: bool = 
     return {"date": date, "title": title, "subtitle": subtitle, **({} if overdue else {"overdue": False})}
 
 
-def field(label: str, value: Any, fmt: str = "text", *, needs: Needs = None) -> dict[str, Any]:
-    return gated({"label": label, "value": value, "format": fmt}, needs)
+def field(label: str, value: Any, fmt: str = "text", *, needs: Needs = None, open: dict[str, Any] | None = None,
+          action: dict[str, Any] | None = None, placeholder: str = "") -> dict[str, Any]:
+    """Một dòng nhãn – giá trị của trang chi tiết. Ô BẤM ĐƯỢC (ADR 0251, chỉ THÊM trường): ``open`` = {query, input, title?} mở trang khác (vd "Thuộc: Giao
+    dịch …" mở hồ sơ); ``action`` = nút (``act``) chạy khi chạm ô (vd ô thiếu ⇒ form điền đúng ô đó). ``placeholder``: chữ hiện khi giá trị trống — ô trống có
+    ``action`` vẫn hiện (chỗ trống để điền). Cửa ra bỏ ``open`` / ``action`` người xem không chạy được (``executor.visible_actions``)."""
+    out: dict[str, Any] = {"label": label, "value": value, "format": fmt}
+    if open:
+        out["open"] = open
+    if action:
+        out["action"] = action
+    if placeholder:
+        out["placeholder"] = placeholder
+    return gated(out, needs)
 
 
 def section(title: str, fields: list[dict[str, Any]] | None = None, text: str | None = None,
@@ -309,7 +320,7 @@ def compact(page: Any, rows: int = COMPACT_ROWS) -> dict[str, Any] | None:
 
 
 def act(command: str, title: str, preset: dict[str, Any] | None = None, style: str = "default", *,
-        values: dict[str, Any] | None = None, import_only: bool = False) -> dict[str, Any]:
+        values: dict[str, Any] | None = None, import_only: bool = False, basis: str = "") -> dict[str, Any]:
     """Nút gọi một lệnh (form mở sẵn các trường ``preset`` — cố định, ẩn). ``values``: ô ĐIỀN SẴN mà người vẫn thấy + sửa được (vd tiêu đề việc lấy
     từ tin nhắn) — như phần trợ lý soạn sẵn trên thẻ đề xuất. Quyền / duyệt vẫn do executor — app chỉ vẽ."""
     out = {"command": command, "title": title, "style": style, "bind": {}, "preset": preset or {}, "when": {}, "importable": False}
@@ -317,6 +328,10 @@ def act(command: str, title: str, preset: dict[str, Any] | None = None, style: s
         out["import_only"] = True   # chỉ THÊM trường: nút mở thẳng màn "Nhập từ Excel" (lệnh nhập cả bảng — không có form nhập một)
     if values:
         out["values"] = values   # chỉ THÊM trường (bất biến 7): app cũ bỏ qua ⇒ form trống như trước
+    if basis:
+        # CĂN CỨ người xem đang thấy (0071 / 0251 — ``executor.basis_token``): app gửi lại nguyên chữ ở tiêu đề ``X-Expect-Basis`` khi bấm ⇒ số đã đổi
+        # giữa lúc xem và lúc bấm thì lệnh trả ``conflict``, không chạy. App cũ không gửi ⇒ lệnh chạy như trước (không so)
+        out["basis"] = basis
     return out
 
 

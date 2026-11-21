@@ -330,7 +330,7 @@ export function FormBody({
           return;
         }
       }
-      const r = await api.command(action.command, input, key, action.route);
+      const r = await api.command(action.command, input, key, action.route, action.basis);
       if (r.status === "ok") {
         const msg = r.replayed ? "Đã gửi trước đó — không chạy lại" : `Đã xong: ${action.title}`;
         const warn = savedWarning(r.output);

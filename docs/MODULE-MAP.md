@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-18 gói · 30 module · 1035 thao tác (286 nội bộ) · 21 bên nghe sự kiện.
+18 gói · 30 module · 1034 thao tác (286 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
@@ -53,7 +53,7 @@
 | `memory` | Trí nhớ | `base` | `memory` | `modules/memory.py` | 4 | 4 | 1 |
 | `mgmt` | Báo cáo quản trị | `mgmt` | `mgmt` | `modules/mgmt.py` | 2 | 3 | 0 |
 | `mkt` | Marketing | `marketing` | `mkt` | `modules/mkt/` (3 file) | 15 | 32 | 16 |
-| `papers` | Giấy tờ | `base` | `papers` | `modules/papers/` (3 file) | 12 | 15 | 3 |
+| `papers` | Giấy tờ | `base` | `papers` | `modules/papers/` (3 file) | 11 | 15 | 3 |
 | `parties` | Cá nhân & tổ chức | `directory` | `parties` | `modules/parties.py` | 20 | 16 | 19 |
 | `pay` | Lương & thù lao | `pay` | `pay` | `modules/pay/` (7 file) | 15 | 17 | 7 |
 | `schedule` | Lịch & nguồn lực | `schedule` | `schedule` | `modules/schedule/` (5 file) | 18 | 16 | 6 |
@@ -397,7 +397,7 @@
 ### `papers` — Giấy tờ
 
 - **Mã:** `papers/__init__.py`, `papers/compose.py`, `papers/template.py`
-- **Tài nguyên quyền:** `papers`, `papers.templates`
+- **Tài nguyên quyền:** `papers`, `papers.office`, `papers.templates`
 - **Mở cho gói ngoài** (thao tác → họ; gói khai `consumes`):
   - `papers.company` → `paper_draft`
   - `papers.save_draft` → `paper_draft`

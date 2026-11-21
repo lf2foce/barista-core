@@ -542,7 +542,7 @@ async def pack_blockers(ctx: Ctx, inp: NoInput) -> list[str]:
 
 
 async def plug_field_catalog(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
-    return {"subject_kind": ORDER, "label": "Đơn dịch vụ", "ref_label": "Mã đơn", "fields": ORDER_FIELDS,
+    return {"subject_kind": ORDER, "label": "Đơn dịch vụ", "ref_label": "Mã đơn", "fields": ORDER_FIELDS, "authority": "orderdesk.papers",
             "starters": [{"key": "phieu_xac_nhan_don", "name": "Phiếu xác nhận đơn", "abbr": "PXN", "body": ORDER_SLIP, "signers": ["BÊN CUNG CẤP", "KHÁCH HÀNG"]}]}
 
 
@@ -701,6 +701,7 @@ def register() -> Module:
     Pack(PACK, "Đơn dịch vụ (gói thế vai của test)", "Gói ngành giả — ví dụ của lõi cho mọi cơ chế gói ngành dùng", kind="industry",
          requires=("finance",), rules="- ĐƠN DỊCH VỤ: đơn huỷ phải qua duyệt.\n",
          grants=(("admin", "orderdesk", "all", "read write manage"), ("director", "orderdesk", "all", "read"),
+                 ("admin", "orderdesk.papers", "all", "read write manage"),   # thẩm quyền phát hành chứng từ đơn (0251) — giám đốc KHÔNG có
                  ("accountant", "orderdesk", "all", "read"), ("team_lead", "orderdesk", "team", "read write"), ("sale", "orderdesk", "own", "read write")),
          chains=(("order_cancel", "Huỷ đơn dịch vụ", ({"kind": "role", "role": "director"},)),),
          approval_rules=(("orderdesk.cancel", "order_cancel"),),
@@ -713,7 +714,7 @@ def register() -> Module:
                 "director": Hints(suggest=(("orderdesk.report_year", "Năm nay công ty ký bao nhiêu đơn dịch vụ, so với chỉ tiêu thế nào?", "orderdesk"),),
                                   showcase=(("Đơn dịch vụ nào đã ký mà phí chưa về, dòng tiền tháng này ra sao?", ("orderdesk.list", "acct.cashflow")),)),
                 "accountant": Hints(suggest=(("orderdesk.report_year", "Tổng giá trị đơn dịch vụ đã ký năm nay là bao nhiêu?", "orderdesk"),))})
-    m = Module(MODULE, "Đơn dịch vụ", pack=PACK, resources={"orderdesk": "Đơn dịch vụ"})
+    m = Module(MODULE, "Đơn dịch vụ", pack=PACK, resources={"orderdesk": "Đơn dịch vụ", "orderdesk.papers": "Chứng từ đơn dịch vụ — phát hành"})
     m.consumes("receivable", "settlement", "identity", "follow_up", "paper_draft", "ledger_ref")
     m.consumes("company_figures")   # số gộp toàn công ty cho trang báo cáo ``min_scope="all"`` của gói (chỉ tiêu cả công ty của KPI)
     ledger.declare({REVENUE: ("Doanh thu phí đơn dịch vụ (thử)", "revenue"), RECEIVABLE: ("Phải thu khách đơn dịch vụ (thử)", "asset"),

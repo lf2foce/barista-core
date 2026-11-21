@@ -17,6 +17,7 @@ import type {
   DetailOriginal,
   ListAttach,
   DetailPage,
+  Sheet,
   Input,
   Paging,
   Json,
@@ -63,6 +64,7 @@ export function decodeAction(raw: unknown): ActionSpec {
     importable: bool(o.importable),
     ...(o.import_only === true ? { import_only: true } : {}),
     ...(typeof o.route === "string" && ROUTE.test(o.route) ? { route: o.route } : {}),
+    ...(typeof o.basis === "string" && o.basis ? { basis: o.basis } : {}),
   };
 }
 
@@ -431,7 +433,15 @@ function decodeDetail(raw: unknown): DetailPage {
         title: str(so.title),
         fields: arr(so.fields).map((f) => {
           const fo = obj(f);
-          return { label: str(fo.label), value: (fo.value ?? null) as Json, format: str(fo.format, "text") };
+          const open = obj(fo.open);
+          return {
+            label: str(fo.label),
+            value: (fo.value ?? null) as Json,
+            format: str(fo.format, "text"),
+            ...(typeof open.query === "string" && open.query ? { open: { query: open.query, input: obj(open.input) as Input, ...(typeof open.title === "string" ? { title: open.title } : {}) } } : {}),
+            ...(isObj(fo.action) && typeof fo.action.command === "string" ? { action: decodeAction(fo.action) } : {}),
+            ...(typeof fo.placeholder === "string" && fo.placeholder ? { placeholder: fo.placeholder } : {}),
+          };
         }),
         text: typeof so.text === "string" ? so.text : null,
         table: decodeSectionTable(so.table),
@@ -447,6 +457,34 @@ function decodeDetail(raw: unknown): DetailPage {
     ask: decodeAsk(ask),
     original: decodeOriginal(o.original),
     textRole: typeof o.text_role === "string" ? o.text_role : null,
+    sheet: decodeSheet(o.sheet),
+  };
+}
+
+/** Tờ giấy (0251): dung thứ — thiếu `blocks` ⇒ không có tờ giấy (app vẽ như trang chi tiết thường). */
+export function decodeSheet(raw: unknown): Sheet | null {
+  if (!isObj(raw) || !Array.isArray(raw.blocks)) return null;
+  const strs = (v: unknown) => arr(v).filter((x): x is string => typeof x === "string");
+  return {
+    title: str(raw.title),
+    number: str(raw.number),
+    draftMark: str(raw.draft_mark),
+    blocks: arr(raw.blocks).map((b) => {
+      const bo = obj(b);
+      return {
+        type: str(bo.type, "para"),
+        text: str(bo.text),
+        ...(Array.isArray(bo.runs) ? { runs: arr(bo.runs).map((r) => { const ro = obj(r); return { t: str(ro.t), ...(typeof ro.k === "string" ? { k: ro.k, layer: str(ro.layer, "record") } : {}) }; }) } : {}),
+        ...(Array.isArray(bo.columns) ? { columns: strs(bo.columns), rows: arr(bo.rows).map(strs), total: strs(bo.total), align: strs(bo.align) } : {}),
+      };
+    }),
+    signers: strs(raw.signers),
+    notes: strs(raw.notes),
+    actions: arr(raw.actions).map(decodeAction),
+    legend: arr(raw.legend).map((l) => ({ layer: str(obj(l).layer), label: str(obj(l).label) })),
+    ...(isObj(raw.open) && typeof raw.open.query === "string" && raw.open.query
+      ? { open: { query: raw.open.query, input: obj(raw.open.input) as Input, ...(typeof raw.open.title === "string" ? { title: raw.open.title } : {}) } }
+      : {}),
   };
 }
 
