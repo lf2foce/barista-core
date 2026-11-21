@@ -147,6 +147,7 @@
   ],
   "convert": [
    "Unavailable",
+   "html_measure",
    "html_to_pdf",
    "html_to_png",
    "to_pdf"

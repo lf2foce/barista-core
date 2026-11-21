@@ -7,7 +7,7 @@ từ ngoài. Trên màn hình các trang xếp dọc như tờ giấy (thu nhỏ
 from datetime import datetime
 from typing import Any
 
-from barista.api import zone
+from barista.api import convert, zone
 from barista.modules.compose import editorial, html, layout, render, vn
 from barista.modules.compose.html import data_url, esc
 
@@ -223,7 +223,7 @@ def _cover(title: str, ids: list[str], by: dict[str, dict[str, Any]], images: di
     bg = f'<img class="bg" src="{data_url(images[hero["id"]])}" alt="">{html.badge(hero)}' if hero else ""
     cells = "".join(f'<div><dt>{esc(i["label"])}</dt><dd>{esc(i["value"])}</dd></div>' for i in items)
     band = f'<dl class="band" style="--n:{len(items)}">{cells}</dl>' if items else ""
-    return (f'<section class="page cover{"" if hero else " plainbg"}" aria-label="Bìa">{bg}<div class="shade"></div>{logo}'
+    return (f'<section class="page cover{"" if hero else " plainbg"}" data-n="1" aria-label="Bìa">{bg}<div class="shade"></div>{logo}'
             f'<div class="t"><span class="kicker">{esc(tpl.get("kicker", ""))}</span><h1>{esc(title)}</h1>{sub}</div>{band}</section>')
 
 
@@ -255,7 +255,7 @@ def page(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images
         else:
             body = f'<div class="main">{_body(rest, by, images, s["media"], style, tpl)}</div>'
         foot = esc(brand.get("footer", ""))
-        out.append(f'<section class="page" aria-label="Trang {s["n"]}"><div class="pad">{h}{body}</div>'
+        out.append(f'<section class="page" data-n="{s["n"]}" aria-label="Trang {s["n"]}"><div class="pad">{h}{body}</div>'
                    f'<footer class="ft"><span>{foot or "&nbsp;"}</span><span><b>{s["n"]}</b> / {s["of"]}</span></footer></section>')
     return ('<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">'
             f'<title>{esc(title)}</title><style>{editorial.font_css()}{css}</style></head><body><div class="pages">{"".join(out)}</div></body></html>')
@@ -263,3 +263,30 @@ def page(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images
 
 def _body_text(ids: list[str], by: dict[str, dict[str, Any]]) -> str:
     return "".join(f'<p>{_txt(by[i]["text"])}</p>' for i in ids if by[i]["type"] == "paragraph")
+
+
+# Đo TRÀN bằng chính trình duyệt sẽ in PDF: khung mỗi trang cao cố định (210 mm) nên nội dung dài hơn sẽ đè lên khối bên dưới hoặc rơi khỏi trang — mất chữ mà không báo.
+# Trang bị coi là tràn khi một khung nội dung có phần chữ / ảnh vượt hộp của nó (scrollHeight / scrollWidth lớn hơn khung) hoặc có phần tử nằm dưới đáy vùng nội dung.
+# Cũng là chỗ cắm cho bước tự soát bằng agent sau này (cùng phép đo, cùng bản HTML).
+MEASURE_JS = """(async()=>{try{await document.fonts.ready}catch(e){}
+const bad=[];
+document.querySelectorAll('.page').forEach(pg=>{
+ const pad=pg.querySelector('.pad'); if(!pad)return;
+ const lim=pad.getBoundingClientRect().bottom;
+ let over=false;
+ for(const el of [pad,...pad.querySelectorAll('.main,.split,.text,.media,.close,.toc,.contact,.data,.banner')]){
+  if(el.scrollHeight>el.clientHeight+1||el.scrollWidth>el.clientWidth+1){over=true;break}
+ }
+ if(!over){for(const el of pad.querySelectorAll('*')){if(el.getBoundingClientRect().bottom>lim+1){over=true;break}}}
+ if(over)bad.push(pg.getAttribute('data-n'));
+});
+document.documentElement.setAttribute('data-overflow',bad.join(','));
+})();"""
+
+OVERFLOW_HELP = "rút gọn đoạn chữ, bỏ bớt khối (bảng / ảnh) hoặc chuyển bớt khối sang trang khác rồi xuất lại"
+
+
+async def overflow(page_html: str) -> list[int]:
+    """Số thứ tự các trang bị TRÀN trong trang HTML nhiều trang (rỗng = vừa hết). Thiếu trình duyệt / đo lỗi ⇒ ``convert.Unavailable`` — không coi là "không tràn"."""
+    got = await convert.html_measure(page_html, MEASURE_JS, "data-overflow")
+    return [int(x) for x in got.split(",") if x.strip().isdigit()]

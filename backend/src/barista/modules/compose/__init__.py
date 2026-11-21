@@ -63,7 +63,7 @@ from barista.kernel import executor
 from barista.kernel.errors import OpError
 from barista.kernel.executor import jsonable
 from barista.kernel.principal import Principal, elevate
-from barista.modules.compose import check, kinds, layout, render, stock
+from barista.modules.compose import check, kinds, layout, paged, render, stock
 from barista.modules.compose import html as htmlpage
 
 # Gói riêng, TÙY CHỌN, mặc định TẮT (công ty chưa có dòng core.tenant_packs ⇒ tắt; quản trị bật ở "Store"): màn, thao tác, công cụ trợ lý của
@@ -1141,10 +1141,30 @@ async def _html(ctx: Ctx, s: dict[str, Any], blocks: list[dict[str, Any]], *, on
     await _guard_illustrations(ctx, blocks)
     images = await _images(ctx, blocks)
     page = htmlpage.page(s["title"], blocks, await brand(ctx), images, layout.clean(s["layout"]), only=only)
-    shown = sum(page.count(htmlpage.data_url(images[b["id"]])) for b in blocks if stock.is_ai(b) and b["id"] in images)   # lần ảnh AI THỰC SỰ nằm trên trang (mẫu có thể bỏ ảnh không có chỗ)
-    if not only and page.count('class="illus"') < shown:
-        raise Invalid("Ảnh minh hoạ thiếu chú thích “Ảnh minh hoạ” trên bản xuất — không xuất / gửi được")
+    if not only:
+        if page.count('class="illus"') < ai_appearances(page, blocks, images):
+            raise Invalid("Ảnh minh hoạ thiếu chú thích “Ảnh minh hoạ” trên bản xuất — không xuất / gửi được")
+        await _guard_overflow(layout.template_of(s["layout"]), page)
     return page
+
+
+def ai_appearances(page: str, blocks: list[dict[str, Any]], images: dict[str, tuple[bytes, str]]) -> int:
+    """Số LẦN ảnh AI xuất hiện trên trang đã dựng (mỗi ô ảnh phải có một nhãn). Đếm theo từng ảnh khác nhau (cùng một ảnh dùng ở hai chỗ ⇒ hai lần xuất hiện, không đếm lặp
+    theo số khối); mẫu bỏ ảnh không có chỗ thì ảnh đó không tính."""
+    urls = {htmlpage.data_url(images[b["id"]]) for b in blocks if stock.is_ai(b) and b["id"] in images}
+    return sum(page.count(u) for u in urls)
+
+
+async def _guard_overflow(tpl: dict[str, Any] | None, page: str) -> None:
+    """Mẫu nhiều trang có khung trang cố định: chữ dài hơn khung bị đè / mất mà không báo ⇒ đo bằng trình duyệt trước khi cho xuất / gửi, tràn thì CHẶN và nói trang nào."""
+    if not (tpl and tpl.get("pages")):
+        return
+    try:
+        over = await paged.overflow(page)
+    except convert.Unavailable as e:
+        raise Invalid(str(e)) from None
+    if over:
+        raise Invalid("Trang " + ", ".join(map(str, over)) + " tràn nội dung (chữ bị đè hoặc mất khi in) — " + paged.OVERFLOW_HELP)
 
 
 @m.command("export", resource=None, title="Xuất tệp", agent="allow")

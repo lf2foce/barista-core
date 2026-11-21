@@ -170,3 +170,53 @@ def test_one_page_image_for_the_self_check_step() -> None:
     title, blocks = S.teaser4()
     png = asyncio.run(convert.html_to_png(htmlpage.page(title, blocks, S.BRAND, _images(blocks), {"template": "teaser4"}, only=2), 1123, 794))
     assert png.startswith(b"\x89PNG") and len(png) > 5000
+
+
+def test_the_same_illustration_used_twice_counts_each_appearance_and_a_missing_label_is_caught() -> None:
+    from barista.modules import compose
+
+    it = stock.pick("bat-dong-san", "16:9", limit=1)[0]
+    got = stock.read(it.id)
+    assert got is not None
+    blocks = [{"id": "b1", "type": "heading", "text": "Tiêu đề", "level": 1, "slot": "cover", "flags": []}, {**stock.block(it), "id": "b2", "slot": "cover", "flags": []},
+              {**stock.block(it), "id": "b3", "slot": "grid", "flags": []}, {**stock.block(it), "id": "b4", "slot": "grid", "flags": []}]
+    images = {"b2": got, "b3": got, "b4": got}
+    page = htmlpage.page("Mẫu", blocks, S.BRAND, images, {"template": "editorial"})
+    n = compose.ai_appearances(page, blocks, images)
+    assert n == 3 and page.count('class="illus"') == 3        # một ảnh nguồn, ba lần xuất hiện, đủ nhãn ⇒ không báo động giả
+    stripped = page.replace('<span class="illus">Ảnh minh hoạ</span>', "", 1)
+    assert stripped.count('class="illus"') < compose.ai_appearances(stripped, blocks, images)   # thiếu một nhãn thật ⇒ bị chặn
+
+
+@needs_chrome
+@pytest.mark.parametrize("name", ["memo10", "teaser4"])
+def test_the_normal_samples_fit_every_page(name: str) -> None:
+    from barista.modules.compose import paged
+
+    title, blocks = SAMPLES[name]()
+    assert asyncio.run(paged.overflow(htmlpage.page(title, blocks, S.BRAND, _images(blocks), {"template": name}))) == []
+
+
+@needs_chrome
+def test_a_long_page_is_reported_as_overflowing_and_the_export_guard_blocks_it() -> None:
+    from barista.api import Invalid
+    from barista.modules import compose
+    from barista.modules.compose import paged
+
+    title, blocks = S.memo10()
+    long = " ".join(["Đoạn rất dài làm tràn khung trang hai của hồ sơ."] * 40)
+    blocks = [*blocks[:5], {"id": "b90", "type": "paragraph", "text": long, "level": 1, "origin": "ai", "flags": [], "slot": "p2"}, *blocks[5:]]
+    page = htmlpage.page(title, blocks, S.BRAND, _images(blocks), {"template": "memo10"})
+    assert asyncio.run(paged.overflow(page)) == [2]
+    with pytest.raises(Invalid, match=r"Trang 2 tràn nội dung.*rút gọn"):
+        asyncio.run(compose._guard_overflow(layout.TEMPLATES["memo10"], page))
+    asyncio.run(compose._guard_overflow(layout.TEMPLATES["plain"], page))   # mẫu dòng chảy tự ngắt trang ⇒ không đo
+
+
+@needs_chrome
+def test_the_measuring_script_is_the_only_script_allowed_to_run() -> None:
+    page = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>document.documentElement.setAttribute("data-x","bad")</script></body></html>'
+    got = asyncio.run(convert.html_measure(page, 'document.documentElement.setAttribute("data-ok","1")', "data-ok"))
+    assert got == "1"
+    with pytest.raises(convert.Unavailable):
+        asyncio.run(convert.html_measure(page, 'void 0', "data-x"))   # script của trang (không nonce) bị chặn ⇒ không ghi được
