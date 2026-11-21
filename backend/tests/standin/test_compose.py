@@ -325,6 +325,12 @@ async def test_drafts_are_hidden_from_people_who_cannot_read_the_source_record(w
     assert rh.can("papers", "read") and not rh.can("orderdesk", "read")
     pid = str((await ok(sale, "papers.start_draft", template_id=await slip_template(admin), ref=await new_order(admin, sale, "Khách Ẩn Thử")))["paper_id"])
     letter = await ok(rh, "papers.draft_letter", recipient="Phòng thử", subject="thử", body="Nội dung")
+    # tài liệu gửi khách / hồ sơ nội bộ (handout) không có bước ban hành ⇒ không phải "bản chưa ban hành": ai có phạm vi giấy tờ vẫn đọc như cũ (0251 —
+    # vd kiểm soát viên đọc bộ hồ sơ kiểm tra chuyên viên xuất)
+    handout = (await executor.run(system_principal(admin.tenant_id, sale.user_id), "papers.save_draft", {
+        "kind": "order_brief", "kind_label": "Bản tóm tắt đơn", "summary": "Tóm tắt thử", "layout": "handout",
+        "content": {"handout": {"headline": "Tóm tắt", "internal": True, "facts": [], "sections": []}}})).output["paper_id"]
+    assert str(handout) in {str(r["id"]) for r in (await q(rh, "papers.list"))["rows"]}
     listed = {str(r["id"]) for r in (await q(rh, "papers.list"))["rows"]}
     assert pid not in listed and str(letter["paper_id"]) in listed
     for op in ("papers.view", "papers.export"):

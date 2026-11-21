@@ -6,7 +6,8 @@
 --      ``manage`` trên tài nguyên đó ban hành / phát hành loại đó. Giấy chép thẩm quyền lúc lập; mẫu giữ lựa chọn của công ty ('' = theo loại hồ sơ).
 --      Giấy đã có nhận mặc định ``papers.office`` (người ban hành như trước: vai có quyền văn bản hành chính).
 --   3. Chính sách đọc: bản CHƯA ban hành chỉ người lập + người có thẩm quyền loại đó (phạm vi của tài nguyên thẩm quyền) thấy; đã ban hành / hết
---      hiệu lực như cũ (phạm vi ``papers``) và người có thẩm quyền loại đó. Tài nguyên thẩm quyền CHỈ cấp cho vai ban hành — cấp ``read`` cho vai khác
+--      hiệu lực như cũ (phạm vi ``papers``) và người có thẩm quyền loại đó. Tài liệu gửi khách / hồ sơ nội bộ (``layout = 'handout'``: bản tư vấn, bản tin
+--      phân tích, bộ hồ sơ kiểm tra…) KHÔNG có bước ban hành — không phải "bản chưa ban hành" ⇒ đọc như cũ theo phạm vi ``papers``. Tài nguyên thẩm quyền CHỈ cấp cho vai ban hành — cấp ``read`` cho vai khác
 --      là cho vai đó thấy bản chưa ban hành (tests/test_papers_live.py chặn trong bộ mặc định).
 -- Không bảo trì: bản cũ chạy song song ghi giấy mới với ``authority`` mặc định và vẫn đọc / ghi được dòng của chính người đó.
 SET LOCAL lock_timeout = '10s';
@@ -57,7 +58,7 @@ DECLARE
 BEGIN
     DROP POLICY p_scope ON papers.documents;
     EXECUTE format($p$CREATE POLICY p_scope ON papers.documents
-        USING (tenant_id = core.tenant() AND ((status <> 'draft' AND core.can_see('papers', created_by, team_id))
+        USING (tenant_id = core.tenant() AND (((status <> 'draft' OR layout = 'handout') AND core.can_see('papers', created_by, team_id))
                                               OR (status = 'draft' AND created_by IS NOT NULL AND created_by = core.me())
                                               OR %1$s))
         WITH CHECK (tenant_id = core.tenant() AND (core.can_see('papers', created_by, team_id) OR %1$s))$p$, authority_ok);
