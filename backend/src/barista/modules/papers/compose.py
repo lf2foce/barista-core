@@ -519,6 +519,14 @@ async def _sheet(ctx: Ctx, subj: Subject, blocks: list[Any], rec: dict[str, Any]
                  _mark(rows, rec))
 
 
+def sheet_basis(subj: Subject, d: dict[str, Any], sheet: Sheet) -> dict[str, str]:
+    """CĂN CỨ của lệnh phát hành = dấu của CHÍNH tờ giấy đã dựng (tên, chữ đã điền, chú thích người nhập) — một hàm cho cả hai phía (0251, rà Codex 21/11):
+    trang xem dựng tờ giấy MỘT lần rồi lấy dấu từ đúng bản đó cho nút (không đọc hồ sơ lần hai); lệnh dựng lại tờ giấy bằng quyền người bấm rồi so. Dấu
+    trùng ⇔ người bấm phát hành đúng chữ đã thấy trên màn."""
+    return {f"Số liệu trên giấy ({subj.label.lower()} {d['ref']})":
+            mark({"title": sheet.filled.title, "body": sheet.filled.markdown, "notes": sheet.notes})}
+
+
 async def _entries(ctx: Ctx, doc_id: Any, subj: Subject) -> dict[str, dict[str, Any]]:
     """Dữ kiện người nhập của giấy — dòng mới nhất mỗi ô; chỉ ô gói cho người nhập (ô công ty / ô hồ sơ không bao giờ lấy từ đây)."""
     got = await ctx.all("""SELECT DISTINCT ON (key) key, value, display, reason, entered_by, entered_at FROM papers.entries
@@ -611,10 +619,7 @@ async def issue_basis(ctx: Ctx, paper_id: UUID) -> dict[str, str]:
         rec = await _record_of(ctx, d, clicker=True)
     except (NotFound, Invalid):
         return {}   # hồ sơ mất / trỏ chỗ khác ⇒ handler báo lỗi rõ
-    entries = await _entries(ctx, d["id"], subj)
-    rows = _rows(subj, list(used(blocks)), rec, await _common(ctx, rec.get("entity_id"), _draft_on(d)), entries)
-    return {f"Số liệu {subj.label.lower()} {d['ref']}": _mark(rows, rec),
-            "Dữ kiện người nhập trên giấy": mark({k: [r["value"], str(r["entered_by"]), r["entered_at"].isoformat()] for k, r in entries.items()})}
+    return sheet_basis(subj, d, await _sheet(ctx, subj, blocks, rec, _draft_on(d), await _entries(ctx, d["id"], subj)))
 
 
 class SetField(Input):
@@ -722,7 +727,7 @@ async def draft_page(ctx: Ctx, d: dict[str, Any]) -> dict[str, Any]:
     actions: list[dict[str, Any]] = []
     fills: list[dict[str, Any]] = []
     if d["status"] == "draft" and subj is not None:
-        _, _, rec, sheet = await live(ctx, d)
+        _, subj, rec, sheet = await live(ctx, d)   # MỘT lượt đọc hồ sơ cho cả tờ giấy lẫn căn cứ của nút (sheet_basis) — không đọc lại
         head.append(await _belongs(ctx, d, subj, rec.get("title") or ""))
         content = _content({"name": t["name"], "version": t["version"], "signers": d["content"].get("signers", [])}, sheet.filled, sheet.notes)
         rows = sheet.rows
@@ -745,7 +750,7 @@ async def draft_page(ctx: Ctx, d: dict[str, Any]) -> dict[str, Any]:
                                                      open={"query": "papers.settings_view", "input": {}, "title": "Thông tin công ty trên giấy tờ"} if admin
                                                      else None)]))
         if can_issue(ctx, d) and not rec.get("blocked"):
-            actions.append(issue_action(d, executor.basis_token(await executor.basis_of(ctx, registry.OPS["papers.issue"], {"paper_id": str(d["id"])}))))
+            actions.append(issue_action(d, executor.basis_token(sheet_basis(subj, d, sheet))))
     else:
         content = d["content"]
         rows = {r["key"]: r for r in await ctx.all("SELECT * FROM papers.fields WHERE document_id = %s AND rev = %s", (d["id"], d["rev"]))}

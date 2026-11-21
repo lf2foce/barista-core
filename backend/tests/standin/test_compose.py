@@ -142,7 +142,7 @@ async def test_order_slip_reads_live_numbers_and_issues_once(who: Who) -> None:
     day = f"{today():%d/%m/%Y}"
     assert f"Ngày ký hợp đồng: {day}" in str((await q(sale, "papers.view", paper_id=pid))["sheet"])
     stale = await executor.run(admin, "papers.issue", {"paper_id": pid}, expect_basis=executor.basis_of_token(seen))
-    assert stale.status == "conflict" and "Căn cứ đã đổi từ lúc bạn xem: Số liệu đơn dịch vụ" in (stale.error or "")
+    assert stale.status == "conflict" and "Căn cứ đã đổi từ lúc bạn xem: Số liệu trên giấy (đơn dịch vụ" in (stale.error or "")
     assert await owner_val("SELECT status FROM papers.documents WHERE id = %s", (draft["paper_id"],)) == "draft"
 
     # phát hành: số theo loại của mẫu (dãy riêng), tệp .docx cất ở kho tệp, tải lại đúng tệp đó kể cả khi hồ sơ đổi tiếp
@@ -398,3 +398,45 @@ async def test_issue_needs_the_basis_the_issuer_saw_and_freezes_exactly_that(who
     text = docx_text((await q(admin, "papers.export", paper_id=pid))["docx_b64"])
     assert f"Số: {out['symbol']}" in text and "Tư vấn triển khai" in text and "ĐỔI SAU KHI SO" not in text   # tệp = bản đã so
     assert await owner_val("SELECT title FROM orderdesk.orders WHERE code = %s AND tenant_id = %s", (code, admin.tenant_id)) == "Nội dung ĐỔI SAU KHI SO"
+
+
+async def test_the_issue_button_carries_the_basis_of_the_sheet_it_sits_on(who: Who, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rà Codex (OpenAI) 21/11/2026 — ca thứ ba: tờ giấy và dấu căn cứ của nút Phát hành phải từ CÙNG một lượt đọc hồ sơ. Nếu trang đọc hồ sơ hai lần
+    (một cho tờ, một cho nút) mà hồ sơ đổi giữa hai lần, nút mang dấu của nội dung người xem CHƯA thấy ⇒ bấm là phát hành nội dung đó."""
+    from barista.modules.papers import compose
+    admin, sale = await who("admin"), await who("sale1")
+    code = await new_order(admin, sale, "Khách Một Lượt Đọc")
+    pid = str((await ok(sale, "papers.start_draft", template_id=await slip_template(admin), ref=code))["paper_id"])
+    await ok(sale, "papers.set_field", paper_id=pid, key="customer_address", value="Số 7 phố Mẫu")
+
+    # 1) trong CÙNG một lượt dựng trang: lần đọc thứ hai (nếu có) thấy hồ sơ đã đổi ⇒ trang chỉ được đọc MỘT lần, nút mang dấu của đúng tờ đang hiện
+    real = compose._record_of
+    calls: list[int] = []
+
+    async def drifting(ctx: Any, d: dict[str, Any], **kw: Any) -> dict[str, Any]:
+        rec = await real(ctx, d, **kw)
+        calls.append(1)
+        if len(calls) > 1:
+            rec = {**rec, "values": {**rec["values"], "order_title": "Nội dung ĐỔI GIỮA HAI LẦN ĐỌC"}}
+        return rec
+
+    monkeypatch.setattr(compose, "_record_of", drifting)
+    page = await q(admin, "papers.view", paper_id=pid)
+    monkeypatch.setattr(compose, "_record_of", real)
+    assert len(calls) == 1, "trang giấy đọc hồ sơ nhiều lần — tờ và nút có thể lệch nhau"
+    shown = str(page["sheet"])
+    assert "Tư vấn triển khai" in shown and "ĐỔI GIỮA HAI LẦN ĐỌC" not in shown
+    seen = executor.basis_of_token(next(a for a in page["actions"] if a["command"] == "papers.issue")["basis"])
+    out = (await executor.run(admin, "papers.issue", {"paper_id": pid}, expect_basis=seen)).output   # hồ sơ thật không đổi ⇒ phát hành đúng tờ đã thấy
+    text = docx_text((await q(admin, "papers.export", paper_id=pid))["docx_b64"])
+    assert f"Số: {out['symbol']}" in text and "Tư vấn triển khai" in text and "ĐỔI GIỮA HAI LẦN ĐỌC" not in text
+
+    # 2) hồ sơ đổi giữa lần dựng trang và lần bấm ⇒ dấu của tờ đã thấy ≠ tờ dựng lại lúc bấm ⇒ conflict, không cấp số
+    code2 = await new_order(admin, sale, "Khách Đổi Sau Khi Xem")
+    pid2 = str((await ok(sale, "papers.start_draft", template_id=await slip_template(admin), ref=code2))["paper_id"])
+    await ok(sale, "papers.set_field", paper_id=pid2, key="customer_address", value="Số 8 phố Mẫu")
+    seen2 = executor.basis_of_token(next(a for a in (await q(admin, "papers.view", paper_id=pid2))["actions"] if a["command"] == "papers.issue")["basis"])
+    await owner_val("UPDATE orderdesk.orders SET title = 'Nội dung đổi sau khi xem' WHERE code = %s AND tenant_id = %s RETURNING 1", (code2, admin.tenant_id))
+    stale = await executor.run(admin, "papers.issue", {"paper_id": pid2}, expect_basis=seen2)
+    assert stale.status == "conflict" and "Căn cứ đã đổi từ lúc bạn xem" in (stale.error or "")
+    assert await owner_val("SELECT status FROM papers.documents WHERE id = %s", (pid2,)) == "draft"
