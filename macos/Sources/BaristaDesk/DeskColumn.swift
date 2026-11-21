@@ -10,7 +10,7 @@ struct DeskColumn: View {
     private var groups: [DeskPage.Group] {
         let gs = desk.deskPage?.groups ?? []
         if !desk.morning.isEmpty && !gs.contains(where: { $0.key == "decide" }) {
-            return [DeskPage.Group(key: "decide", title: "Cần tôi quyết", sections: [])] + gs
+            return [DeskPage.Group(key: "decide", title: "Chờ tôi duyệt", sections: [])] + gs
         }
         return gs
     }

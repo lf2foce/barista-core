@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { decodeItems, type BatchResult, type DecideItem } from "@/lib/to-decide";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, chatStream, decideStream } from "@/lib/api";
 import { applyEvent, continueOf, decodeCard, newTurn, opensOnCanvas, type ChatMessage, type LiveTurn } from "@/lib/chat";
 import { decideStep, NO_ANSWER, startDecide, type DecideOutcome } from "@/lib/decide";
@@ -22,6 +23,10 @@ type ChatValue = {
   attention: Attention[];
   /** Đề xuất trợ lý soạn sẵn sáng nay (0074 A). */
   morning: ChatCard[];
+  /** "Chờ tôi duyệt" (ADR 0253): từng việc — đề xuất + phiếu duyệt — nhóm theo loại. `morning` chỉ là phần đề xuất của danh sách này. */
+  toDecide: DecideItem[];
+  /** Duyệt nhiều việc cùng loại: lần lượt từng thẻ qua đường quyết của nó; thẻ lỗi / đã đổi ở lại. */
+  decideMany: (kind: DecideItem["kind"], ids: string[]) => Promise<BatchResult[]>;
   decideMorning: (card: ChatCard, decision: "confirm" | "dismiss", input: Input, key: string) => Promise<MorningOutcome>;
   /** ``documents``: tài liệu người thả vào chat và chọn "chỉ dùng trong cuộc trò chuyện này" (ADR 0249) — đi kèm câu hỏi, không vào kho / hồ sơ. */
   send: (text: string, images?: ChatImage[], documents?: ChatDocument[]) => void;
@@ -63,7 +68,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [attention, setAttention] = useState<Attention[]>([]);
-  const [morning, setMorning] = useState<ChatCard[]>([]);
+  const [toDecide, setToDecide] = useState<DecideItem[]>([]);
+  const morning = useMemo(() => toDecide.flatMap((x) => (x.card ? [x.card] : [])), [toDecide]);
   const busy = useRef(false);
   const threadRef = useRef<string | null>(null);
   const turnKey = useRef<string | null>(null);
@@ -94,13 +100,18 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     void api.suggestions().then(setSuggestions).catch(() => null);
     void api.threads().then(setThreads).catch(() => null);
     void api.attention().then(setAttention).catch(() => null);
-    void api.morning().then((cs) => setMorning(cs.map(decodeCard))).catch(() => null);
   }, [manifest]);
+
+  // danh sách "Chờ tôi duyệt": tải lúc mở và tải lại mỗi khi một lệnh chạy xong ở đâu đó (duyệt ở màn khác, thông báo…) — server là nguồn duy nhất
+  const { changes } = desk;
+  useEffect(() => {
+    if (manifest) void api.toDecide().then((raw) => setToDecide(decodeItems(raw))).catch(() => null);
+  }, [manifest, changes]);
 
   const decideMorning = useCallback<ChatValue["decideMorning"]>(async (card, decision, input, key) => {
     try {
       const o = morningOutcome(await api.morningDecide(card.id, decision, input, key), decision);
-      if (o.done) setMorning((cur) => cur.filter((c) => c.id !== card.id));
+      if (o.done) setToDecide((cur) => cur.filter((x) => x.id !== card.id));
       return o;
     } catch (e) {
       return { status: "error", done: false, message: e instanceof Error ? e.message : "Không gửi được quyết định" };
@@ -271,6 +282,18 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setMessages((m) => [...m, { id: mid(), role: "system", text, cards: [], steps: [], at: new Date() }]);
   }, []);
 
+  const decideMany = useCallback<ChatValue["decideMany"]>(async (kind, ids) => {
+    try {
+      const res = await api.decideMany(kind, ids, "confirm");
+      const gone = new Set(res.filter((r) => ["ok", "executed", "dismissed", "pending"].includes(r.status)).map((r) => r.id));
+      setToDecide((cur) => cur.filter((x) => !gone.has(x.id)));
+      void desk.refreshInbox();
+      return res;
+    } catch (e) {
+      return ids.map((id) => ({ id, status: "error", message: e instanceof Error ? e.message : "Không duyệt được" }));
+    }
+  }, [desk]);
+
   const decide = useCallback<ChatValue["decide"]>(
     (card, decision, input, key) =>
       new Promise<DecideOutcome>((resolve) => {
@@ -323,7 +346,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <Ctx.Provider value={{ messages, live, threadId, threads, suggestions, attention, morning, decideMorning, send, newThread, openThread,
+    <Ctx.Provider value={{ messages, live, threadId, threads, suggestions, attention, morning, toDecide, decideMany, decideMorning, send, newThread, openThread,
                            decide, addSystem, builder, openBuilder, exitBuilder, stop, canStop }}>
       {children}
     </Ctx.Provider>

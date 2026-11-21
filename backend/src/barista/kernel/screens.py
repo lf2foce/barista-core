@@ -50,7 +50,7 @@ TINTS = frozenset({"blue", "teal", "green", "orange", "red", "pink", "purple", "
 
 
 # BÀN VIỆC (0094): MỘT điểm vào "việc của tôi" — ba nhóm theo điều người phải làm, không theo module.
-DESK_GROUPS = {"decide": "Cần tôi quyết", "do": "Cần tôi làm", "watch": "Đang theo dõi"}
+DESK_GROUPS = {"decide": "Chờ tôi duyệt", "do": "Cần tôi làm", "watch": "Đang theo dõi"}
 
 
 @dataclass(frozen=True)

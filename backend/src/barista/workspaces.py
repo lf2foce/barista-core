@@ -14,27 +14,22 @@ from typing import Any
 from uuid import UUID
 
 from barista.kernel import clock, company_settings, executor, needs, registry, screens, ui, vocab
-from barista.kernel.attention import Line, kpi, line, num
 from barista.kernel.executor import can_run
 from barista.kernel.fields import DEFAULT_COUNTRY, NATIONAL
 from barista.kernel.forms import field_specs
 from barista.kernel.preview import action_rule
 from barista.kernel.principal import Principal, system_principal
-from barista.kernel.screens import Action, Desk, Open, Screen, Workspace
+from barista.kernel.screens import Action, Open, Screen, Workspace
 from barista.kernel.text import fold
 
 A = Action
 
-def _waiting_approvals(o: Any) -> Line | None:
-    n = kpi(o, "Chờ bạn duyệt")
-    return line("warn", f"{num(n)} phiếu đang chờ anh/chị duyệt", "Em đã chạy thử từng phiếu — anh/chị chỉ cần xem và bấm") if n else None
-
-
-# Phiếu duyệt là của lõi — màn duy nhất khai ở đây; là một mục "cần tôi quyết" của bàn việc (0094).
+# Phiếu duyệt là của lõi — màn duy nhất khai ở đây (menu + hộp thư). Từng phiếu chờ người xem duyệt nằm ở "Chờ tôi duyệt" của bàn việc (``agent/decisions.py``),
+# không còn là MỘT mục đếm một (ADR 0253).
 INBOX = Screen("inbox", "Phiếu duyệt", "checkmark.seal", "core.approvals", row_actions=(
     A("core.decide", "Duyệt", bind={"approval_id": "id"}, preset={"approve": True}, when={"mine": ["Chờ bạn"]}, style="primary"),
     A("core.decide", "Từ chối", bind={"approval_id": "id"}, preset={"approve": False}, when={"mine": ["Chờ bạn"]}, style="destructive"),
-), row_click="open", open=Open("core.approval", {"approval_id": "id"}, "Phiếu"), desk=Desk("decide", say=_waiting_approvals, menu=True, rank=10))
+), row_click="open", open=Open("core.approval", {"approval_id": "id"}, "Phiếu"))
 
 
 ACCOUNT = "account"   # phân hệ giả của các màn CÁ NHÂN — manifest gửi ở ``account``, không nằm trong ``workspaces``
@@ -49,7 +44,7 @@ def desk_screens() -> list[tuple[str, Screen]]:
     """Màn góp vào bàn việc (0094): (phân hệ, màn) — phiếu duyệt của lõi + màn module khai ``desk=``; MỖI MÀN MỘT LẦN (cùng màn góp vào hai phân
     hệ vẫn là một mục — khoá theo truy vấn + màn)."""
     seen: set[tuple[str, str]] = {(INBOX.query, INBOX.key)}
-    out: list[tuple[str, Screen]] = [("", INBOX)]
+    out: list[tuple[str, Screen]] = []
     for w in workspaces():
         for s in w.screens:
             if s.desk is not None and (s.query, s.key) not in seen:

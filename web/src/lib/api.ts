@@ -324,6 +324,11 @@ export const api = {
   desk: async (): Promise<DeskPage> => jsonOf<DeskPage>(await raw("/v1/desk")),
   /** Đề xuất soạn sẵn hôm nay (0074 A) — server soạn ngay nếu hôm nay chưa có lượt nào cho người này. */
   morning: async (): Promise<ChatCard[]> => jsonOf<ChatCard[]>(await raw("/v1/assistant/morning")),
+  /** "Chờ tôi duyệt" (ADR 0253): từng việc — đề xuất + phiếu duyệt — nhóm theo loại. */
+  toDecide: async (): Promise<unknown> => jsonOf<unknown>(await raw("/v1/assistant/to-decide")),
+  /** Duyệt nhiều việc cùng loại: lần lượt từng thẻ qua đường quyết của nó; trả từng kết quả. */
+  decideMany: async (kind: "proposal" | "approval", ids: string[], decision: "confirm" | "dismiss"): Promise<{ id: string; status: string; message: string }[]> =>
+    jsonOf(await post("/v1/assistant/to-decide/decide", { kind, ids, decision })),
   morningDecide: async (id: string, decision: "confirm" | "dismiss", input: Input, key: string): Promise<CommandResult> =>
     jsonOf<CommandResult>(await post(`/v1/assistant/morning/${id}/decide`, { decision, input, key })),
   threads: async (): Promise<ThreadSummary[]> => jsonOf<ThreadSummary[]>(await raw("/v1/assistant/threads")),
