@@ -43,7 +43,6 @@ from barista.api import (
     Module,
     NoInput,
     NotFound,
-    Open,
     OptionsIn,
     Pack,
     Screen,
@@ -303,6 +302,11 @@ def _why(status: str, error: str = "") -> str:
     return "truy vấn gặp lỗi tạm thời"
 
 
+def _key(name: str, inp: dict[str, Any]) -> tuple[str, str]:
+    """Khoá "cùng một lần hỏi": tên truy vấn + đầu vào (thứ tự khoá không quan trọng)."""
+    return name, json.dumps(inp, sort_keys=True, ensure_ascii=False, default=str)
+
+
 class Writer:
     """Một lượt soạn bằng quyền ``p`` (người soạn; trợ lý làm thay thì mang dấu trợ lý). Không nhận kết nối DB — mỗi công cụ tự đi qua executor."""
 
@@ -315,7 +319,10 @@ class Writer:
         self.queries: dict[str, Any] = {}
         self.steps: list[dict[str, Any]] = []
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._call_locks: dict[tuple[str, str], asyncio.Lock] = {}   # riêng cho _call (fetch_data đang giữ khoá của nó khi gọi _call — không dùng chung)
         self.failed: dict[tuple[str, str], str] = {}   # (truy vấn, đầu vào) đã thử mà lỗi trong lượt này ⇒ lần gọi lại cùng đầu vào bị từ chối ngay
+        self.got: dict[tuple[str, str], Any] = {}      # (truy vấn, đầu vào) đã LẤY ĐƯỢC trong lượt này ⇒ lần gọi lại cùng đầu vào dùng lại kết quả, không chạy / không hiện thêm bước
+        self.fetched: dict[tuple[str, str], dict[str, Any]] = {}   # fetch_data: (truy vấn, đầu vào) ⇒ mã ref đã trả — gọi lại cùng đầu vào trả LẠI mã đó, không thêm khối số liệu
         self.gaps: list[str] = []                      # tên các số liệu chưa lấy được (cho bản dở: "chưa đủ số liệu cho …")
         self.fresh: list[str] = []                     # mã khối số liệu lấy được TRONG lượt này, theo thứ tự — không bao giờ bỏ
         self.draft: list[dict[str, Any]] | None = None  # bản gần nhất model đã trả (còn nguyên khi lượt bị chặn ở bước sau)
@@ -337,16 +344,22 @@ class Writer:
         return ref
 
     async def _call(self, name: str, inp: dict[str, Any]) -> Any:
-        op = self.queries.get(name)
-        label = getattr(op, "title", None) or KB_STEPS.get(name, name)
-        await self._say({"type": "step", "tool": name, "title": label, "status": "running"})
-        r = await executor.query(self.p, name, inp)   # transaction đọc riêng, ngắn — quyền + RLS + chính sách trợ lý như mọi truy vấn
-        if r.status != "ok":
-            log.info("compose: truy vấn %s lỗi (%s): %s — đầu vào %s", name, r.status, (r.error or "")[:300], json.dumps(inp, ensure_ascii=False, default=str)[:300])
-            await self._say({"type": "step", "tool": name, "title": label, "status": "error", "reason": _why(r.status, r.error)})
-            raise Invalid(r.error or r.status)
-        await self._say({"type": "step", "tool": name, "title": label, "status": "ok"})
-        return r.output
+        key = _key(name, inp)
+        # model hay hỏi lại đúng câu đã hỏi (cùng truy vấn + cùng đầu vào; có khi song song): kết quả trong lượt không đổi ⇒ không chạy lại, không vẽ thêm một bước trùng
+        async with self._call_locks.setdefault(key, asyncio.Lock()):
+            if key in self.got:
+                return self.got[key]
+            op = self.queries.get(name)
+            label = getattr(op, "title", None) or KB_STEPS.get(name, name)
+            await self._say({"type": "step", "tool": name, "title": label, "status": "running"})
+            r = await executor.query(self.p, name, inp)   # transaction đọc riêng, ngắn — quyền + RLS + chính sách trợ lý như mọi truy vấn
+            if r.status != "ok":
+                log.info("compose: truy vấn %s lỗi (%s): %s — đầu vào %s", name, r.status, (r.error or "")[:300], json.dumps(inp, ensure_ascii=False, default=str)[:300])
+                await self._say({"type": "step", "tool": name, "title": label, "status": "error", "reason": _why(r.status, r.error)})
+                raise Invalid(r.error or r.status)
+            await self._say({"type": "step", "tool": name, "title": label, "status": "ok"})
+            self.got[key] = r.output
+            return r.output
 
     def tools(self) -> list[Any]:
         from pydantic_ai import Tool
@@ -370,8 +383,10 @@ class Writer:
             if query not in self.queries:
                 return {"error": f"Không có truy vấn {query} trong danh sách bạn được chạy — gọi find_data trước"}
             input = {k: v for k, v in (input or {}).items() if v is not None}   # null = không đặt (mô hình hay gửi cả trường rỗng)
-            key = (query, json.dumps(input, sort_keys=True, ensure_ascii=False, default=str))
+            key = _key(query, input)
             async with self._locks.setdefault(key, asyncio.Lock()):   # hai lời gọi SONG SONG cùng đầu vào: lần sau chờ lần trước rồi thấy kết quả
+                if key in self.fetched:   # đã lấy được đúng truy vấn + đầu vào này ⇒ trả lại mã cũ (không thêm khối số liệu trùng vào bản soạn)
+                    return {**self.fetched[key], "note": "Đã lấy đúng truy vấn và đầu vào này rồi — dùng lại mã ref này, đừng gọi lại."}
                 if key in self.failed:   # cùng truy vấn + cùng đầu vào đã lỗi: không chạy lại (chặn vòng lặp thử đi thử lại)
                     return {"error": f"Đã thử đúng đầu vào này và lỗi: {self.failed[key]}. ĐỪNG gọi lại với cùng đầu vào — sửa đầu vào theo lỗi, chọn truy vấn "
                                      "khác, hoặc ghi [cần số liệu: …] ở chỗ đó."}
@@ -396,9 +411,10 @@ class Writer:
             ref = self._ref("d", {"type": "data", "data": snap})
             self.fresh.append(ref)
             self.gaps = [g for g in self.gaps if g != title.strip()[:80]]   # lấy được bằng cách khác ⇒ không còn là chỗ thiếu
+            self.fetched[key] = {"ref": ref, "preview": chat.compact(page, 12)}
             # web vẽ ngay bảng vừa lấy vào khung bản soạn (trước khi AI viết xong lời dẫn) — vẫn là ảnh chụp kết quả truy vấn bằng quyền người soạn
             await self._say({"type": "data", "ref": ref, "block": _web_block({"id": ref, "type": "data", "origin": "data", "flags": [], "data": snap})})
-            return {"ref": ref, "preview": chat.compact(page, 12)}
+            return self.fetched[key]
 
         async def search_docs(q: str) -> list[dict[str, Any]] | dict[str, str]:
             """Tìm đoạn trong kho tài liệu công ty (bản đang hiệu lực, kệ bạn đọc được)."""
@@ -1922,7 +1938,8 @@ async def studio(ctx: Ctx, inp: StudioRef) -> dict[str, Any]:
                    actions=[ui.act("compose.brochure", "Soạn ấn phẩm từ hồ sơ", style="primary")] if composer["recipes"] else None)
 
 
+# MỘT màn: phân hệ một màn mở thẳng vào màn và dùng TRỌN khung làm việc (web `useSolo` / FullFrame — ADR 0231) — chat trái | bản soạn phải như màn Trợ lý,
+# không lồng trong thẻ hẹp. Danh sách các ấn phẩm đã làm nằm ngay trong màn ("Ấn phẩm đã làm"), nên không cần màn danh sách thứ hai (truy vấn `compose.list` giữ).
 m.workspace(Workspace("compose", "Ấn phẩm", "wand.and.stars", (
     Screen("compose", "Ấn phẩm", "wand.and.stars", "compose.studio", tint="purple", badge="Thử nghiệm"),
-    Screen("pieces", "Danh sách ấn phẩm", "doc.richtext", "compose.list", open=Open("compose.view", {"session_id": "id"}, "Ấn phẩm")),
 ), order=92, phone=False))
