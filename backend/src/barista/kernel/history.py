@@ -44,6 +44,7 @@ async def record(ctx: Ctx, kind: str, subject_id: Any, field_key: str, old: Any,
     before, after = to_jsonable_python(old), to_jsonable_python(new)
     if before == after:
         return False
+    ctx.changes.append((kind, subject_id, field_key, before, after))   # cho bản chạy thử chuẩn (kernel/preview.py)
     await ctx.conn.execute(
         "INSERT INTO core.field_changes (subject_kind, subject_id, field, old_value, new_value, user_id, via, system, command, trace)"
         " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -127,6 +128,30 @@ async def entries(ctx: Ctx, kind: str, subject_id: Any, *, which: str = "", limi
         how = _how(r)
         items.append({"title": title, "subtitle": " · ".join(x for x in (who, _when(r["at"]), how) if x), "tone": "muted"})
     return items, more
+
+
+async def describe(ctx: Ctx) -> list[dict[str, str]]:
+    """"Cũ → mới" của những trường lệnh vừa đổi qua ``ctx.track`` (``ctx.changes``) — một dòng mỗi (đối tượng, trường): giá trị đầu → giá trị cuối. Cùng luật xem giá
+    trị như ``entries`` (trường nhạy cảm người xem không đủ quyền ⇒ "đã đổi"). Dùng cho bản chạy thử chuẩn (``kernel/preview.py``, ADR 0253)."""
+    merged: dict[tuple[str, str, str], list[Any]] = {}
+    for kind, sid, key, before, after in ctx.changes:
+        slot = merged.setdefault((kind, str(sid), key), [before, after])
+        slot[1] = after
+    people = {str(v) for (kind, _, key), (b, a) in merged.items() if registry.TRACKED[(kind, key)].fmt == "person" for v in (b, a) if v}
+    names: dict[str, str] = {}
+    if people:
+        names = {str(u["id"]): u["name"] or u["email"]
+                 for u in await ctx.all("SELECT id, name, email FROM core.users WHERE id = ANY(%s::uuid[])", (sorted(people),))}
+    out = []
+    for (kind, _, key), (before, after) in merged.items():
+        if before == after:
+            continue
+        t = registry.TRACKED[(kind, key)]
+        if t.needs and not ctx.sees(list(t.needs)):
+            out.append({"label": t.label, "before": "", "after": "đã đổi (bạn không được xem giá trị)"})
+        else:
+            out.append({"label": t.label, "before": _value(t, before, names), "after": _value(t, after, names)})
+    return out
 
 
 def _open(kind: str, subject_id: Any) -> dict[str, Any]:

@@ -18,6 +18,7 @@ from psycopg.types.json import Jsonb
 
 from barista.db import Conn, db
 from barista.kernel import attention, auth, clock, executor, registry
+from barista.kernel import preview as previews
 from barista.kernel.clock import today
 from barista.kernel.forms import field_specs
 from barista.kernel.principal import Principal
@@ -57,17 +58,16 @@ async def prepare(p: Principal, day: date | None = None) -> int:
         if s["key"] in have:
             continue
         with executor.tracing(_trace(p.user_id, day, s["key"])):   # cùng vết với lần người bấm Xác nhận thẻ này
-            r = await executor.propose(agent, s["command"], s.get("input") or {})
+            r = await executor.propose(agent, s["command"], s.get("input") or {}, reason=str(s.get("reason") or ""))
         if r.status != "proposed" or not isinstance(r.output, dict):
             continue   # không chạy được lúc này (căn đã bán, việc đã xong…) ⇒ không đưa thẻ hỏng cho người
         o: dict[str, Any] = r.output
-        preview: dict[str, Any] = o["preview"] if isinstance(o.get("preview"), dict) else {}
         async with db.tenant_tx(p) as conn:
             await conn.execute(
-                """INSERT INTO core.proposals (user_id, day, key, command, title, reason, input, basis, rank)
-                   VALUES (core.me(), %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
-                (day, s["key"], o["command"], str(preview.get("summary") or o["title"]), str(s.get("reason") or ""), Jsonb(o["input"]),
-                 Jsonb(o.get("basis")) if o.get("basis") else None, int(s.get("rank", 500))))
+                """INSERT INTO core.proposals (user_id, day, key, command, title, reason, input, basis, rank, preview)
+                   VALUES (core.me(), %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                (day, s["key"], o["command"], o["brief"]["title"], o["brief"]["reason"], Jsonb(o["input"]),
+                 Jsonb(o.get("basis")) if o.get("basis") else None, int(s.get("rank", 500)), Jsonb(o["brief"])))
         have.add(s["key"])
         made += 1
     return made
@@ -84,10 +84,10 @@ async def file_cards(p: Principal, prefix: str, cards: list[dict[str, Any]], rea
         day = today()   # trong giao dịch: múi giờ công ty (0169)
         for i, c in enumerate(props, 1):
             cur = await conn.execute(
-                """INSERT INTO core.proposals (user_id, day, key, command, title, reason, input, basis, rank)
-                   VALUES (core.me(), %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING id""",
+                """INSERT INTO core.proposals (user_id, day, key, command, title, reason, input, basis, rank, preview)
+                   VALUES (core.me(), %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING id""",
                 (day, f"{prefix}:{i}", c["command"], str(c.get("title") or c["command"])[:300], reason[:300], Jsonb(c.get("input") or {}),
-                 Jsonb(c["basis"]) if c.get("basis") else None, rank))
+                 Jsonb(c["basis"]) if c.get("basis") else None, rank, Jsonb(c["brief"]) if c.get("brief") else None))
             n += 1 if await cur.fetchone() else 0
     return n
 
@@ -110,13 +110,12 @@ async def file_outside(p: Principal, source: str, source_name: str, command: str
         day = today()   # trong giao dịch: múi giờ công ty (0169)
     key = f"{OUTSIDE}:{source[:40]}:{uuid.uuid4().hex[:12]}"
     with executor.tracing(_trace(p.user_id, day, key)):   # cùng vết với lần người bấm Xác nhận thẻ này
-        r = await executor.propose(p.as_agent(), command, inp)
+        reason = f"Soạn từ {source_name[:60]}" + (f" — {' '.join(note.split())[:200]}" if note.strip() else "")
+        r = await executor.propose(p.as_agent(), command, inp, reason=reason)
     if r.status != "proposed" or not isinstance(r.output, dict):
         return {"status": r.status, "error": r.error}
     o: dict[str, Any] = r.output
-    preview: dict[str, Any] = o["preview"] if isinstance(o.get("preview"), dict) else {}
-    title = str(preview.get("summary") or o["title"])[:300]
-    reason = f"Soạn từ {source_name[:60]}" + (f" — {' '.join(note.split())[:200]}" if note.strip() else "")
+    title = str(o["brief"]["title"])[:300]
     async with db.tenant_tx(p) as conn:
         # trần là trần CỨNG: khoá theo (người, ngày) rồi đếm lại trong chính giao dịch ghi — nhiều lượt gọi song song không vượt được
         await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"outside-proposals:{p.tenant_id}:{p.user_id}:{day}",))
@@ -125,9 +124,9 @@ async def file_outside(p: Principal, source: str, source_name: str, command: str
         if n and n["n"] >= OUTSIDE_PER_DAY:
             return {"status": "limit", "error": f"Hôm nay đã soạn {OUTSIDE_PER_DAY} đề xuất từ ứng dụng AI — người dùng xử lý bớt trong Barista rồi soạn tiếp."}
         cur = await conn.execute(
-            """INSERT INTO core.proposals (user_id, day, key, command, title, reason, input, basis, rank)
-               VALUES (core.me(), %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-            (day, key, o["command"], title, reason, Jsonb(o["input"]), Jsonb(o.get("basis")) if o.get("basis") else None, 40))
+            """INSERT INTO core.proposals (user_id, day, key, command, title, reason, input, basis, rank, preview)
+               VALUES (core.me(), %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (day, key, o["command"], title, reason, Jsonb(o["input"]), Jsonb(o.get("basis")) if o.get("basis") else None, 40, Jsonb(o["brief"])))
         row = await cur.fetchone()
     assert row is not None
     return {"status": "proposed", "id": str(row["id"]), "title": title}
@@ -187,7 +186,7 @@ async def cards(p: Principal) -> list[dict[str, Any]]:
     if not row or not row["n"]:
         await prepare(p, day)
     async with db.tenant_tx(p, read_only=True) as conn:
-        cur = await conn.execute("""SELECT id, command, title, reason, input, basis FROM core.proposals
+        cur = await conn.execute("""SELECT id, command, title, reason, input, basis, preview, status FROM core.proposals
                                     WHERE day = %s AND status = 'open' ORDER BY rank, created_at""", (day,))
         rows = await cur.fetchall()
     out = []
@@ -195,9 +194,17 @@ async def cards(p: Principal) -> list[dict[str, Any]]:
         op = registry.get(r["command"])
         if op is None:
             continue
-        out.append({"id": str(r["id"]), "kind": "proposal", "source": "morning", "command": r["command"], "title": r["title"],
-                    "subtitle": r["reason"], "reason": r["reason"], "input": r["input"], "fields": field_specs(op, p.vocab, p.fields), "basis": r["basis"]})
+        out.append(card_of(r, p, op))
     return out
+
+
+def card_of(r: dict[str, Any], p: Principal, op: registry.Op) -> dict[str, Any]:
+    """MỘT hình thẻ đề xuất cho mọi nơi đọc ``core.proposals`` (Việc, danh sách "Chờ tôi duyệt", mở theo mã): ``brief`` = bản chạy thử chuẩn (ADR 0253) —
+    dòng cũ chưa có ⇒ dựng tối thiểu từ tiêu đề + lý do; ``state`` đọc từ server (open / done / dismissed / expired)."""
+    brief = r["preview"] or {"title": r["title"], "subject": None, "changes": [], "reason": r["reason"], "reversible": previews.reversibility(op)}
+    return {"id": str(r["id"]), "kind": "proposal", "source": "morning", "command": r["command"], "title": brief["title"], "subtitle": r["reason"],
+            "reason": r["reason"], "brief": brief, "input": r["input"], "fields": field_specs(op, p.vocab, p.fields), "basis": r["basis"],
+            **previews.state_of(r["status"], (r.get("result") or {}).get("approval_id") if isinstance(r.get("result"), dict) else None)}
 
 
 async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str, Any] | None, key: str) -> dict[str, Any]:

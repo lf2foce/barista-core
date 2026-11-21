@@ -46,6 +46,9 @@ from barista.kernel import (
     vocab,
     webhooks,
 )
+from barista.kernel import (
+    preview as previews,
+)
 from barista.kernel.agent_policy import Caller, Company, Run, decide
 from barista.kernel.errors import Conflict, Denied, Invalid, NotFound, OpError
 from barista.kernel.principal import Principal
@@ -269,6 +272,9 @@ class Ctx:
     readonly: bool = False
     # VIỆC NỀN (lõi đánh dấu lúc dựng — bên nghe sự kiện, vòng quét): hợp đồng thuê của đúng lượt chạy đó; chỉ Ctx này (và con của nó) được ``job_for``
     background: Any = None
+    # những gì lệnh vừa ĐỔI qua ``ctx.track`` (loại đối tượng, mã, trường, cũ, mới) — con của gọi lồng dùng CHUNG danh sách với cha: bản chạy thử chuẩn
+    # (``kernel/preview.py``, ADR 0253) gom "cũ → mới" từ đây, module khai lịch sử là có ngay, không khai thêm gì
+    changes: list[tuple[str, Any, str, Any, Any]] = field(default_factory=list)
 
     @property
     def from_file(self) -> bool:
@@ -772,7 +778,7 @@ async def invoke(parent: Ctx, name: str, inp: dict[str, Any] | BaseModel, *, ele
         await set_session(parent.conn, p)
     try:
         child = core_ctx(parent.conn, p, parent.events if events is None else events, after=parent.after, preview=parent.preview,
-                         module=op.module, caller=pmod if contract else "", readonly=ro, background=_CTXS[id(parent)][6])
+                         module=op.module, caller=pmod if contract else "", readonly=ro, background=_CTXS[id(parent)][6], changes=parent.changes)
         if op.kind == "command" and not approval_handled and (await approval_for(child, op, model))[0]:
             # Invalid (không phải Denied): gọi sang gói không bắt buộc nuốt Denied thành None — ở đây phải hiện ra, không im lặng bỏ qua
             raise Invalid(f"“{op.title}” phải qua duyệt ở công ty này — không chạy kèm trong thao tác khác; làm riêng lệnh đó để gửi phiếu duyệt")
@@ -1133,9 +1139,12 @@ def _unsent(preview: Any) -> Any:
     return preview
 
 
-async def _propose(conn: Conn, p: Principal, op: registry.Op, model: BaseModel, payload: dict[str, Any], why: tuple[str, ...] = ()) -> Result:
+async def _propose(conn: Conn, p: Principal, op: registry.Op, model: BaseModel, payload: dict[str, Any], why: tuple[str, ...] = (),
+                   reason: str = "") -> Result:
     """Trợ lý: chạy thử thật rồi bỏ (điểm lưu) ⇒ thẻ đề xuất. Đề xuất hiện ra là chạy được tại lúc soạn — căn đã bán, trùng SĐT, sai quyền dòng…
-    báo ngay cho trợ lý thay vì để người bấm rồi mới lỗi. Lệnh lồng công ty đặt "đề xuất" chạy thử cùng (``preview``)."""
+    báo ngay cho trợ lý thay vì để người bấm rồi mới lỗi. Lệnh lồng công ty đặt "đề xuất" chạy thử cùng (``preview``). Kết quả mang ``brief`` — BẢN CHẠY THỬ
+    CHUẨN (``kernel/preview.py``, ADR 0253): hồ sơ · cũ → mới · vì sao · đảo được không, dựng ngay trong điểm lưu (còn thấy thứ vừa đổi) — ``reason`` là lý
+    do của NGUỒN gợi ý (thẻ sáng / luật), thắng ``purpose=`` của lệnh."""
     async with conn.transaction():
         ctx = core_ctx(conn, p, preview=True, module=op.module)
         if pinned := await pins_of(ctx, op, model):   # chốt phiên bản người sẽ thấy: thẻ mang nó, lúc bấm lệnh so lại đúng nó
@@ -1144,10 +1153,37 @@ async def _propose(conn: Conn, p: Principal, op: registry.Op, model: BaseModel, 
         basis = await basis_of(ctx, op, model)   # TRƯỚC handler: căn cứ là thứ người sẽ thấy trên thẻ, không phải sau khi chạy thử
         preview = _unsent(jsonable(await op.handler(ctx, model)))
         await check_deferred(conn)
+        brief = await _brief(ctx, op, payload, preview, reason)
         raise psycopg.Rollback()
     await _audit(conn, p, op.name, payload, "proposed")
-    return Result("proposed", {"command": op.name, "title": op.title, "input": payload, "preview": preview, "basis": basis,
+    return Result("proposed", {"command": op.name, "title": op.title, "input": payload, "preview": preview, "brief": brief, "basis": basis,
                                **({"why": list(why)} if why else {})})   # vì sao thành đề xuất (0144) — thẻ hiện được, app cũ bỏ qua
+
+
+async def _brief(ctx: Ctx, op: registry.Op, payload: dict[str, Any], out: Any, reason: str = "") -> dict[str, Any]:
+    """Bản chạy thử chuẩn của lần chạy thử vừa xong (``kernel/preview.py``). Không dựng được ≠ lệnh hỏng: thẻ vẫn có tên lệnh + đầu vào, người duyệt vẫn
+    chạy được (log để sửa)."""
+    try:
+        return await previews.build(ctx, op, payload, out, reason=reason)
+    except Exception:
+        log.exception("không dựng được bản chạy thử của %s", op.name)
+        return {"title": op.title, "subject": None, "changes": [], "reason": reason or op.purpose, "reversible": previews.reversibility(op)}
+
+
+async def _brief_for_approval(conn: Conn, p: Principal, op: registry.Op, model: BaseModel, payload: dict[str, Any]) -> dict[str, Any]:
+    """Phiếu duyệt mang CÙNG bản chạy thử chuẩn với thẻ đề xuất: chạy thử lệnh trong điểm lưu (rồi hoàn) ngay lúc xin, người duyệt đọc "hồ sơ nào · cũ → mới ·
+    vì sao" thay vì tên lệnh. Lệnh chạy thử lỗi (căn cứ thiếu, gọi lồng cần duyệt…) ⇒ bản mô tả không có "cũ → mới" — phiếu vẫn gửi như trước."""
+    brief: dict[str, Any] = {"title": op.title, "subject": None, "changes": [], "reason": op.purpose, "reversible": previews.reversibility(op)}
+    try:
+        async with conn.transaction():
+            ctx = core_ctx(conn, p, preview=True, module=op.module)
+            out = _unsent(jsonable(await op.handler(ctx, model)))
+            await check_deferred(conn)
+            brief = await _brief(ctx, op, payload, out)
+            raise psycopg.Rollback()
+    except Exception:   # chỉ bản mô tả — việc xin duyệt không được hỏng vì nó
+        log.info("phiếu duyệt %s: chạy thử không ra bản mô tả đủ", op.name, exc_info=True)
+    return brief
 
 
 def localized(p: Principal, r: Result) -> Result:
@@ -1267,8 +1303,9 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
                 # người bấm (thẻ đề xuất / nút trang) đã thấy căn cứ khác hiện tại — không phải phiếu xin duyệt ⇒ "từ lúc bạn xem"
                 raise Conflict(f"Căn cứ đã đổi từ lúc bạn xem: {', '.join(changed)} — xem lại rồi làm lại")
             if chain:
+                brief = await _brief_for_approval(conn, p, op, model, payload)
                 aid = await approvals.create(conn, p, chain=chain, command=name, input=payload,
-                                             summary=f"{p.name or p.email}: {op.title}" + (f" — {what}" if what else ""),
+                                             summary=brief["title"] + (f" — {what}" if what else ""), preview=brief,
                                              run_as="requester", basis=basis)
                 ctx.pending_approval = aid
                 out = {"approval_id": str(aid), "message": "Đã gửi phiếu duyệt"}
@@ -1335,12 +1372,12 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
                       background=background, keep_output=keep_output, prepared=value, dry_run=dry_run)
 
 
-async def propose(p: Principal, name: str, inp: dict[str, Any]) -> Result:
+async def propose(p: Principal, name: str, inp: dict[str, Any], *, reason: str = "") -> Result:
     door(p, f"propose {name}")
-    return localized(p, await _propose_as(p, name, inp))
+    return localized(p, await _propose_as(p, name, inp, reason))
 
 
-async def _propose_as(p: Principal, name: str, inp: dict[str, Any]) -> Result:
+async def _propose_as(p: Principal, name: str, inp: dict[str, Any], reason: str = "") -> Result:
     """Soạn ĐỀ XUẤT bằng quyền ``p`` (thường ``p.as_agent()``) dù chính sách cho trợ lý "làm thẳng" — cho đề xuất soạn sẵn không có người đang
     nhìn (đề xuất buổi sáng, 0074): luôn chỉ chạy thử rồi bỏ; lệnh trợ lý bị cấm ("deny") vẫn bị cấm. Kết quả: ``proposed`` hoặc lỗi như ``run``."""
     op = registry.get(name)
@@ -1362,7 +1399,7 @@ async def _propose_as(p: Principal, name: str, inp: dict[str, Any]) -> Result:
             await packs.require_for_write(conn, p.tenant_id, op)
             if p.via == "agent" and await agent_denied(conn, p, op):
                 raise Denied(f"Trợ lý không được làm “{op.title}” — việc này người phải tự làm")
-            return await _propose(conn, p, op, model, payload)
+            return await _propose(conn, p, op, model, payload, reason=reason)
     except Exception as e:   # mọi lỗi của lệnh ⇒ Result đã phân loại + nhật ký (_failed), không ném tiếp
         return await _failed(p, name, payload, e, op.input)
 

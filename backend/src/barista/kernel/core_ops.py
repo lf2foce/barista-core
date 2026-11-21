@@ -10,7 +10,7 @@ from psycopg.types.json import Jsonb
 
 from barista.db import set_session
 from barista.kernel import auth, company_settings, operator_door, registry, screens, search, skill_specs, ui
-from barista.kernel.approvals import resolve_step
+from barista.kernel.approvals import open_of, resolve_step
 from barista.kernel.clock import zone, zone_label
 from barista.kernel.datasets import Dim, Measure
 from barista.kernel.errors import Denied, Invalid, NotFound
@@ -205,7 +205,6 @@ AI_FALLBACK_VENDOR = m.setting(
 if AI_FALLBACK_VENDOR != company_settings.AI_FALLBACK_VENDOR:   # auth.load đọc đúng khoá này
     raise RuntimeError("khoá cài đặt nhà cung cấp AI thứ hai lệch giữa core_ops và company_settings")
 
-INBOX_OPEN = {"query": "core.approvals", "input": {}}
 STATUS = {"pending": "Chờ duyệt", "executed": "Đã duyệt", "rejected": "Từ chối", "failed": "Duyệt nhưng lỗi khi chạy",
           "stale": "Căn cứ đã đổi"}
 TONES = {"pending": "orange", "executed": "green", "rejected": "gray", "failed": "red", "stale": "purple"}
@@ -306,7 +305,8 @@ async def approval(ctx: Ctx, inp: ApprovalRef) -> dict[str, Any]:
     state = (f"Chờ duyệt bước {a['current_step'] + 1}/{len(steps)}: {steps[a['current_step']]['label']}" if pending and a["current_step"] < len(steps)
              else STATUS.get(a["status"], a["status"]))
     sub = f"{state} · {a['requester']} xin lúc {a['created_at'].astimezone(zone()):%d/%m %H:%M}"
-    blocks: list[dict[str, Any]] = [ui.b_steps(rows, "Các bước duyệt")]
+    blocks: list[dict[str, Any]] = [ui.b_brief(a["preview"])] if a["preview"] else []   # cùng bản chạy thử chuẩn với thẻ đề xuất
+    blocks.append(ui.b_steps(rows, "Các bước duyệt"))
     if a["error"]:
         blocks.append(ui.b_callout("bad" if a["status"] == "failed" else "warn", "Ghi chú của phiếu", a["error"]))
     return ui.card(a["summary"], blocks, subtitle=("Chờ bạn duyệt · " if mine else "") + sub, icon="checkmark.seal", actions=actions)
@@ -323,7 +323,7 @@ async def _stale(ctx: Ctx, a: dict[str, Any], decisions: list[dict[str, Any]], c
     await ctx.exec("INSERT INTO core.audit_log (user_id, via, command, input, status, error, ref) VALUES (%s, 'human', %s, %s, 'conflict', %s, %s)",
                    (ctx.p.user_id, a["command"], Jsonb(a["input"]), msg, str(a["id"])))
     await ctx.notify([a["requested_by"]], kind="approval_done", title=f"Phiếu hết căn cứ: {a['summary']}", body=msg,
-                     push="Một phiếu của anh/chị cần làm lại", open=INBOX_OPEN)
+                     push="Một phiếu của anh/chị cần làm lại", open=open_of(a["id"]))
     return {"status": "stale", "warning": msg, "changed": changed}   # "warning": app giữ hộp thoại, hiện câu này thay vì "Đã xong"
 
 
@@ -367,7 +367,7 @@ async def decide(ctx: Ctx, inp: Decide) -> dict[str, Any]:
                        " participant_ids = participant_ids || %s, updated_at = now() WHERE id = %s",
                        (nxt, Jsonb(steps), ids, Jsonb(decisions), ids, a["id"]))
         await ctx.notify(ids, kind="approval", title=f"Phiếu chờ anh/chị duyệt: {a['summary']}", body=f"{ctx.p.name} đã duyệt bước trước",
-                         push="Có phiếu chờ anh/chị duyệt", open=INBOX_OPEN)
+                         push="Có phiếu chờ anh/chị duyệt", open=open_of(a["id"]))
         return {"status": "pending", "next_step": label}
     # Bước cuối: chạy lệnh đích. Người duyệt ghi vào principal ⇒ nhật ký / sổ cái biết ai cho phép.
     return await _execute(ctx, a, decisions)
@@ -379,7 +379,7 @@ async def _reject(ctx: Ctx, a: dict[str, Any], decisions: list[dict[str, Any]], 
     await ctx.exec("UPDATE core.approvals SET status = 'rejected', decisions = %s, approver_ids = '{}', updated_at = now()"
                    " WHERE id = %s", (Jsonb(decisions), a["id"]))
     await ctx.notify([a["requested_by"]], kind="approval_done", title=f"Phiếu bị từ chối: {a['summary']}", body=body,
-                     push="Một phiếu của anh/chị bị từ chối", open=INBOX_OPEN)
+                     push="Một phiếu của anh/chị bị từ chối", open=open_of(a["id"]))
     return {"status": "rejected"}
 
 
@@ -425,7 +425,7 @@ async def _execute(ctx: Ctx, a: dict[str, Any], decisions: list[dict[str, Any]],
                    (status, Jsonb(decisions), Jsonb(result), error, a["id"]))
     await ctx.notify([a["requested_by"]], kind="approval_done",
                      title=f"Phiếu đã được duyệt: {a['summary']}" if status == "executed" else f"Phiếu duyệt xong nhưng lỗi khi chạy: {a['summary']}",
-                     body=error, push="Một phiếu của anh/chị đã có kết quả", open=INBOX_OPEN)
+                     body=error, push="Một phiếu của anh/chị đã có kết quả", open=open_of(a["id"]))
     return {"status": status, "error": error, "result": result}
 
 

@@ -188,6 +188,16 @@ class Op:
     # duyệt) khi căn cứ hiện tại khác rỗng; thiếu ⇒ ``conflict`` với câu này, không chạy. Lệnh chốt thứ người bấm phải nhìn trước (vd phát hành giấy
     # theo số hồ sơ) — chạy "mù" từ một cửa không mang căn cứ là chốt thứ chưa ai xem.
     basis_required: str = ""
+    # BẢN CHẠY THỬ CHUẨN (ADR 0253, 1.77): phần MÔ TẢ TĨNH của lệnh cho người duyệt đọc trong vài giây — thẻ đề xuất, thẻ buổi sáng, phiếu duyệt, thông báo
+    # vẽ CÙNG MỘT hợp đồng (``kernel/preview.py``). ``subject`` = (loại đối tượng đã khai ``m.subject``, tên ô đầu vào mang mã) ⇒ lõi tra nhãn + đường mở
+    # bằng quyền người xem; ``purpose`` = vì sao người ta làm việc này (một câu nghiệp vụ, mặc định cho thẻ không có lý do riêng của nguồn gợi ý);
+    # ``effect`` = HỆ QUẢ bằng chữ người đọc ("Cấp số chính thức, sau đó không sửa được…"); ``irreversible`` = không đảo được (⇒ phải có ``effect``,
+    # nút không ô nào hiện hộp nói hệ quả); ``reversible`` = cách đảo ("Bấm Bỏ ghim"). Đảo được còn do ``undone_by`` / ``agent="allow"`` — KHÔNG suy từ ``risk``.
+    subject: tuple[str, str] | None = None
+    purpose: str = ""
+    effect: str = ""
+    irreversible: bool = False
+    reversible: str = ""
 
 
 @dataclass(frozen=True)
@@ -840,8 +850,15 @@ class Module:
                   pin: Pin | None = None, consistent: bool = False, import_key: ImportKey | None = None,
                   import_table: ImportTable | None = None, extra: str = "",
                   info: tuple[str, ...] = (), auto: bool = False, intent: tuple[str, ...] = (),
-                  basis_required: str = "") -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+                  basis_required: str = "", subject: tuple[str, str] | None = None, purpose: str = "", effect: str = "",
+                  irreversible: bool = False, reversible: str = "") -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
         full = f"{self.key}.{name}"
+        if irreversible and not effect.strip():
+            raise ValueError(f"{full}: irreversible=True cần effect= — hộp xác nhận phải nói HỆ QUẢ bằng chữ người đọc (ADR 0253)")
+        if irreversible and (reversible or undone_by):
+            raise ValueError(f"{full}: lệnh không đảo được (irreversible) không có reversible= / undone_by=")
+        if (subject or purpose or effect or irreversible or reversible) and kind != "command":
+            raise ValueError(f"{full}: mô tả bản chạy thử (subject / purpose / effect / irreversible / reversible) chỉ cho lệnh ghi (ADR 0253)")
         if extra and not (kind == "command" and extra in extra_fields.SUBJECTS and extra_fields.SUBJECTS[extra].module == self.key):
             raise ValueError(f"{full}: extra={extra!r} chỉ cho lệnh của module đã khai đối tượng đó (Module.extensible)")
         if not NAME.fullmatch(name):
@@ -897,7 +914,8 @@ class Module:
             OPS[full] = Op(full, kind, self.key, resource, action, fn, _input_model(fn), title,
                            description or (fn.__doc__ or "").strip(), internal, importable, min_scope, agent, shows, needs, category, public,
                            basis, callers, why, family, description, aside, sensitive, apps, prepare, promotable, target, undone_by, risk,
-                           import_rows, pin, consistent, import_key, import_table, extra, info, auto, intent, basis_required)
+                           import_rows, pin, consistent, import_key, import_table, extra, info, auto, intent, basis_required,
+                           subject, purpose, effect, irreversible, reversible)
             if sweep:
                 SWEEPS[full] = sweep
             return fn
@@ -912,8 +930,11 @@ class Module:
                 undone_by: tuple[str, ...] = (), risk: str = "", min_scope: str | None = None,
                 import_rows: Callable[..., Awaitable[list[dict[str, Any]]]] | None = None, pin: Pin | None = None,
                 prepare: Callable[..., Awaitable[Any]] | None = None, consistent: bool = False, import_key: ImportKey | None = None,
-                import_table: ImportTable | None = None, extra: str = "", auto: bool = False, intent: tuple[str, ...] = (), basis_required: str = ""):
-        """``intent`` (ADR 0250, 1.72): ô Ý ĐỊNH của form — form mở ra chỉ hỏi các ô này + một ô "Mô tả / thả file"; "Soạn giúp" (``core.draft_input``) để trợ lý
+                import_table: ImportTable | None = None, extra: str = "", auto: bool = False, intent: tuple[str, ...] = (), basis_required: str = "",
+                subject: tuple[str, str] | None = None, purpose: str = "", effect: str = "", irreversible: bool = False, reversible: str = ""):
+        """``subject`` / ``purpose`` / ``effect`` / ``irreversible`` / ``reversible`` (ADR 0253, 1.77): mô tả cho NGƯỜI DUYỆT — xem ``Op``. Lệnh tiền / quyền
+        khai đủ ``purpose`` + (``irreversible``+``effect`` | ``reversible`` | ``undone_by``) — ``tests/test_preview_contract.py`` chặn.
+        ``intent`` (ADR 0250, 1.72): ô Ý ĐỊNH của form — form mở ra chỉ hỏi các ô này + một ô "Mô tả / thả file"; "Soạn giúp" (``core.draft_input``) để trợ lý
         soạn ĐỦ đầu vào của đúng lệnh này (chip máy đoán, người sửa rồi gửi qua executor như thường). Khai ô người biết mà máy không đoán được (việc gì, mốc
         nào, ai chịu trách nhiệm) — không khai ô máy suy ra được (danh sách việc, hạn từng việc). Không khai ⇒ form đủ ô như cũ.
         ``auto`` (ADR 0246, 1.69): luật tự động hoá của công ty được CHẠY lệnh này (hành động "chạy lệnh") — không người bấm, bằng quyền người
@@ -949,7 +970,8 @@ class Module:
                               shows=shows, needs=needs, public=public, category=category, sweep=sweep, basis=basis, callers=callers, why=why,
                               family=family, aside=aside, sensitive=sensitive, apps=apps, promotable=promotable, target=target, undone_by=undone_by, risk=risk,
                               import_rows=import_rows, pin=pin, min_scope=min_scope, prepare=prepare, consistent=consistent, import_key=import_key, import_table=import_table, extra=extra,
-                              auto=auto, intent=intent, basis_required=basis_required)
+                              auto=auto, intent=intent, basis_required=basis_required, subject=subject, purpose=purpose, effect=effect,
+                              irreversible=irreversible, reversible=reversible)
 
     def query(self, name: str, *, resource: str | None, title: str, action: str = "read", description: str = "",
               internal: bool = False, min_scope: str | None = None, agent: str = "allow", needs: tuple[str, ...] = (),

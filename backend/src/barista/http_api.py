@@ -915,7 +915,7 @@ async def thread(thread_id: UUID, request: Request, x_dev_user: DevUser = None, 
     if t is None:
         raise HTTPException(404, "Không thấy cuộc trò chuyện")
     # lịch sử nguyên văn cho model (lời gọi + kết quả công cụ) không gửi về app — app chỉ vẽ chữ, thẻ, bước
-    t["turns"] = [{k: v for k, v in turn.items() if k != "messages"} for turn in t["turns"]]
+    t["turns"] = [{k: v for k, v in turn.items() if k != "messages"} for turn in chat.with_states(t["turns"])]
     return executor.jsonable(t)
 
 

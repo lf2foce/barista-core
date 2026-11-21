@@ -355,6 +355,12 @@ def b_callout(tone: str, title: str, text: str = "", *, facts: list[str] | None 
                   "actions": actions or []}, needs)
 
 
+def b_brief(brief: dict[str, Any], *, needs: Needs = None) -> dict[str, Any]:
+    """BẢN CHẠY THỬ CHUẨN (``kernel/preview.py``, ADR 0253) của một việc chờ duyệt: hồ sơ · cũ → mới · vì sao · đảo được không. Thẻ đề xuất, thẻ buổi sáng và
+    phiếu duyệt vẽ CÙNG khối này. App lạ khối ⇒ bỏ qua — trang vẫn có tiêu đề + các bước."""
+    return gated({"type": "brief", **{k: brief.get(k) for k in ("title", "subject", "changes", "reason", "reversible")}}, needs)
+
+
 def b_finding(tone: str, title: str, text: str, evidence: list[dict[str, Any]], *, badge: str = "", facts: list[str] | None = None,
               actions: list[dict[str, Any]] | None = None, needs: Needs = None) -> dict[str, Any]:
     """Một phát hiện (sai biệt, điều khoản lệch…) + bằng chứng từng phía. Bằng chứng: ``evidence(...)``. App lạ khối này ⇒ bỏ qua — trang nên
