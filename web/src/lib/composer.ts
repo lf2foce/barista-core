@@ -1,5 +1,5 @@
 import { decodeComposerItem } from "./decode";
-import type { ComposerItem, ComposerTurn, StreamEvent } from "./types";
+import type { ComposerItem, ComposerOverflowBlock, ComposerOverflowPage, ComposerTurn, StreamEvent } from "./types";
 
 /** Soạn với AI (thử nghiệm): tách chữ thành phần thường + chỗ giữ "[cần số liệu: …]" để tô — không đổi, không tính gì. */
 export function splitPlaceholders(text: string): { text: string; hole: boolean }[] {
@@ -85,4 +85,15 @@ export function groupSteps<T extends { title: string; status: string; reason?: s
     }
   }
   return out;
+}
+
+/** Trang còn tràn khung của phiên bản HIỆN HÀNH: lời báo của lượt AI cuối chỉ đúng khi nó đo đúng phiên bản đang xem (sửa tiếp ⇒ phiên bản mới ⇒ lời báo cũ không vẽ nút). */
+export function currentOverflow(turns: ComposerTurn[], version: number): ComposerOverflowPage[] {
+  const last = turns[turns.length - 1];
+  return last && last.role === "assistant" && last.version === version ? last.overflow : [];
+}
+
+/** Khối của trang tràn có nút bấm một chạm: khối gây tràn trước, tối đa `max` — bấm ⇒ gửi đúng `action.input.instruction` cho khối đó (lệnh `compose.revise`). */
+export function overflowActions(page: ComposerOverflowPage, max = 2): ComposerOverflowBlock[] {
+  return page.blocks.filter((b) => b.action).sort((a, b) => Number(b.culprit) - Number(a.culprit)).slice(0, max);
 }

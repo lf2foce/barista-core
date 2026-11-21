@@ -13,7 +13,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from barista.kernel import convert, executor
 from barista.modules import compose
 from barista.modules.compose import check
-from tests.conftest import Who, ok, q
+from tests.conftest import Who, fresh_phone, ok, q
 
 pytestmark = pytest.mark.usefixtures("compose_on")   # gói tuỳ chọn, mặc định tắt — bật cho công ty mẫu
 
@@ -326,3 +326,67 @@ async def test_a_rewrite_that_is_not_shorter_is_discarded_and_a_page_that_fits_t
     assert "Chưa vừa khung in" in comp["turns"][-1]["text"] and "Rút gọn khối này" in comp["turns"][-1]["text"]
     comp, calls, _ = await _memo(who, [_memo_draft(_words(90))])
     assert len(calls) == 1 and comp["version"] == 1 and "Xong bản 1" in comp["turns"][-1]["text"]   # vừa trang ⇒ không rút gọn, không lượt thêm
+
+
+# ── Vòng vừa trang sau MỌI lần ghi phiên bản (nền): làm bản cho khách khác, sửa tay… ──
+
+async def _view(p: Any, sid: str) -> dict[str, Any]:
+    return (await q(p, "compose.view", session_id=sid))["blocks"][0]
+
+
+async def _with_model(outputs: list[dict[str, Any]]) -> list[int]:
+    model, calls = _model(outputs)
+    compose.MODEL = model
+    return calls
+
+
+@needs_chrome
+async def test_make_one_for_another_customer_from_a_long_piece_fits_it_in_the_background_or_names_the_block(who: Who) -> None:
+    """"Làm bản cho khách khác" chép khối nguyên văn (không qua lượt AI): bản nguồn dài vẫn tràn ⇒ bản mới phải được kiểm + rút gọn như mọi bản, không đợi tới lúc xuất."""
+    sale = await who("sale1")
+    _, _, sid = await _memo(who, [_memo_draft(*[LONG] * 5), _rewrite(_words(200)), _rewrite(_words(200)), _rewrite(_words(200))])   # nguồn: còn tràn sau vòng của lượt soạn
+    assert not (await q(sale, "compose.overflow", session_id=sid))["fits"]
+    lead = await ok(sale, "crm.create_lead", name="Khách Hai", phone=fresh_phone())
+    short = _words(90)
+    calls = await _with_model([_rewrite(short), _rewrite(short), _rewrite(short)])   # chỉ đến phần rút gọn (nền) — lệnh sao chép không gọi model
+    try:
+        dup = await ok(sale, "compose.duplicate", session_id=sid, lead_id=str(lead["lead_id"]))
+        assert calls == [] and (await _view(sale, str(dup["session_id"])))["version"] == 1   # lệnh trả ngay, vòng chạy nền
+        await compose.drain_fit()
+    finally:
+        compose.MODEL = None
+    comp = await _view(sale, str(dup["session_id"]))
+    assert comp["version"] == 2 and len(calls) == 3 and comp["fitting"] == ""   # đã rút gọn đúng một vòng và ghi phiên bản mới
+    assert [b["text"] for b in comp["blocks"] if b["type"] == "paragraph"].count(short) == 3 and "rút gọn 3 đoạn" in comp["turns"][-1]["text"]
+    # model không rút được (lỗi) ⇒ giữ nguyên, nhưng lượt trả lời nêu CỤ THỂ trang / khối + hành động bấm được, và gắn vào phiên bản hiện hành
+    calls = await _with_model([])
+    try:
+        dup2 = await ok(sale, "compose.duplicate", session_id=sid, lead_id=str(lead["lead_id"]))
+        await compose.drain_fit()
+    finally:
+        compose.MODEL = None
+    comp = await _view(sale, str(dup2["session_id"]))
+    last = comp["turns"][-1]
+    assert comp["version"] == 1 and "Chưa vừa khung in" in last["text"] and last["version"] == 1 and len(last["overflow"]) == 1
+    act = last["overflow"][0]["blocks"][0]["action"]
+    assert act["command"] == "compose.revise" and act["input"]["session_id"] == str(dup2["session_id"]) and act["label"] == "Rút gọn khối này"
+
+
+@needs_chrome
+async def test_a_hand_edit_that_makes_a_page_overflow_is_fitted_in_the_background_and_the_state_is_visible(who: Who) -> None:
+    sale = await who("sale1")
+    comp, _, sid = await _memo(who, [_memo_draft(*[_words(130)] * 5)])   # vừa trang
+    assert comp["fitting"] == "" and comp["version"] == 1
+    first = next(b for b in comp["blocks"] if b["type"] == "paragraph")
+    short = _words(80)
+    calls = await _with_model([_rewrite(short), _rewrite(short), _rewrite(short)])
+    try:
+        await ok(sale, "compose.edit_block", session_id=sid, block=first["id"], text=LONG)   # sửa tay: lệnh trả ngay
+        assert (await _view(sale, sid))["fitting"] in ("measure", "shorten")                   # web thấy đang kiểm / rút gọn
+        await compose.drain_fit()
+    finally:
+        compose.MODEL = None
+    comp = await _view(sale, sid)
+    assert comp["fitting"] == "" and comp["version"] == 3 and len(calls) >= 1   # v1 soạn · v2 sửa tay · v3 rút gọn
+    assert "rút gọn" in comp["turns"][-1]["text"] and all(b["origin"] == "ai" for b in comp["blocks"] if b["type"] == "paragraph" and b["text"] == short)
+    assert (await q(sale, "compose.overflow", session_id=sid))["fits"]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyComposeEvent, groupSteps, liveTurn, retryTarget, splitPlaceholders } from "../composer";
+import { applyComposeEvent, currentOverflow, groupSteps, liveTurn, overflowActions, retryTarget, splitPlaceholders } from "../composer";
 import { decodePage } from "../decode";
 
 describe("composer", () => {
@@ -191,5 +191,38 @@ describe("groupSteps", () => {
       ["Tìm trong tài liệu công ty", "ok", 3], ["Doanh thu theo dự án", "ok", 1], ["Doanh thu theo dự án", "error", 1],
       ["Doanh thu theo dự án", "running", 1], ["Doanh thu theo dự án", "running", 1],
     ]);
+  });
+});
+
+describe("vòng vừa trang: lời báo tràn + nút bấm", () => {
+  const act = (block: string) => ({ command: "compose.revise", label: "Rút gọn khối này", input: { session_id: "s1", block, mode: "rewrite", instruction: `Rút gọn khối ${block}` } });
+  const turn = (version: number) => ({
+    role: "assistant", text: "Chưa vừa khung in — Trang 7 tràn khung", version, status: "ready",
+    overflow: [{ page: 7, lines: 3, axis: "h", blocks: [
+      { id: "b3", kind: "bảng", label: "Cơ cấu", culprit: false, action: { ...act("b3"), command: "compose.remove_block" } },   // lệnh lạ ⇒ không nút
+      { id: "b2", kind: "đoạn", label: "Bối cảnh", culprit: true, action: act("b2") },
+      { id: "b1", kind: "ảnh", label: "", culprit: true, action: null },
+      { id: "", kind: "đoạn", label: "thiếu mã", culprit: true, action: act("") }] }],
+  });
+
+  it("giải mã trang tràn dung thứ: chỉ nhận compose.revise đủ mã + lời dặn, khối không mã bị bỏ", () => {
+    const page = decodePage({ kind: "card", title: "x", blocks: [{ type: "composer", session_id: "s1", version: 2, fitting: "shorten", turns: [turn(2)] }] });
+    if (page.kind !== "card" || page.blocks[0].type !== "composer") throw new Error("composer");
+    const c = page.blocks[0];
+    expect(c.fitting).toBe("shorten");
+    const pg = c.turns[0].overflow[0];
+    expect(pg.page).toBe(7);
+    expect(pg.blocks.map((b) => b.id)).toEqual(["b3", "b2", "b1"]);
+    expect(pg.blocks.map((b) => b.action?.input.block ?? null)).toEqual([null, "b2", null]);
+  });
+
+  it("nút chỉ cho khối có hành động, khối gây tràn trước; lời báo chỉ đúng với phiên bản hiện hành", () => {
+    const page = decodePage({ kind: "card", title: "x", blocks: [{ type: "composer", session_id: "s1", version: 2, turns: [turn(2)] }] });
+    if (page.kind !== "card" || page.blocks[0].type !== "composer") throw new Error("composer");
+    const c = page.blocks[0];
+    const now = currentOverflow(c.turns, 2);
+    expect(overflowActions(now[0]).map((b) => b.id)).toEqual(["b2"]);
+    expect(currentOverflow(c.turns, 3)).toEqual([]);   // sửa tiếp ⇒ phiên bản mới ⇒ không vẽ nút cũ
+    expect(currentOverflow([], 1)).toEqual([]);
   });
 });

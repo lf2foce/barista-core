@@ -825,6 +825,8 @@ export type ComposerData = {
   exports: { id: string; format: string; filename: string; version: number; at: string }[];
   /** cuộc trò chuyện của bản soạn (cũ → mới) */
   turns: ComposerTurn[];
+  /** vòng "vừa trang" đang chạy nền: "measure" (đang kiểm) · "shorten" (AI đang rút gọn chữ) · "" (không) — web hiện trạng thái và tự làm mới */
+  fitting: string;
   /** các bản soạn của chính người dùng (mới sửa trước) — như danh sách cuộc trò chuyện */
   history: { id: string; title: string; kind: string; kind_label: string; status: string; status_label: string; at: string }[];
   note: string;
@@ -844,4 +846,14 @@ export type ComposerTurn = {
   steps: { title: string; status: string; reason?: string }[];
   /** lượt AI mới soạn được MỘT PHẦN (hết giờ / chạm lưới) — web hiện nút "Tiếp tục" */
   partial: boolean;
+  /** các trang CÒN tràn khung khi lượt này ghi (đo ở phiên bản `version`) — chỉ vẽ nút khi `version` là phiên bản hiện hành */
+  overflow: ComposerOverflowPage[];
+};
+
+/** Trang tràn khung (mẫu nhiều trang cố định) — server đo, web chỉ vẽ lời báo + nút bấm. */
+export type ComposerOverflowPage = { page: number; lines: number; axis: string; blocks: ComposerOverflowBlock[] };
+/** Khối của trang tràn; `action` = lệnh bấm được (`compose.revise` + đầu vào viết sẵn: rút gọn đúng khối này), null = không có cách bấm một chạm. */
+export type ComposerOverflowBlock = {
+  id: string; kind: string; label: string; culprit: boolean;
+  action: { command: string; label: string; input: { session_id: string; block: string; mode: string; instruction: string } } | null;
 };

@@ -8,10 +8,10 @@ import {
 import { api, composeStream, type ComposeTurnBody } from "@/lib/api";
 import { saveBlob } from "@/lib/download";
 import { newKey } from "@/lib/idempotency";
-import { applyComposeEvent, groupSteps, liveTurn, retryTarget, splitPlaceholders, type LiveStep, type LiveTurn } from "@/lib/composer";
+import { applyComposeEvent, currentOverflow, groupSteps, liveTurn, overflowActions, retryTarget, splitPlaceholders, type LiveStep, type LiveTurn } from "@/lib/composer";
 import { datetime } from "@/lib/format";
 import { documentFileUrl } from "@/lib/links";
-import type { ComposerData, ComposerItem, ComposerSection, ComposerTurn, Input, Option } from "@/lib/types";
+import type { ComposerData, ComposerItem, ComposerOverflowBlock, ComposerOverflowPage, ComposerSection, ComposerTurn, Input, Option } from "@/lib/types";
 import { actionClass } from "@/components/primitives";
 import { useDesk } from "@/components/desk/desk-context";
 import { useFrameActions } from "@/components/desk/frame-context";
@@ -116,14 +116,15 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
 
   // bản đang soạn do việc khác khởi tạo (trợ lý chat gọi compose.start): tự làm mới tới khi xong — không bắt người dùng mở lại
   useEffect(() => {
-    if (doc.status !== "drafting" || live || !doc.session_id) return;
+    // cũng tự làm mới khi server đang kiểm / rút gọn cho vừa trang (chạy nền sau mỗi lần ghi phiên bản của mẫu nhiều trang)
+    if ((doc.status !== "drafting" && !doc.fitting) || live || !doc.session_id) return;
     const started = Date.now();
     const t = setInterval(() => {
       if (Date.now() - started > 120_000) clearInterval(t);
       else void reload(doc.session_id);
     }, 1500);
     return () => clearInterval(t);
-  }, [doc.status, doc.session_id, live, reload]);
+  }, [doc.status, doc.fitting, doc.session_id, live, reload]);
 
   async function send(text: string, opts: { block?: string; mode?: string; retry?: boolean } = {}) {
     const t = text.trim();
@@ -281,6 +282,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
         {tabs}
         <Conversation doc={doc} live={live} local={local} docs={docs} showDraft={hasDraft ? showDraft : undefined} draftOpen={draftOpen} onRetry={(t, retry) => void send(t.text, { block: t.block, mode: t.mode, retry })}
                       onExample={(t) => void send(t)} onContinue={() => void send(CONTINUE)}
+                      onFit={(b) => { if (b.action) void send(b.action.input.instruction, { block: b.action.input.block, mode: b.action.input.mode }); }}
                       fromRecord={<FromRecord r={recipe} />} kinds={doc.kinds} kind={kind} setKind={setKind} />
         <ChatInput doc={doc} hasDraft={hasDraft} recipe={recipe} running={!!live} stopping={stopping} canStop={!!live?.sessionId}
                    onSend={(t) => void send(t)} onStop={() => void stop()} />
@@ -648,15 +650,18 @@ function ViewTabs({ view, onView, fresh }: { view: "chat" | "draft"; onView: (v:
   );
 }
 
-function Conversation({ doc, live, local, docs, showDraft, draftOpen, onRetry, onExample, onContinue, fromRecord, kinds, kind, setKind }: {
+function Conversation({ doc, live, local, docs, showDraft, draftOpen, onRetry, onExample, onContinue, onFit, fromRecord, kinds, kind, setKind }: {
   doc: ComposerData; live: LiveTurn | null; local: { user: LiveTurn; error: string } | null; docs: React.ReactNode;
   showDraft?: () => void; draftOpen: boolean;   // có bản soạn ⇒ lượt xong có nút "Xem bản soạn" khi bản soạn đang ẩn (hẹp: ở thẻ Trò chuyện · rộng: ngăn đã đóng)
   onRetry: (t: { text: string; block: string; mode: string }, retry: boolean) => void; onExample: (text: string) => void; onContinue: () => void;
+  /** nút "Rút gọn khối này" ở lời báo tràn: chạy đúng lệnh server đã viết sẵn cho khối đó (compose.revise qua luồng — cùng cửa executor), rồi server tự đo lại */
+  onFit: (b: ComposerOverflowBlock) => void;
   fromRecord: React.ReactNode; kinds: ComposerData["kinds"]; kind: string; setKind: (k: string) => void;
 }) {
   const end = useRef<HTMLDivElement>(null);
   const retry = retryTarget(doc.turns);
   const empty = !doc.turns.length && !live && !local;
+  const over = live ? [] : currentOverflow(doc.turns, doc.version);   // đang chạy lượt mới ⇒ lời báo cũ sắp đổi, không vẽ nút
   useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [doc.turns.length, live, local]);
   return (
     // cùng khoảng cách với hội thoại của trợ lý (px-4 py-3.5, gap-3.5); chiếm cả bề ngang thì giữ cột chữ ở giữa cho dễ đọc
@@ -700,9 +705,13 @@ function Conversation({ doc, live, local, docs, showDraft, draftOpen, onRetry, o
           {doc.turns.map((t, i) => (
             <TurnBubble key={i} t={t} onRetry={i === doc.turns.length - 1 && retry && !live ? () => onRetry(retry, true) : undefined}
                         onContinue={i === doc.turns.length - 1 && t.partial && !live ? onContinue : undefined}
-                        onShowDraft={i === doc.turns.length - 1 && t.version && showDraft ? showDraft : undefined} draftOpen={draftOpen} />
+                        onShowDraft={i === doc.turns.length - 1 && t.version && showDraft ? showDraft : undefined} draftOpen={draftOpen}
+                        overflow={i === doc.turns.length - 1 ? over : undefined} onFit={onFit} fitting={!!doc.fitting} />
           ))}
           {doc.status === "drafting" && !live ? <Working status="Em đang soạn — tự cập nhật, không cần mở lại" steps={[]} /> : null}
+          {doc.fitting && doc.status !== "drafting" && !live ? (
+            <Working status={doc.fitting === "shorten" ? "Trang tràn khung — AI đang rút gọn chữ cho vừa…" : "Đang kiểm các trang có vừa khung in không…"} steps={[]} />
+          ) : null}
           {local ? (
             <>
               <UserBubble text={local.user.text} block={local.user.block} mode={local.user.mode} />
@@ -746,8 +755,9 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function TurnBubble({ t, onRetry, onContinue, onShowDraft, draftOpen }: {
+function TurnBubble({ t, onRetry, onContinue, onShowDraft, draftOpen, overflow, onFit, fitting }: {
   t: ComposerTurn; onRetry?: () => void; onContinue?: () => void; onShowDraft?: () => void; draftOpen?: boolean;
+  overflow?: ComposerOverflowPage[]; onFit?: (b: ComposerOverflowBlock) => void; fitting?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   if (t.role === "user") return <UserBubble text={t.text} block={t.block} mode={t.mode} />;
@@ -780,6 +790,7 @@ function TurnBubble({ t, onRetry, onContinue, onShowDraft, draftOpen }: {
           ) : null}
         </div>
       ) : null}
+      {overflow?.length && onFit ? <OverflowActions pages={overflow} onFit={onFit} busy={!!fitting} /> : null}
       {t.steps.length ? (
         <>
           <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
@@ -792,6 +803,29 @@ function TurnBubble({ t, onRetry, onContinue, onShowDraft, draftOpen }: {
       ) : null}
       <div className="ml-6 flex items-center gap-1"><CopyButton text={t.text} /></div>
     </div>
+  );
+}
+
+/** Nút bấm một chạm dưới lời báo "chưa vừa khung in": mỗi trang tràn một dòng, mỗi khối gây tràn một nút (nhãn + lời dặn do server viết sẵn). */
+function OverflowActions({ pages, onFit, busy }: { pages: ComposerOverflowPage[]; onFit: (b: ComposerOverflowBlock) => void; busy: boolean }) {
+  return (
+    <ul className="ml-6 flex flex-col gap-1.5" aria-label="Trang chưa vừa khung in">
+      {pages.map((pg) => {
+        const acts = overflowActions(pg);
+        return (
+          <li key={pg.page} className="flex flex-wrap items-center gap-2">
+            <span className="t12m text-muted-foreground">Trang {pg.page}{pg.axis === "h" ? ` · tràn ~${pg.lines} dòng` : " · rộng quá khung"}</span>
+            {acts.length ? acts.map((b) => (
+              <button key={b.id} type="button" disabled={busy} onClick={() => onFit(b)} title={b.label}
+                      className={cn(actionClass("default"), "h-7 max-w-full px-2.5 text-[12px]")}>
+                <Sparkles className="size-3.5 shrink-0" aria-hidden />
+                <span className="truncate">{b.action?.label} · {b.kind}{b.label ? ` “${b.label}”` : ""}</span>
+              </button>
+            )) : <span className="t12 text-muted-foreground">bớt ảnh / khối hoặc chuyển bớt sang trang khác</span>}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

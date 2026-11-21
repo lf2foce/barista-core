@@ -7,6 +7,7 @@ import type {
   ComposerLayout,
   ComposerRef,
   ComposerSection,
+  ComposerOverflowPage,
   ComposerTurn,
   ActionSpec,
   AskSpec,
@@ -812,6 +813,27 @@ export function decodeComposerTurn(x: unknown): ComposerTurn {
     version: typeof t.version === "number" ? t.version : null,
     steps: arr(t.steps).map((s) => ({ title: str(obj(s).title), status: str(obj(s).status, "ok"), ...(str(obj(s).reason) ? { reason: str(obj(s).reason) } : {}) })),
     partial: t.partial === true,
+    overflow: arr(t.overflow).map(decodeOverflowPage).filter((pg) => pg.page > 0),
+  };
+}
+
+/** Trang còn tràn khung do server đo — khối không có mã bị bỏ; hành động chỉ nhận `compose.revise` với đủ mã khối + lời dặn (lệnh khác ⇒ không nút). */
+function decodeOverflowPage(x: unknown): ComposerOverflowPage {
+  const o = obj(x);
+  return {
+    page: int(o.page),
+    lines: int(o.lines),
+    axis: str(o.axis, "h"),
+    blocks: arr(o.blocks).map((b) => {
+      const r = obj(b);
+      const a = obj(r.action);
+      const inp = obj(a.input);
+      const ok = str(a.command) === "compose.revise" && str(inp.session_id) && str(inp.block) && str(inp.instruction);
+      return {
+        id: str(r.id), kind: str(r.kind), label: str(r.label), culprit: r.culprit === true,
+        action: ok ? { command: "compose.revise", label: str(a.label, "Rút gọn khối này"), input: { session_id: str(inp.session_id), block: str(inp.block), mode: str(inp.mode, "rewrite"), instruction: str(inp.instruction) } } : null,
+      };
+    }).filter((b) => b.id),
   };
 }
 
@@ -860,6 +882,7 @@ export function decodeComposer(o: Obj): ComposerData {
       return { id: str(e.id), format: str(e.format), filename: str(e.filename), version: int(e.version), at: str(e.at) };
     }),
     turns: arr(o.turns).map(decodeComposerTurn),
+    fitting: str(o.fitting),
     history: arr(o.history).map((x) => {
       const h = obj(x);
       return { id: str(h.id), title: str(h.title), kind: str(h.kind), kind_label: str(h.kind_label), status: str(h.status, "ready"), status_label: str(h.status_label), at: str(h.at) };

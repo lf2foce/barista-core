@@ -525,14 +525,20 @@ async def _load(ctx: Ctx, sid: UUID, *, lock: bool = False) -> dict[str, Any]:
 
 
 async def _save(ctx: Ctx, s: dict[str, Any], title: str, blocks: list[dict[str, Any]], note: str, *, ai: bool,
-                lay: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Ghi bản mới (+ phiên bản). ``lay`` None ⇒ giữ bố cục hiện có của bản soạn; có ⇒ đổi (bố cục theo từng phiên bản, quay lại được)."""
+                lay: dict[str, Any] | None = None, fit: bool = True) -> dict[str, Any]:
+    """Ghi bản mới (+ phiên bản). ``lay`` None ⇒ giữ bố cục hiện có của bản soạn; có ⇒ đổi (bố cục theo từng phiên bản, quay lại được).
+    ``fit`` (mặc định): mẫu nhiều trang cố định ⇒ sau commit hẹn VÒNG VỪA TRANG chạy NỀN (``_spawn_fit``: đo ⇒ rút gọn đoạn chữ ≤ 1 vòng ⇒ báo) — MỘT chỗ chung cho mọi
+    đường ghi phiên bản (sửa tay, chèn, cập nhật số liệu, quay lại, làm bản cho khách khác, đổi mẫu / chỗ đứng…). Lượt AI (``finish``) tự chạy vòng ngay trong lượt (``_job``) ⇒ ``fit=False``."""
     via = "agent" if ctx.p.via == "agent" else ("ai" if ai else "human")
     lay = layout.clean(s.get("layout")) if lay is None else layout.clean(lay)
     v = int(await ctx.val("""UPDATE compose.sessions SET title = %s, blocks = %s, layout = %s, version = version + 1, updated_at = now()
                              WHERE id = %s RETURNING version""", (title, Jsonb(blocks), Jsonb(lay), s["id"])))
     await ctx.exec("INSERT INTO compose.versions (session_id, version, title, blocks, layout, via, note) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                    (s["id"], v, title, Jsonb(blocks), Jsonb(lay), via, note[:300]))
+    if fit and (tpl := layout.template_of(lay)) and tpl.get("pages"):
+        job = {"kind": s["kind"], "brief": s["brief"], "from_record": bool(s.get("recipe"))}
+        sid, p = s["id"], ctx.p
+        ctx.after_commit(lambda: _spawn_fit(p, sid, v, job, title, blocks))
     return {"session_id": s["id"], "version": v, **_stats(blocks)}
 
 
@@ -866,12 +872,39 @@ async def _shorten(p: Principal, job: dict[str, Any], title: str, blocks: list[d
     return blocks, done
 
 
-async def _fit(p: Principal, sid: UUID, res: dict[str, Any], job: dict[str, Any], out: dict[str, Any],
+_fitting: dict[UUID, str] = {}   # bản soạn → "measure" | "shorten" khi vòng vừa trang đang chạy (trong tiến trình này — như ``_tasks``): web hiện "đang rút gọn" và tự làm mới
+_bg: dict[UUID, asyncio.Task[None]] = {}   # vòng vừa trang chạy nền theo bản soạn: ghi phiên bản mới ⇒ vòng cũ bị huỷ, chỉ vòng của phiên bản mới nhất chạy
+
+
+async def _spawn_fit(p: Principal, sid: UUID, version: int, job: dict[str, Any], title: str, blocks: list[dict[str, Any]]) -> None:
+    """Hẹn vòng vừa trang CHẠY NỀN sau commit (không chặn lệnh sửa của người dùng: đo bằng trình duyệt + vài lượt model có thể mất tới vài chục giây)."""
+    if (old := _bg.pop(sid, None)) is not None:
+        old.cancel()
+
+    async def run() -> None:
+        try:
+            await _fit(p, sid, version, job, title, blocks, None)
+        except Exception:   # việc nền: lỗi không được lan; bản đã ghi còn nguyên, cửa chặn lúc xuất vẫn đo lại
+            log.exception("compose: vòng vừa trang nền của bản soạn %s lỗi", sid)
+
+    task = asyncio.create_task(run())
+    _bg[sid] = task
+    task.add_done_callback(lambda t: _bg.pop(sid, None) if _bg.get(sid) is t else None)
+
+
+async def drain_fit() -> None:
+    """Chờ mọi vòng vừa trang nền xong (cho test / tắt máy chủ êm)."""
+    while _bg:
+        await asyncio.gather(*list(_bg.values()), return_exceptions=True)
+
+
+async def _fit(p: Principal, sid: UUID, version: int, job: dict[str, Any], title: str, blocks: list[dict[str, Any]],
                emit: Callable[[dict[str, Any]], Awaitable[None]] | None) -> dict[str, Any] | None:
-    """VÒNG VỪA TRANG (một vòng, không lặp): sau khi lượt soạn đã ghi, mẫu nhiều trang cố định mà có trang TRÀN ⇒ rút gọn đoạn chữ của đúng trang đó (đường sửa khối ``revise`` — AI
-    viết lại, quyền người soạn, qua kiểm số), ghi thành phiên bản mới, đo lại. Còn tràn ⇒ KHÔNG làm thêm: lượt trả lời nói cụ thể trang / khối nào và bấm gì (``fit.describe``).
-    Thiếu trình duyệt / đo lỗi / hết giờ ⇒ giữ nguyên bản đã soạn, không báo lỗi (cửa chặn lúc xuất vẫn đo lại). Trả kết quả ``fit_done`` cuối (có lượt trả lời) hoặc None."""
-    version = int(res["version"])
+    """VÒNG VỪA TRANG (MỘT vòng, không lặp) sau MỌI lần ghi phiên bản của mẫu nhiều trang cố định (``_save`` hẹn nền; lượt AI gọi thẳng): có trang TRÀN ⇒ rút gọn đoạn chữ của đúng
+    trang đó (đường sửa khối ``revise`` — AI viết lại, quyền người soạn, qua kiểm số), ghi thành phiên bản mới, đo lại. Còn tràn ⇒ KHÔNG làm thêm: lượt trả lời nói cụ thể trang / khối nào
+    và bấm gì (``fit.describe``), kèm ``overflow`` (trang + khối + hành động bấm được) để web vẽ nút. Vừa trang hoặc thiếu trình duyệt / đo lỗi / hết giờ ⇒ im lặng, giữ nguyên bản.
+    Trả ``{version, blocks, turn}`` (turn = lượt trả lời đã ghi) hoặc None."""
+    _fitting[sid] = "measure"
     try:
         async with asyncio.timeout(FIT_TIMEOUT_S):
             if emit is not None:
@@ -879,35 +912,39 @@ async def _fit(p: Principal, sid: UUID, res: dict[str, Any], job: dict[str, Any]
             r = await executor.query(p, "compose.overflow", {"session_id": str(sid)})
             if r.status != "ok" or not isinstance(r.output, dict) or r.output.get("fits"):
                 return None
-            blocks, title = json.loads(out["blocks_json"]), out["title"]
             steps = fit.plan(r.output["pages"])
             done: list[str] = []
             if steps:
+                _fitting[sid] = "shorten"
                 if emit is not None:
                     await emit({"type": "status", "text": "Trang tràn khung — AI đang rút gọn chữ cho vừa…"})
                 blocks, done = await _shorten(p, job, title, blocks, steps)
             if done:
-                saved = await _fit_save(p, sid, version, json.dumps(blocks, ensure_ascii=False, default=str), "Rút gọn chữ cho vừa khung trang in", "")
+                saved = await _fit_save(p, sid, version, json.dumps(blocks, ensure_ascii=False, default=str), "Rút gọn chữ cho vừa khung trang in", "", [])
                 if saved is None:
                     return None   # bản đã đổi trong lúc rút gọn — bỏ kết quả
-                version, out["blocks_json"] = int(saved["version"]), json.dumps(blocks, ensure_ascii=False, default=str)
+                version = int(saved["version"])
                 r = await executor.query(p, "compose.overflow", {"session_id": str(sid)})
             left = r.output["pages"] if r.status == "ok" and isinstance(r.output, dict) else []
     except (TimeoutError, convert.Unavailable):
         log.info("compose: vòng vừa trang của bản soạn %s dừng (hết giờ / không đo được)", sid)
         return None
+    finally:
+        _fitting.pop(sid, None)
     if not done:
         text = "Chưa vừa khung in — " + fit.describe(left)
     elif left:
         text = f"Bản {version}: đã rút gọn {len(done)} đoạn chữ cho vừa khung in, còn chưa vừa — " + fit.describe(left)
     else:
         text = f"Xong bản {version}: đã rút gọn {len(done)} đoạn chữ (AI viết lại) để mọi trang vừa khung in."
-    return await _fit_save(p, sid, version, "", "", text[:600])
+    saved = await _fit_save(p, sid, version, "", "", text[:600], left)
+    return None if saved is None else {"version": version, "blocks": blocks, "turn": saved.get("turn")}
 
 
-async def _fit_save(p: Principal, sid: UUID, base: int, blocks_json: str, note: str, text: str) -> dict[str, Any] | None:
+async def _fit_save(p: Principal, sid: UUID, base: int, blocks_json: str, note: str, text: str, overflow: list[dict[str, Any]]) -> dict[str, Any] | None:
     try:
-        r = await executor.run(elevate(p), "compose.fit_done", {"session_id": str(sid), "base_version": base, "blocks_json": blocks_json, "note": note, "text": text})
+        r = await executor.run(elevate(p), "compose.fit_done", {"session_id": str(sid), "base_version": base, "blocks_json": blocks_json, "note": note, "text": text,
+                                                                 "overflow_json": json.dumps(overflow, ensure_ascii=False, default=str) if overflow else ""})
         if r.status == "ok" and isinstance(r.output, dict) and r.output.get("ok"):
             return r.output
     except Exception:   # ghi bước phụ lỗi ⇒ log; bản đã soạn xong vẫn còn nguyên
@@ -983,8 +1020,10 @@ async def _job(p: Principal, sid: UUID, base: int, job: dict[str, Any],
     out["steps_json"] = json.dumps(settle_steps(trail), ensure_ascii=False)
     res = await _settle(p, sid, base, out)
     if res.get("ok") and out["status"] == "ready" and _paged(job["kind"]):
-        if (fitted := await _fit(p, sid, res, job, out, emit)) is not None and fitted.get("turn"):
-            res = {**res, "turn": fitted["turn"]}
+        if (fitted := await _fit(p, sid, int(res["version"]), job, out["title"], json.loads(out["blocks_json"]), emit)) is not None:
+            out["blocks_json"] = json.dumps(fitted["blocks"], ensure_ascii=False, default=str)
+            if fitted.get("turn"):
+                res = {**res, "turn": fitted["turn"]}
     if emit is None:
         return
     if res.get("ok") and (blocks := json.loads(out["blocks_json"])):
@@ -1034,7 +1073,7 @@ async def finish(ctx: Ctx, inp: Finish) -> dict[str, Any]:
     if inp.status == "stopped":
         blocks = json.loads(inp.blocks_json or "[]")
         if blocks and s["version"] == inp.base_version:
-            out = await _save(ctx, s, inp.title or s["title"], blocks, inp.note, ai=True, lay=lay)
+            out = await _save(ctx, s, inp.title or s["title"], blocks, inp.note, ai=True, lay=lay, fit=False)
             text = f"Đã dừng. Giữ lại {len(blocks)} khối đã có (bản {out['version']}) — bấm “Tiếp tục” để AI làm nốt."
             turn = {"role": "assistant", "status": "stopped", "text": text, "version": out["version"], "steps": steps, "at": _now(), "partial": True}
         else:
@@ -1051,7 +1090,7 @@ async def finish(ctx: Ctx, inp: Finish) -> dict[str, Any]:
         return {"ok": False, "error": err, "turn": turn}
     await ctx.exec("UPDATE compose.sessions SET status = 'ready', error = '' WHERE id = %s", (s["id"],))
     blocks = json.loads(inp.blocks_json)
-    out = await _save(ctx, s, inp.title or s["title"], blocks, inp.note, ai=True, lay=lay)
+    out = await _save(ctx, s, inp.title or s["title"], blocks, inp.note, ai=True, lay=lay, fit=False)
     text = _outcome(blocks, out["version"])
     if inp.partial:
         text = f"Mới soạn được một phần (bản {out['version']}, {len(blocks)} khối). {inp.partial} Bấm “Tiếp tục” để AI làm nốt."
@@ -1066,6 +1105,7 @@ class FitDone(Input):
     blocks_json: str = field("Khối", "", audit=False, max_length=2_000_000)   # có ⇒ ghi thành phiên bản mới (đoạn đã rút gọn); trống ⇒ không đổi khối
     note: str = Field("", max_length=300)
     text: str = Field("", max_length=600)   # có ⇒ thêm một lượt "AI" vào cuộc trò chuyện nói kết quả vòng vừa trang
+    overflow_json: str = field("Trang còn tràn", "", audit=False, max_length=200_000)   # báo cáo ``fit.report`` — web vẽ nút bấm theo lượt này (chỉ khi lượt thuộc phiên bản hiện hành)
 
 
 @m.command("fit_done", resource=None, title="Ghi kết quả vòng vừa trang", internal=True, agent="allow")
@@ -1077,10 +1117,16 @@ async def fit_done(ctx: Ctx, inp: FitDone) -> dict[str, Any]:
         return {"ok": False}
     out: dict[str, Any] = {"version": s["version"]}
     if inp.blocks_json:
-        out = await _save(ctx, s, s["title"], json.loads(inp.blocks_json), inp.note, ai=True)
-    turn = {"role": "assistant", "status": "ready", "text": inp.text, "version": out["version"], "steps": [], "at": _now()} if inp.text else None
+        out = await _save(ctx, s, s["title"], json.loads(inp.blocks_json), inp.note, ai=True, fit=False)
+    turn = {"role": "assistant", "status": "ready", "text": inp.text, "version": out["version"], "steps": [], "at": _now(),
+            **({"overflow": json.loads(inp.overflow_json)} if inp.overflow_json else {})} if inp.text else None
     if turn:
-        await _add_turn(ctx, s["id"], turn)
+        last = (s["turns"] or [])[-1:] if isinstance(s["turns"], list) else []
+        if last and isinstance(last[0], dict) and last[0].get("role") == "assistant" and last[0].get("text") == turn["text"] and not inp.blocks_json:
+            # cùng lời báo "còn chưa vừa" như lượt trước (sửa tay thêm một lần vẫn tràn đúng chỗ đó): cập nhật lượt cũ sang phiên bản này, không chất thêm một lượt giống hệt
+            await ctx.exec("UPDATE compose.sessions SET turns = jsonb_set(turns, %s, %s) WHERE id = %s", ([str(len(s["turns"]) - 1)], Jsonb(turn), s["id"]))
+        else:
+            await _add_turn(ctx, s["id"], turn)
     return {**out, "ok": True, "turn": turn}
 
 
@@ -1852,7 +1898,7 @@ async def _from_record(ctx: Ctx, key: str, subject: str, lead_id: UUID | None, *
                               (piece, brief, title, Jsonb([turn]), Jsonb({"kind": key, "subject": subject}), about["subject_kind"], about["subject_id"],
                                about["subject_label"], who["customer_kind"], who["customer_id"], who["customer_label"], source))
     s = await _load(ctx, sid)
-    out = await _save(ctx, s, title, blocks, f"Dựng từ hồ sơ: {brief}"[:300], ai=False, lay=lay)
+    out = await _save(ctx, s, title, blocks, f"Dựng từ hồ sơ: {brief}"[:300], ai=False, lay=lay, fit=not extra.strip())   # có "Thêm ý" ⇒ lượt AI chạy ngay sau và tự vừa trang
     text = _outcome(blocks, out["version"]).replace(f"Xong bản {out['version']}", f"Đã dựng bản {out['version']} từ hồ sơ", 1)
     await _add_turn(ctx, sid, {"role": "assistant", "status": "ready", "text": text, "version": out["version"], "steps": [], "at": _now()})
     status = "ready"
@@ -1959,7 +2005,7 @@ def _turns(s: dict[str, Any]) -> list[dict[str, Any]]:
         out.append({"role": t["role"], "text": str(t.get("text", "")), "at": str(t.get("at", "")),
                     **({"block": t.get("block", ""), "mode": t.get("mode", "")} if t["role"] == "user" else
                        {"status": t.get("status", "ready"), "version": t.get("version"), "steps": t.get("steps") or [],
-                                                                       "partial": bool(t.get("partial"))})})
+                                                                       "partial": bool(t.get("partial")), "overflow": t.get("overflow") or []})})
     if s["status"] == "failed" and s["error"] and not any(t["role"] == "assistant" for t in out[-1:]):
         out.append({"role": "assistant", "text": s["error"], "at": "", "status": "failed", "version": None, "steps": []})   # bản soạn trước cột turns
     return out
@@ -2025,6 +2071,7 @@ async def _composer(ctx: Ctx, s: dict[str, Any] | None) -> dict[str, Any]:
         "exports": [{"id": str(e["id"]), "format": e["format"], "filename": e["filename"], "version": e["version"],
                      "at": e["created_at"].isoformat()} for e in exports],
         "turns": _turns(s) if s else [],
+        "fitting": _fitting.get(s["id"], "") if s else "",   # "measure" | "shorten" khi đang kiểm / rút gọn cho vừa trang (nền) — web hiện trạng thái và tự làm mới
         "history": [{"id": str(h["id"]), "title": h["title"], "kind": h["kind"], "kind_label": LABELS.get(h["kind"], ""), "status": h["status"],
                      "status_label": STATUS[h["status"]], "at": h["updated_at"].isoformat()} for h in history],
         "note": NOTE,
