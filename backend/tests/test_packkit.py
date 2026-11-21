@@ -138,6 +138,7 @@ def test_declared_permissions_pass_unknown_ones_fail_and_unused_ones_warn(made: 
 
 
 @pytest.mark.parametrize("code", ["import os", "import httpx", "from psycopg import connect", "from urllib.request import urlopen", "import subprocess",
+                                  "from barista.kernel import executor", "from barista.agent import chat",
                                   "eval('1')", "X = (1).__class__.__subclasses__", "import asyncio\nasyncio.create_subprocess_exec('ls')"])
 def test_runtime_code_cannot_reach_past_the_surface(made: Path, code: str) -> None:
     """Mạng qua khung kết nối, tệp qua sổ tệp, DB qua executor: thư viện ngoài danh sách, mã động, lách nội bộ ⇒ lỗi, không quyền nào mở."""
@@ -167,3 +168,19 @@ def test_seed_and_sample_files_are_dev_tools_and_not_checked(made: Path) -> None
     r = packkit.Report()
     packkit.static_check(made, barista.api.__version__, r)
     assert not r.fails, r.fails
+
+
+@pytest.mark.parametrize("code", ["from barista import api\nX = api.ai", "from barista import api as bapi\nX = bapi.ai"])
+def test_from_barista_import_api_still_enforces_permissions(made: Path, code: str) -> None:
+    """Rà Codex 21/11: ``from barista import api`` (có hoặc không ``as``) rồi dùng ``api.ai`` vẫn phải khai quyền ``ai``."""
+    r = _perm_report(made, code)
+    assert any("ai" in f for f in r.fails), r.fails
+    py = made / "pyproject.toml"
+    py.write_text(py.read_text(encoding="utf-8").replace("permissions = []", 'permissions = ["ai"]'), encoding="utf-8")
+    r2 = packkit.Report()
+    packkit.static_check(made, barista.api.__version__, r2)
+    assert not r2.fails, r2.fails
+
+
+def test_from_barista_import_api_mixed_with_internal_is_refused(made: Path) -> None:
+    assert _perm_report(made, "from barista import api, kernel\nX = api.ai", '["ai"]').fails

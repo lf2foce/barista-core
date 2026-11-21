@@ -390,8 +390,8 @@ export async function* decideStream(cardId: string, decision: "confirm" | "dismi
 export type ComposeTurnBody =
   | { kind: string; brief: string }
   | { session_id: string; instruction: string; block?: string; mode?: string; retry?: boolean };
-export async function* composeStream(body: ComposeTurnBody, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
-  const res = await post("/v1/compose/stream", body, {}, signal);
+export async function* composeStream(body: ComposeTurnBody, signal?: AbortSignal, path = "/v1/compose/stream"): AsyncGenerator<StreamEvent> {
+  const res = await post(path.startsWith("/v1/") ? path : "/v1/compose/stream", body, {}, signal);
   if (!res.ok || !res.body) throw new ApiError(await detailOf(res, `Không soạn được (${res.status})`), res.status);
   yield* ndjson(res.body);
 }

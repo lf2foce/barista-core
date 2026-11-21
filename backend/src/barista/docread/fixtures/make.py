@@ -16,7 +16,7 @@ from typing import Any
 
 HERE = Path(__file__).parent
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-FONTS = HERE.parent.parent / "modules" / "compose" / "fonts"
+FONTS = HERE / "fonts"
 
 PRICE_HEAD = ["STT", "Mã căn", "Diện tích (m²)", "Giá bán (VND)", "Ghi chú"]
 PRICE_ROWS = [

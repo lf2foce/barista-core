@@ -21,6 +21,8 @@ GUARD_LISTS = {
     "write_verb_queries": "tests/test_guards.py — {'<thao tác>': lý do}: truy vấn mở đầu bằng động từ ghi",
     "read_verb_commands": "tests/test_guards.py — {'<thao tác>': lý do}: lệnh mở đầu bằng động từ đọc",
     "vn_allowed": "tests/test_timezone.py — {'<file, tính từ package của gói>': lý do}: file được dùng VN (múi của luật Việt Nam / dữ liệu mẫu Việt Nam)",
+    "core_imports": "tests/test_pack_surface.py — {'<module>|<barista.internal>': 'lý do | người gỡ | kế hoạch'}: ngoại lệ tạm của gói nội bộ nhập phần lõi chưa có trên barista.api (gói đối tác pack.sh check vẫn bị chặn)",
+    "public_routes": "tests/test_meta.py — {'<METHOD> <path>': lý do}: route công khai (không cần đăng nhập) do gói ngoài khai qua Module.route(public=…)",
 }
 
 

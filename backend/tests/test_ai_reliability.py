@@ -2,7 +2,6 @@
 công cụ), theo Retry-After, có trần; chuỗi dự phòng chỉ chuyển nhà khi lỗi tạm / sập / khoá hỏng, không khi nội dung bị chặn hay yêu cầu sai; cầu dao;
 câu cho người theo loại + loại lỗi ghi vào ``core.ai_usage``. Không gọi model thật."""
 
-import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -27,7 +26,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from barista.agent import chat, llm, reliability
 from barista.agent.reliability import Policy, Resilient, backoff, classify
 from barista.config import settings
-from barista.modules import compose
 from tests.conftest import Who, owner_val
 from tests.test_assistant import call
 from tests.test_autonomy_chat import Slow
@@ -355,16 +353,6 @@ async def test_chat_retry_keeps_the_tool_step_single(who: Who, sleeps: list[floa
     assert out["text"].startswith("Anh có mấy khách") and [s["tool"] for s in out["steps"]] == ["crm.leads"] and len(sleeps) == 1
     row = await owner_val("SELECT row_to_json(u) FROM core.ai_usage u WHERE user_id = %s ORDER BY id DESC LIMIT 1", (sale1.user_id,))
     assert row["ok"] and row["error_class"] is None
-
-
-def test_compose_reason_follows_the_same_classes() -> None:
-    sid = uuid.uuid4()
-    assert compose._reason(ModelHTTPError(401, "m"), sid) == compose.NO_MODEL
-    assert compose._reason(ModelHTTPError(503, "m"), sid) == compose.BUSY_MODEL
-    assert compose._reason(ModelTimeoutError("m", "x"), sid) == compose.BUSY_MODEL
-    assert compose._reason(ModelRateLimitError("m", "x"), sid) == reliability.message("rate_limit")
-    assert compose._reason(ContentFilterError("bị chặn"), sid) == reliability.message("safety")
-    assert compose._reason(ValueError("lỗi code"), sid) == compose.CRASH
 
 
 # ── Công tắc công ty cho nhà cung cấp THỨ HAI (core.ai_allow_fallback_vendor, mặc định tắt) ──

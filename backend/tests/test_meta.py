@@ -153,9 +153,11 @@ def test_every_module_declares_a_known_pack() -> None:
     for pack, pk in registry.PACKS.items():
         assert set(pk.requires) <= set(registry.PACKS) - {"base"}, pack
     registry.validate()
-    # ``needs`` được nhắc gói không cài (validate cho qua) — ở bản cài đủ gói của repo thì phải là gói thật (bắt gõ sai khoá)
+    # ``needs`` được nhắc gói không cài (validate cho qua) — ở bản cài đủ gói của repo thì phải là gói thật (bắt gõ sai khoá),
+    # trừ bên nghe sự kiện của gói ngoài chưa nạp (``n == s.event_type.split(".")[0]``: giữ ràng buộc 0056 khi gói đó được cài).
     assert not [(op.name, n) for op in registry.OPS.values() for n in op.needs if n not in registry.PACKS]
-    assert not [(s.name, n) for s in registry.SUBSCRIBERS.values() for n in s.needs if n not in registry.PACKS]
+    assert not [(s.name, n) for s in registry.SUBSCRIBERS.values() for n in s.needs
+                if n not in registry.PACKS and not (n == s.event_type.split(".")[0] and n not in registry.MODULE_PACK)]
 
 
 async def test_every_subject_kind_has_a_db_visibility_function() -> None:
@@ -292,8 +294,8 @@ def test_the_http_layer_imports_no_module_and_mounts_module_routes_from_the_regi
     assert all(r.path.startswith("/v1/") for r in registry.ROUTES)
 
 
-# Route do module khai KHÔNG cần đăng nhập — mỗi route một lý do; thêm route công khai = sửa danh sách này có chủ đích
-PUBLIC_ROUTES = {("GET", "/v1/public/links/{token}/stream"), ("GET", "/v1/compose/shared/{token}")}   # + trang chia sẻ của Soạn với AI (0224): quyền = mã link
+# Route do module khai KHÔNG cần đăng nhập — mỗi route một lý do; thêm route công khai = sửa danh sách này có chủ đích (gói ngoài khai qua core_guards.json → public_routes)
+PUBLIC_ROUTES = {("GET", "/v1/public/links/{token}/stream")}
 
 
 async def test_every_module_route_needs_a_login_unless_declared_public() -> None:
@@ -305,8 +307,14 @@ async def test_every_module_route_needs_a_login_unless_declared_public() -> None
     from httpx import ASGITransport, AsyncClient
 
     from barista.http_api import app
+    from tests.module_src import declared
 
-    assert {(r.method, r.path) for r in registry.ROUTES if r.public} == PUBLIC_ROUTES
+    pack_public = set()
+    for k in declared("public_routes"):
+        parts = k.split(" ", 1)
+        assert len(parts) == 2 and parts[0] in ("GET", "POST", "PUT", "PATCH", "DELETE") and parts[1].startswith("/v1/"), f"public_routes sai dạng: {k!r}"
+        pack_public.add((parts[0], parts[1]))
+    assert {(r.method, r.path) for r in registry.ROUTES if r.public} == (PUBLIC_ROUTES | pack_public)
     assert all(len(r.public) >= 10 for r in registry.ROUTES if r.public)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         for r in registry.ROUTES:

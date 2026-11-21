@@ -16,7 +16,6 @@ loader.load()
 # Chưa khai được — ghi rõ lý do; rút dần về rỗng.
 PENDING_MODULES = {
     "papers": "ADR 0251 đang làm ở phiên khác — gộp sau",
-    "compose": "ADR 0252 đang làm ở phiên khác — gộp sau",
 }
 PENDING_KERNEL: set[str] = set()   # lệnh của lõi ở kernel/ chưa khai (đã khai xong hết — giữ tập để ngoại lệ mới phải ghi lý do)
 

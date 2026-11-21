@@ -82,7 +82,9 @@ ATTRS_NO = frozenset({"__builtins__", "__globals__", "__subclasses__", "__code__
 
 def _import_ok(name: str, pkg: str) -> bool:
     top = name.split(".")[0]
-    return top in (pkg, "barista") or top.startswith("barista_pack_") or any(name == ok or name.startswith(ok + ".") for ok in IMPORTS_OK)
+    if top == "barista":
+        return name == "barista.api" or name.startswith("barista.api.")
+    return top == pkg or top.startswith("barista_pack_") or any(name == ok or name.startswith(ok + ".") for ok in IMPORTS_OK)
 
 
 def _dev_tool(rel: Path) -> bool:
@@ -129,6 +131,9 @@ def code_permissions(src: Path, pkg: str) -> tuple[dict[str, set[str]], list[str
                         use(a.name, where)
                 elif node.module.startswith("barista.api."):
                     use(node.module.split(".")[2], where)
+                elif node.module == "barista" and all(a.name == "api" for a in node.names):
+                    for a in node.names:
+                        api_alias.add(a.asname or a.name)
                 elif not _import_ok(node.module, pkg) and not all(_import_ok(f"{node.module}.{a.name}", pkg) for a in node.names):
                     bad.append(f"{where}: from {node.module} import … — mã chạy của gói chỉ dùng barista.api + thư viện chuẩn cho phép (runbook 21)")
             elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and getattr(node.value.func, "id", "") == "Module":

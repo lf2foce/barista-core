@@ -48,14 +48,22 @@ def test_runbook_12_names_no_plug_point_that_no_longer_exists() -> None:
     assert not ghost, f"runbook 12 nêu điểm cắm không còn trong code: {ghost}"
 
 
+# Điểm cắm thuộc hợp đồng công bố (barista.api.*) nhưng module chủ nằm ở gói ngoài repo — khi gói đó chưa cài, module khác cắm vào vẫn hợp lệ
+# (chỉ kiểm ``ctx.plugs`` khi module chủ đang nạp); gõ sai tên module vẫn bị chặn ở vòng kiểm dưới.
+EXTERNAL_PLUG_POINTS = {"compose.brochure"}
+
+
 def test_every_plug_point_is_actually_asked_by_its_owner_module() -> None:
     """Điểm cắm không ai hỏi = gói cắm vào mà không bao giờ chạy (êm, không lỗi). Module chủ phải gọi ``ctx.plugs("<điểm>")``; điểm nút phải có
     ``Action(slot="<điểm>")`` (``registry.validate`` đã kiểm phía nút, ở đây kiểm phía dữ liệu)."""
     src = {key: "\n".join(f.read_text() for f in files) for key, files in module_files().items()}
     unasked = [p for p in sorted(registry.PLUGS)
-               if f'plugs("{p}"' not in src.get(p.split(".")[0], "") and f'plugged("{p}"' not in src.get(p.split(".")[0], "")]
+               if (p.split(".")[0] in src or p not in EXTERNAL_PLUG_POINTS)
+               and f'plugs("{p}"' not in src.get(p.split(".")[0], "") and f'plugged("{p}"' not in src.get(p.split(".")[0], "")]
     assert not unasked, f"điểm cắm mà module chủ không hỏi (ctx.plugs): {unasked}"
     for p in registry.PLUGS:
+        if p in EXTERNAL_PLUG_POINTS and p.split(".")[0] not in registry.MODULES:
+            continue
         assert p.split(".")[0] in registry.MODULES, f"điểm cắm {p}: không có module chủ {p.split('.')[0]}"
 
 

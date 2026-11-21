@@ -890,6 +890,7 @@ export function decodeComposer(o: Obj): ComposerData {
     note: str(o.note),
     brand: { color: /^[0-9A-Fa-f]{6}$/.test(str(br.color)) ? str(br.color) : "1F4E79", font: str(br.font, "Arial"), footer: str(br.footer), logo: str(br.logo).startsWith("data:image/") ? str(br.logo) : "" },
     commands: stringMap(o.commands),
+    ...(typeof o.stream === "string" && o.stream.startsWith("/v1/") ? { stream: o.stream } : {}),
   };
 }
 

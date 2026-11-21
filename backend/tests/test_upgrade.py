@@ -73,19 +73,11 @@ NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | {"word/001_documents.sql",   # 0227
                                               "base/089_task_start_deps.sql",   # 0222: việc thêm start_on / phase / depends_on (cột có mặc định, ràng buộc kiểm trên dòng mới) ⇒ không bảo trì
                                               "base/090_kb_file_sha256.sql",   # 0225: cột sha256 của file gốc kho tài liệu (cột trống được + chỉ mục) — chỉ THÊM, bản cũ không đọc / ghi cột này ⇒ không bảo trì
                                               "mgmt/002_snapshot_source.sql",   # 0213: nguồn gốc bản chốt (cột có mặc định) ⇒ không bảo trì
-                                              "compose/070_brochure_layout_share.sql",   # 0224: cột layout (có mặc định) + bảng link chia sẻ + nới ràng buộc định dạng tệp xuất (thêm html) — chỉ THÊM ⇒ không bảo trì
                                               "base/092_task_plan_ref.sql",   # 0222 §15/11: cột plan_ref (mã STT / WBS của dòng trong file kế hoạch, trống được) + chỉ mục — chỉ THÊM, bản cũ không đọc / ghi cột này ⇒ không bảo trì
                                               "base/091_import_mappings.sql",   # 0226: bảng mới core.import_mappings (ánh xạ cột nhập Excel nhớ theo công ty) — chỉ THÊM ⇒ không bảo trì
-                                              "compose/072_marketing_kinds.sql",   # 0231: nới ràng buộc loại bản soạn (thêm tờ rơi, bài đăng) — chỉ nới ⇒ không bảo trì
                                               "base/109_decision_preview.sql",   # 0253: cột preview (trống được) của core.proposals / core.approvals — chỉ THÊM cột ⇒ không bảo trì
                                               "base/108_papers_live.sql",   # 0251: bảng mới papers.entries, cột authority (có mặc định), chính sách đọc papers.documents viết lại, thêm dòng quyền papers.office — chỉ THÊM; bản cũ ghi giấy với authority mặc định, đọc / ghi dòng của chính mình ⇒ không bảo trì
                                               "base/107_company_brand.sql",   # 0249 lát 2: schema + bảng mới admin.brand (nhận diện thương hiệu của công ty) — chỉ THÊM ⇒ không bảo trì
-                                              # 0249 lát 2: cột có mặc định (ấn phẩm về hồ sơ / cho khách, công thức, nguồn) + chép nhận diện sang admin.brand, giao tệp logo
-                                              # cho module Quản trị, khoá ghi bảng cũ (bản cũ còn đọc được; sửa ở bản cũ bị từ chối) ⇒ không bảo trì
-                                              "compose/073_piece_subject_brand_move.sql",
-                                              "compose/074_multipage_kinds.sql",   # 0252: nới ràng buộc loại bản soạn (hồ sơ chào bán 10 trang, tóm tắt 4 trang) — chỉ nới ⇒ không bảo trì
-                                              "compose/071_derived_images.sql",   # 0224 §8: bảng bộ đệm ảnh trích từ PDF (bảng mới, quyền theo tenant) — chỉ THÊM ⇒ không bảo trì
-                                              "compose/069_rls_initplan.sql",   # 069: viết lại chính sách RLS của gói Soạn với AI thành InitPlan (như 054 của các gói khác) ⇒ không bảo trì
                                               "base/058_kinds_off.sql",   # 058: gói bật tính một lần mỗi câu, không bảo trì
                                              "talk/059_kinds_off.sql", "meet/059_kinds_off.sql",   # 059: chính sách của gói sinh sau 058 cũng có vế "gói tắt"
                                              "base/060_kb_visible_shelves.sql",   # 060: kệ đọc được tính một lần mỗi câu, không bảo trì
@@ -606,36 +598,6 @@ async def test_0157_existing_companies_get_the_always_on_schedule_defaults_witho
         await reset_schemas(URL)
 
 
-async def test_0249_brand_moves_to_company_settings_with_its_logo_and_the_old_table_turns_read_only() -> None:
-    """ADR 0249 lát 2: nhận diện thương hiệu của công ty đang chạy chép từ ``compose.brand`` sang ``admin.brand`` (cài đặt công ty), tệp logo giao cho module
-    Quản trị (mở được từ đó), bảng cũ khoá ghi (bản cũ còn đọc); công ty đã có dòng mới thì không bị ghi đè."""
-    await _db()
-    try:
-        await migrate(URL, until="compose/072_marketing_kinds.sql")
-        moved, kept = uuid.uuid4(), uuid.uuid4()
-        async with await AsyncConnection.connect(URL, autocommit=True) as c:
-            for t in (moved, kept):
-                await c.execute("INSERT INTO core.tenants(id,name) VALUES(%s,'Công ty')", (t,))
-            logo = (await (await c.execute(
-                """INSERT INTO core.files (tenant_id, object_key, filename, content_type, size_bytes, sha256, module)
-                   VALUES (%s, %s, 'logo.png', 'image/png', 10, %s, 'compose') RETURNING id""", (moved, f"t/{moved}/{uuid.uuid4()}", "a" * 64))).fetchone() or (None,))[0]
-            await c.execute("INSERT INTO compose.brand (tenant_id, primary_color, font, footer, logo_file_id, logo_filename) VALUES (%s,'AA0000','Calibri','Chân',%s,'logo.png')",
-                            (moved, logo))
-            await c.execute("INSERT INTO compose.brand (tenant_id, primary_color) VALUES (%s,'00AA00')", (kept,))
-            await c.execute("INSERT INTO admin.brand (tenant_id, primary_color) VALUES (%s,'0000AA')", (kept,))   # công ty đã đặt ở chỗ mới
-        assert "compose/073_piece_subject_brand_move.sql" in await migrate(URL)
-        async with await AsyncConnection.connect(URL, autocommit=True) as c:
-            got = await (await c.execute("SELECT primary_color, font, footer, logo_file_id, logo_filename FROM admin.brand WHERE tenant_id = %s", (moved,))).fetchone()
-            assert got == ("AA0000", "Calibri", "Chân", logo, "logo.png")
-            assert await (await c.execute("SELECT module FROM core.files WHERE id = %s", (logo,))).fetchone() == ("admin",)   # module Quản trị mở được logo
-            assert await (await c.execute("SELECT primary_color FROM admin.brand WHERE tenant_id = %s", (kept,))).fetchone() == ("0000AA",)   # không ghi đè
-            assert await (await c.execute("SELECT has_table_privilege('barista_app', 'compose.brand', 'INSERT'), has_table_privilege('barista_app', 'compose.brand', "
-                                          "'UPDATE'), has_table_privilege('barista_app', 'compose.brand', 'SELECT')")).fetchone() == (False, False, True)
-        assert await migrate(URL) == []
-    finally:
-        await reset_schemas(URL)
-
-
 def test_0157_backfill_grants_are_exactly_what_the_schedule_pack_declares() -> None:
     """``schedule/055`` chép tay ``Pack(...).grants`` của gói (migration không gọi được Python) ⇒ hai bên không được lệch lặng lẽ."""
     import re
@@ -675,7 +637,7 @@ LEGACY_CORE_STOP = "016_parties.sql"
 # nhận Khách hàng, Danh mục, KPI, từ vựng). Chỉ là chữ trong bảng của lõi — không cần gói nào được nạp.
 OLD_INDUSTRY_PACK = "sales"
 # gói của lõi (để lọc kế hoạch phát hành khi gói ngành còn trong repo cũng có file chờ chạy)
-CORE_PACKS = frozenset({"base", "books", "compose", "directory", "finance", "hr", "kpi", "meet", "mgmt", "pay", "schedule", "crm", "marketing",
+CORE_PACKS = frozenset({"base", "books", "directory", "finance", "hr", "kpi", "meet", "mgmt", "pay", "schedule", "crm", "marketing",
                         "talk", "timekeeping", "training"})
 
 

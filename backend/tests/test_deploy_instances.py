@@ -400,19 +400,19 @@ def test_every_instance_web_router_sits_behind_the_password_gate():
 async def test_pack_samples_choose_their_profiles_finish_last_and_add_companies(monkeypatch, tmp_path, capsys):
     """Phần mẫu của gói ngoài lõi (``barista.seed_samples``, 0155 đợt ba) — lõi không biết tên gói: ``PROFILES`` chọn biến thể công ty mẫu gói tự bật
     (không khai = chỉ công ty đủ gói của bộ test; ``()`` = không ở đâu), ``finish`` chạy ở bước cuối chỉ khi công ty bật gói, ``COMPANIES`` góp công ty
-    vào hồ sơ nhiều công ty. Gói giả ở đây mượn khoá hai gói của lõi (``compose``, ``mgmt``: tắt mặc định, không có trong công ty mẫu)."""
+    vào hồ sơ nhiều công ty. Gói giả ở đây mượn khoá hai gói của lõi (``findings``, ``mgmt``: tắt mặc định, không có trong công ty mẫu)."""
     import importlib.metadata as md
 
     monkeypatch.syspath_prepend(str(tmp_path))
     (tmp_path / "fake_sample_a.py").write_text('PROFILES = ("san-moi-gioi",)\nasync def finish(tid):\n    return f"xong {tid}"\n')
     (tmp_path / "fake_sample_b.py").write_text('PROFILES = ()\nasync def _co():\n    return {"done": "thêm một công ty"}\nCOMPANIES = {"pay-demo": _co}\n')
     (tmp_path / "fake_sample_c.py").write_text("TEAMS = []\n")
-    eps = [md.EntryPoint("compose", "fake_sample_a", seed.SAMPLE_GROUP), md.EntryPoint("mgmt", "fake_sample_b", seed.SAMPLE_GROUP),
+    eps = [md.EntryPoint("findings", "fake_sample_a", seed.SAMPLE_GROUP), md.EntryPoint("mgmt", "fake_sample_b", seed.SAMPLE_GROUP),
            md.EntryPoint("training", "fake_sample_c", seed.SAMPLE_GROUP), md.EntryPoint("khong_cai", "fake_sample_c", seed.SAMPLE_GROUP)]
     real = md.entry_points
     monkeypatch.setattr(md, "entry_points", lambda **kw: md.EntryPoints(eps) if kw.get("group") == seed.SAMPLE_GROUP else real(**kw))
-    assert set(seed.samples()) == {"compose", "mgmt", "training"}                              # gói chưa nạp ⇒ bỏ qua
-    assert seed.profile_packs("san-moi-gioi") == ("compose",) and seed.profile_packs("san-moi-gioi-demo") == ()
+    assert set(seed.samples()) == {"findings", "mgmt", "training"}                              # gói chưa nạp ⇒ bỏ qua
+    assert seed.profile_packs("san-moi-gioi") == ("findings",) and seed.profile_packs("san-moi-gioi-demo") == ()
     assert seed.profile_packs("full") == ("training",) and seed.sample_packs() == (*seed.ALL_PACKS, "training")
     d = f"s{uuid.uuid4().hex[:8]}.demo"
     people = [("admin", "Quản trị thử", "admin", "QT", True)]
@@ -420,7 +420,7 @@ async def test_pack_samples_choose_their_profiles_finish_last_and_add_companies(
     capsys.readouterr()
     await seed.sample_finish(off)
     assert capsys.readouterr().out == ""                                                       # công ty không bật gói ⇒ bước cuối của gói không chạy
-    on = await seed.create_tenant(f"Công ty mẫu bật {d}", f"on-{d}", people=people, packs=("compose",), about="công ty thử (test)")
+    on = await seed.create_tenant(f"Công ty mẫu bật {d}", f"on-{d}", people=people, packs=("findings",), about="công ty thử (test)")
     await seed.sample_finish(on)
     assert capsys.readouterr().out == f"xong {on}\n"
     from barista import seed_pay

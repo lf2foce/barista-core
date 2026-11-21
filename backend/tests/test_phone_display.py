@@ -17,7 +17,6 @@ from openpyxl import load_workbook
 
 from barista.kernel import ui
 from barista.kernel.fields import phone_display
-from barista.modules.compose import render, vn
 from barista.modules.crm.journey import _draft
 from tests.module_src import py_files, rel
 
@@ -56,12 +55,6 @@ def test_excel_phone_cells_are_text_in_national_form() -> None:
     assert ws.cell(2, 2).data_type == "s" and ws.cell(2, 2).number_format == "@"
     ws_us = load_workbook(BytesIO(ui.table_xlsx(page, "US"))).active
     assert ws_us is not None and ws_us.cell(2, 2).value == "+84898654936"
-
-
-def test_compose_documents_print_phone_like_the_screen() -> None:
-    assert render.fmt("+84898654936", "phone") == "0898654936"
-    assert vn.cell("+84898654936", "phone") == "0898654936"
-    assert render.fmt("+14155552671", "phone", style=vn.STYLE_VN) == "+14155552671"
 
 
 # ── 2. canh gác mã nguồn ──

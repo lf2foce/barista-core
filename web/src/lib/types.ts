@@ -832,6 +832,8 @@ export type ComposerData = {
   note: string;
   brand: { color: string; font: string; footer: string; logo: string };
   commands: Record<string, string>;
+  /** đường HTTP luồng soạn do server gửi (bỏ viết cứng đường dẫn gói ở web; vắng ⇒ rơi về đường mặc định). */
+  stream?: string;
 };
 
 /** Một lượt: người nói (yêu cầu / lời sửa, `block` khi sửa một khối) hoặc AI trả lời (`status` ready · failed + lý do, các bước đã chạy). */

@@ -19,7 +19,7 @@ from barista.kernel import registry
 from barista.kernel.executor import core_ctx
 from barista.kernel.principal import elevate
 from tests.conftest import Who
-from tests.module_src import SRC, module_files, rel
+from tests.module_src import SRC, declared, module_files, rel
 
 SURFACE = Path(__file__).with_name("api_surface.json")
 
@@ -54,32 +54,8 @@ ALLOWED: dict[tuple[str, str], Why] = {
     ("talk", "barista.kernel.registry"): Why(
         "trao đổi gắn vào đối tượng của gói BẤT KỲ (registry.SUBJECTS) và mở lại thẻ truy vấn trong tin (registry.get)",
         "gói Trao đổi", "cùng bước api.subjects với meet; mở lại thẻ bằng ctx.call thay cho registry.get"),
-    ("compose", "barista.agent.chat"): Why(
-        "danh sách truy vấn người soạn chạy được (catalog), lược đồ công cụ và bản rút gọn trang cho model",
-        "gói Soạn với AI", "thêm api.assistant (danh mục thao tác người gọi chạy được + lược đồ công cụ + rút gọn trang) vào bề mặt rồi xoá dòng này"),
-    ("compose", "barista.agent.toolset"): Why(
-        "tìm truy vấn hợp nhu cầu số liệu theo nghĩa (retrieve_for)",
-        "gói Soạn với AI", "cùng bước api.assistant"),
-    ("compose", "barista.agent.llm"): Why(
-        "cửa duy nhất có model: công tắc + hạn mức AI của công ty (model_for)",
-        "gói Soạn với AI", "dùng api.ai như training (0200: model theo công tắc AI + ghi lượt dùng)"),
-    ("compose", "barista.agent.usage"): Why(
-        "ghi lượt dùng AI vào hạn mức của công ty",
-        "gói Soạn với AI", "dùng api.ai như training"),
-    ("compose", "barista.agent.reliability"): Why(
-        "xếp loại lỗi nhà cung cấp model ⇒ câu cho người dùng (cùng chính sách thử lại / dự phòng với chat — runbook 15)",
-        "gói Soạn với AI", "dùng api.ai như training (model + chính sách lỗi)"),
-    ("compose", "barista.kernel.executor"): Why(
-        "mỗi công cụ là một executor.query riêng (không giữ giao dịch qua lượt model); kết quả ghi bằng executor.run lệnh nội bộ; jsonable",
-        "gói Soạn với AI", "api.web.query / run chỉ nhận người gọi cấp ở cửa HTTP — mở thêm cho việc chạy sau commit của chính người soạn rồi xoá dòng này"),
-    ("compose", "barista.kernel.principal"): Why(
-        "kiểu người gọi của việc chạy sau commit + elevate cho lệnh nội bộ ghi kết quả của chính người soạn",
-        "gói Soạn với AI", "cùng bước với dòng executor"),
-    ("compose", "barista.kernel.errors"): Why(
-        "OpError — lỗi thao tác gộp (Invalid / NotFound / Denied) khi công cụ / xuất tệp lỗi",
-        "gói Soạn với AI", "thêm OpError vào barista.api rồi xoá dòng này"),
 }
-ALLOWED_MAX = 15   # trần: chỉ giảm (−1 19/11: Soạn với AI dùng api.convert; 9 sau khi ba gói rời lõi + 9 của gói Soạn với AI nay là gói ngoài nền; −2 training dùng api.ai + Prep — 0200). Thêm ngoại lệ ⇒ tăng trần CÓ CHỦ ĐÍCH cùng commit, kèm lý do / người gỡ / kế hoạch
+ALLOWED_MAX = 7   # trần: chỉ giảm (−8 21/11: gói Ấn phẩm rời lõi sang barista-packs; trước đó −1 19/11 api.convert, −2 training dùng api.ai). Thêm ngoại lệ ⇒ tăng trần CÓ CHỦ ĐÍCH cùng commit, kèm lý do / người gỡ / kế hoạch
 
 def test_every_exception_carries_a_reason_owner_and_plan() -> None:
     """Ngoại lệ nhập nội bộ lõi là NỢ có chủ: mỗi dòng có lý do một dòng, người gỡ và kế hoạch gỡ; không thêm dòng lặng lẽ."""
@@ -125,19 +101,33 @@ def _internal(name: str) -> bool:
     return not (name == "barista.api" or name.startswith(("barista.api.", "barista.modules")))
 
 
+def _pack_core_imports() -> dict[tuple[str, str], Why]:
+    """Ngoại lệ tạm do gói ngoài khai trong ``core_guards.json`` (``core_imports``): ``'<module>|<barista.*>' → 'lý do | người gỡ | kế hoạch'``.
+    Mỗi dòng phải đủ ba phần một dòng như ``Why`` của lõi."""
+    out: dict[tuple[str, str], Why] = {}
+    for k, raw in declared("core_imports").items():
+        parts = k.split("|", 1)
+        assert len(parts) == 2 and parts[0] and parts[1].startswith("barista."), f"core_imports khoá sai dạng '<module>|<barista.*>': {k!r}"
+        fields = [s.strip() for s in raw.split("|")]
+        assert len(fields) == 3 and all(fields) and "\n" not in raw, f"core_imports[{k!r}] phải là 'lý do | người gỡ | kế hoạch' trên một dòng"
+        out[(parts[0], parts[1])] = Why(*fields)
+    return out
+
+
 def test_pack_modules_import_only_the_published_surface() -> None:
+    allowed = {**ALLOWED, **_pack_core_imports()}
     bad, used = [], set()
     for mod, files in module_files().items():
         if registry.pack_kind(registry.MODULE_PACK[mod]) == "core":
             continue
         for p in files:
             for name in sorted(filter(_internal, _imports(p))):
-                if (mod, name) in ALLOWED:
+                if (mod, name) in allowed:
                     used.add((mod, name))
                 else:
                     bad.append(f"{rel(p)}: import {name} — dùng barista.api (thiếu thì thêm vào bề mặt + tăng phiên bản)")
     assert not bad, "\n".join(bad)
-    assert used == set(ALLOWED), f"miễn trừ không còn dùng — xoá: {set(ALLOWED) - used}"
+    assert used == set(allowed), f"miễn trừ không còn dùng — xoá: {set(allowed) - used}"
 
 
 def test_the_surface_is_versioned_and_changes_only_on_purpose() -> None:

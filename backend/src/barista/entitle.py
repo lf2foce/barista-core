@@ -2,7 +2,7 @@
 đó; quản trị công ty sau đó bật trong Quản trị › Gói & ứng dụng. Chạy bằng kết nối owner trên máy chủ của bản cài, KHÔNG có trong app.
 
   uv run python -m barista.entitle --tenant "Sàn mẫu" --list
-  uv run python -m barista.entitle --tenant "Sàn mẫu" --grant compose --by "anh Bùi" --note "HĐ 12/2026"
+  uv run python -m barista.entitle --tenant "Sàn mẫu" --grant findings --by "anh Bùi" --note "HĐ 12/2026"
   uv run python -m barista.entitle --tenant "Sàn mẫu" --ai-budget 50 --ai-warn 80     # trần chi AI 50 USD / tháng (0092); "none" = bỏ trần
 """
 
@@ -67,7 +67,7 @@ async def main(tenant: str, grant: str, by: str, note: str, ai_budget: str = "",
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--tenant", required=True, help="tên (một phần) hoặc id công ty")
-    ap.add_argument("--grant", default="", help="mã gói cần mở (vd compose)")
+    ap.add_argument("--grant", default="", help="mã gói cần mở (vd findings)")
     ap.add_argument("--by", default="", help="người vận hành cấp quyền")
     ap.add_argument("--note", default="")
     ap.add_argument("--list", action="store_true")

@@ -180,17 +180,6 @@ def edge(p: Principal) -> Principal:
     return principal.issued(dataclasses.replace(p), kind=principal.EDGE, lease=_EDGE_LEASE)
 
 
-@pytest_asyncio.fixture
-async def compose_on(demo: dict[str, Any]) -> AsyncIterator[None]:
-    """"Soạn với AI" là gói TUỲ CHỌN, mặc định tắt: test của nó bật gói cho công ty mẫu (như quản trị bấm ở "Store") rồi tắt lại sau test, để
-    các test khác thấy đúng trạng thái mặc định (tắt)."""
-    admin = await seed.who(demo["tenant"], "admin", seed.DOMAIN)
-    r = await executor.run(admin, "admin.set_pack", {"pack": "compose", "enabled": True})
-    assert r.status == "ok", (r.status, r.error)
-    yield
-    await executor.run(admin, "admin.set_pack", {"pack": "compose", "enabled": False})
-
-
 @pytest.fixture
 def who(demo: dict[str, Any]) -> Who:
     async def f(local: str, *, other: bool = False) -> Principal:

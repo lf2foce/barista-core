@@ -137,7 +137,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
     setLocal(null);
     setLive(turn);
     try {
-      for await (const ev of composeStream(body)) {
+      for await (const ev of composeStream(body, undefined, doc.stream)) {
         turn = applyComposeEvent(turn, ev);
         setLive(turn);
       }

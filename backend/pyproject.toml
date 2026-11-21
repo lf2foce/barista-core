@@ -28,7 +28,6 @@ dependencies = [
 [project.entry-points."barista.packs"]
 base = "barista.foundation"
 books = "barista.modules.books"
-compose = "barista.modules.compose"
 crm = "barista.modules.crm"
 directory = "barista.modules.parties"
 findings = "barista.modules.findings"

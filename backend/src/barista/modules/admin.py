@@ -1898,8 +1898,8 @@ async def set_brand(ctx: Ctx, inp: SetBrand) -> dict[str, Any]:
     return {"summary": "Đã lưu nhận diện thương hiệu", "subject": {"label": "Nhận diện thương hiệu công ty", "open": None}, "changes": changes}
 
 
-@m.query("brand", resource=None, title="Nhận diện thương hiệu (cho tệp xuất)", internal=True, agent="deny", callers=("compose",),
-         why="compose (ấn phẩm: xem trước, xuất Word / PDF / PowerPoint / trang web, trang chia sẻ — ADR 0249): bộ nhận diện CỦA CÔNG TY người gọi để vẽ tệp. "
+@m.query("brand", resource=None, title="Nhận diện thương hiệu (cho tệp xuất)", internal=True, agent="deny", family="brand",
+         why="Họ brand (gói xuất tệp / ấn phẩm — xem trước, xuất Word / PDF / PowerPoint / trang web, trang chia sẻ — ADR 0249): bộ nhận diện CỦA CÔNG TY người gọi để vẽ tệp. "
              "Trả {primary_color, font, footer, logo_filename, logo_type, logo_b64} — dữ liệu công ty ai trong công ty cũng thấy trên tệp xuất, không dữ liệu người.")
 async def brand(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     """Bộ nhận diện để vẽ tệp. ``logo_b64`` rỗng khi chưa có logo / logo không đọc được (tệp vẫn xuất, không logo)."""

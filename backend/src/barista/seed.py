@@ -870,6 +870,6 @@ if __name__ == "__main__":
                     help="dữ liệu mẫu của bản cài nào (hồ sơ của gói — vd accounting: chạy với BARISTA_DATABASE_URL / BARISTA_OWNER_DATABASE_URL trỏ DB riêng)")
     ap.add_argument("--upgrade", action="store_true", help="bản demo ĐANG CHẠY: thêm mặc định / người / kế hoạch mẫu mới, đổi tên công ty — không xoá gì"
                     " (bản cài của một gói: --upgrade --profile <hồ sơ của gói>, vd bank)")
-    ap.add_argument("--with-packs", default="", help="gói THÊM vào công ty mẫu, cách nhau dấu phẩy — vd compose (Soạn với AI: gói tuỳ chọn, mặc định tắt)")
+    ap.add_argument("--with-packs", default="", help="gói THÊM vào công ty mẫu, cách nhau dấu phẩy — vd findings,word (gói tuỳ chọn, mặc định tắt)")
     args = ap.parse_args()
     asyncio.run(main(args.reset, args.profile, args.upgrade, tuple(x.strip() for x in args.with_packs.split(",") if x.strip())))

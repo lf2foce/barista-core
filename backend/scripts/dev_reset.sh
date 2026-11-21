@@ -31,8 +31,8 @@ PACKS_DIR="${BARISTA_PACKS_DIR:-$(cd "$(git rev-parse --path-format=absolute --g
 [ -d "$PACKS_DIR/real_estate" ] || { echo "Không thấy repo gói: $PACKS_DIR — đặt BARISTA_PACKS_DIR"; exit 2; }
 # gói của bản cài sàn môi giới (real_estate, commission, telephony) + Meta / Ngân sách; đổi danh sách bằng DEV_PACKS="a b c"
 DEV_PACKS="${DEV_PACKS:-real_estate commission telephony budget meta_ads}"
-# gói bật thêm cho công ty dev: ngân sách, Meta, chấm công, đào tạo, báo cáo quản trị, Word, Soạn với AI, gọi video (+ Lương bật ở lớp bồi, SAU hoa hồng — seed_devmock)
-CORE_PACKS="${CORE_PACKS:-budget,meta_ads,timekeeping,training,mgmt,word,compose,meet}"
+# gói bật thêm cho công ty dev: ngân sách, Meta, chấm công, đào tạo, báo cáo quản trị, Word, gọi video (+ Lương bật ở lớp bồi, SAU hoa hồng — seed_devmock)
+CORE_PACKS="${CORE_PACKS:-budget,meta_ads,timekeeping,training,mgmt,word,meet}"
 MAX_AGE_DAYS="${DEV_TEMPLATE_MAX_DAYS:-14}"
 
 T0=$(date +%s)

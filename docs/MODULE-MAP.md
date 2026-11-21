@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-18 gói · 30 module · 1039 thao tác (287 nội bộ) · 21 bên nghe sự kiện.
+17 gói · 29 module · 1008 thao tác (285 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
@@ -11,7 +11,6 @@
 |---|---|---|---|---|
 | `base` | Nền | lõi | — | `admin`, `apps`, `asks`, `connect`, `connectors`, `core`, `flow`, `health`, `kb`, `memory`, `papers`, `work` |
 | `books` | Sổ sách & nghĩa vụ | năng lực | — | `books` |
-| `compose` | Ấn phẩm (thử nghiệm) | năng lực | — | `compose` |
 | `crm` | Khách hàng | năng lực | `directory`, `schedule` | `crm`, `leadflow` |
 | `directory` | Cá nhân & tổ chức | năng lực | — | `parties` |
 | `finance` | Tài chính | năng lực | `directory` | `acct` |
@@ -37,7 +36,6 @@
 | `apps` | App của tôi | `base` | `apps` | `modules/apps.py` | 11 | 20 | 2 |
 | `asks` | Yêu cầu gửi bên ngoài | `base` | `asks` | `modules/asks.py` | 10 | 3 | 4 |
 | `books` | Sổ sách & nghĩa vụ | `books` | `books` | `modules/books.py` | 9 | 14 | 6 |
-| `compose` | Ấn phẩm | `compose` | `compose` | `modules/compose/` (11 file) | 22 | 9 | 2 |
 | `connect` | Ứng dụng kết nối | `base` | — | `modules/connect.py` | 9 | 3 | 4 |
 | `connectors` | Kết nối ngoài | `base` | `connectors` | `modules/connectors.py` | 10 | 6 | 6 |
 | `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/record_files.py` | 34 | 34 | 10 |
@@ -130,10 +128,10 @@
 
 - **Tài nguyên quyền:** —
 - **Hợp đồng quyền hệ thống** (thao tác ← module được gọi):
-  - `admin.brand` ← `compose`
   - `admin.delivery_health` ← `health`
   - `admin.members_with_grant` ← `acct`
 - **Mở cho gói ngoài** (thao tác → họ; gói khai `consumes`):
+  - `admin.brand` → `brand`
   - `admin.members_with_grant` → `follow_up`
 - **Sự kiện phát:** `admin.member_deactivated`, `admin.team_members_changed`, `admin.team_saved`
 - **Nghe sự kiện:** `admin.member_deactivated` → `admin.revoke_credentials`, `core.system_error` → `admin.tell_admins_about_errors`
@@ -166,14 +164,6 @@
 - **Đối tượng:** `books.company`, `books.period`
 - **Bộ kiểm:** `books.filings_done`
 - **Vòng quét:** `books.open_due`, `books.sync_rules`
-
-### `compose` — Ấn phẩm
-
-- **Mã:** `compose/__init__.py`, `compose/check.py`, `compose/editorial.py`, `compose/fit.py`, `compose/html.py`, `compose/kinds.py`, `compose/layout.py`, `compose/paged.py`, `compose/render.py`, `compose/stock.py`, `compose/vn.py`
-- **Tài nguyên quyền:** —
-- **Điểm cắm của module này** (điểm ← thao tác cắm vào):
-  - `compose.brochure` ← `findings.plug_brochure`
-- **Sự kiện phát:** `compose.piece_opened`
 
 ### `connect` — Ứng dụng kết nối
 
