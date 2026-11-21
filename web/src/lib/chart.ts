@@ -86,3 +86,25 @@ export function seriesUnit(c: Pick<ChartData, "unit" | "unit_right">, s: ChartSe
 export function comboSeries(c: ChartData): { index: number; series: ChartSeries; as: "bar" | "line"; axis: "left" | "right" }[] {
   return c.series.map((series, index) => ({ index, series, as: series.as === "line" ? "line" : "bar", axis: series.axis === "right" ? "right" : "left" }));
 }
+
+/** Chiều cao (px) phần vẽ của biểu đồ — cùng số với ChartContainer ở chart-body.tsx (+ một hàng chú giải khi ≥ 2 chuỗi). Khung thẻ giữ sẵn chỗ này
+ *  trong lúc phần vẽ (Recharts) còn đang tải ⇒ thẻ không nhảy khi vẽ xong. Đổi chiều cao ở chart-body.tsx ⇒ đổi cả ở đây. */
+export function chartBodyHeight(c: Pick<ChartData, "kind" | "labels" | "series">): number {
+  const legend = c.series.length > 1 ? 24 : 0;
+  switch (c.kind) {
+    case "hbar":
+      return c.labels.length * 34 * Math.max(1, c.series.length) + 8;
+    case "funnel":
+      return c.labels.length * 40 + 8;
+    case "donut":
+      return 168;
+    case "scatter":
+      return 240;
+    case "treemap":
+      return 260;
+    case "combo":
+      return 220 + legend;
+    default:
+      return 200 + legend;
+  }
+}

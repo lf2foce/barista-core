@@ -2,6 +2,7 @@ import { decodePage, ROUTE } from "./decode";
 import { NdjsonParser } from "./ndjson";
 import { connectAction, signalAction, SseParser } from "./sse";
 import type { IntakeOut } from "./kb-intake";
+import { primeDesk } from "./session";
 import type {
   Attention,
   AuthConfig,
@@ -486,7 +487,11 @@ export const auth = {
   devLogins: () => authJson<DevLogin[]>("/api/auth/dev-logins"),
   /** 0205: tên ứng dụng first-party của yêu cầu đăng nhập (tên nhà vận hành khai — không lấy chữ trên URL). */
   signinApp: (req: string) => authJson<{ app: string }>(`/api/auth/signin-app?req=${encodeURIComponent(req)}`),
-  devLogin: (email: string, tenantId: string) => authJson<{ status: string }>("/api/auth/dev", jsonBody({ email, tenant_id: tenantId })),
+  /** Đăng nhập dev; BFF trả kèm manifest + phiên vừa kiểm ⇒ giữ cho trang chủ dùng ngay (primeDesk — một lần, ngắn hạn). */
+  devLogin: async (email: string, tenantId: string): Promise<void> => {
+    const r = await authJson<{ status: string; manifest?: unknown; session?: unknown }>("/api/auth/dev", jsonBody({ email, tenant_id: tenantId }));
+    primeDesk(r.manifest, r.session);
+  },
   google: (idToken: string, nonce: string) =>
     authJson<{ email: string; tenants: SessionInfo["tenants"]; tenant_id: string | null }>("/api/auth/google", jsonBody({ id_token: idToken, nonce })),
   /** 0205 §5c: đăng nhập bằng mã gửi qua email — xin mã, rồi nhập mã (kết quả như đăng nhập Google). */

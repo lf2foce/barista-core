@@ -1,9 +1,8 @@
 "use client";
 
 import { FileDown, FileText, FileUp, Sparkles } from "lucide-react";
-import { KbIntakeDialog } from "@/components/forms/kb-intake";
 import { useEffect, useState } from "react";
-import { PdfDialog } from "@/components/blocks/pdf-viewer";
+import { KbIntakeDialog, PdfDialog } from "@/components/blocks/lazy";
 import { isInlinePdf, linkUrl } from "@/lib/links";
 import { pipeTable } from "@/lib/markdown";
 import { api } from "@/lib/api";

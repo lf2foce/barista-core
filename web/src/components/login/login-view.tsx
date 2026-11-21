@@ -6,9 +6,11 @@ import Script from "next/script";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { auth } from "@/lib/api";
 import { groupLogins, safeNext } from "@/lib/login";
+import { cn } from "@/lib/utils";
 import type { AuthConfig, DevLogin, SessionInfo, TenantChoice } from "@/lib/types";
 import { Initials, Spinner } from "@/components/primitives";
 import { EmailCode } from "@/components/login/email-code";
+import { preloadCharts } from "@/components/blocks/lazy";
 
 declare global {
   interface Window {
@@ -45,6 +47,7 @@ export function LoginView() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState<string | null>(null);   // dòng vai vừa chạm: hiện vòng quay ngay tại dòng đó tới khi trang chủ hiện
   const [tenants, setTenants] = useState<TenantChoice[] | null>(null);
   const [gsi, setGsi] = useState(false);
   const btn = useRef<HTMLDivElement>(null);
@@ -57,7 +60,7 @@ export function LoginView() {
       setConfig(cfg);
       setSession(sess);
       if (sess && !sess.tenant_id && sess.tenants.length) setTenants(sess.tenants); // đã qua Google nhưng chưa chọn công ty
-      if (cfg?.dev) setLogins(await auth.devLogins().catch(() => []));
+      if (cfg?.dev) setLogins(cfg.dev_logins ?? (await auth.devLogins().catch(() => [])));   // BFF thường kèm sẵn danh sách vai
     })();
     return () => {
       alive = false;
@@ -65,6 +68,17 @@ export function LoginView() {
   }, []);
 
   const go = useCallback(() => router.replace(next), [router, next]);
+
+  // Trong lúc người đọc màn đăng nhập: tải sẵn mã của trang chủ (khung bàn làm việc + phần vẽ biểu đồ — màn chủ của nhiều vai là dashboard) ⇒ chạm chọn
+  // xong chỉ còn chờ đăng nhập + dữ liệu, không chờ tải mã. KHÔNG dùng router.prefetch("/"): khi chưa có cookie, proxy.ts chuyển "/" về /login và
+  // router NHỚ chuyển hướng đó ⇒ đăng nhập xong router.replace("/") vẫn đứng ở /login (Next không cho proxy phân biệt yêu cầu tải sẵn).
+  // Bắt đầu SAU khi danh sách đã hiện (có cấu hình) ⇒ không giành đường truyền với lượt hỏi cấu hình.
+  const ready = config !== null;
+  useEffect(() => {
+    if (signinReq || !ready) return;
+    void import("@/components/desk/shell");
+    preloadCharts();
+  }, [signinReq, ready]);
 
   const onCredential = useCallback(
     async (credential: string, nonce: string) => {
@@ -94,6 +108,7 @@ export function LoginView() {
 
   async function pickDev(l: DevLogin) {
     setBusy(true);
+    setPicked(l.tenant_id + l.email);
     setError(null);
     try {
       await auth.devLogin(l.email, l.tenant_id);
@@ -101,6 +116,7 @@ export function LoginView() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không đăng nhập được");
       setBusy(false);
+      setPicked(null);
     }
   }
 
@@ -170,14 +186,14 @@ export function LoginView() {
                     <ul className="divide-y divide-border overflow-hidden rounded-xl bg-surface">
                       {rows.map((l) => (
                         <li key={l.tenant_id + l.email}>
-                          <button type="button" disabled={busy} onClick={() => void pickDev(l)} className="flex w-full items-start gap-3 px-4 py-2.5 text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:opacity-60" data-login={l.email}>
+                          <button type="button" disabled={busy} aria-busy={picked === l.tenant_id + l.email} onClick={() => void pickDev(l)} className={cn("flex w-full items-start gap-3 px-4 py-2.5 text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:opacity-60", picked === l.tenant_id + l.email && "bg-accent disabled:opacity-100")} data-login={l.email}>
                             <Initials name={l.name} size={36} />
                             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                               <span className="flex items-baseline gap-1.5"><span className="t14m">{l.name}</span><span className="t12 text-muted-foreground">{l.role}</span></span>
                               {l.hint ? <span className="t12 text-muted-foreground">{l.hint}</span> : null}
                               {l.ask ? <span className="t12 text-bad">Thử hỏi: “{l.ask}”</span> : null}
                             </span>
-                            <ChevronRight className="mt-2.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                            {picked === l.tenant_id + l.email ? <Spinner className="mt-2.5 size-3.5 shrink-0" /> : <ChevronRight className="mt-2.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />}
                           </button>
                         </li>
                       ))}

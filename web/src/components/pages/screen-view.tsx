@@ -1,7 +1,7 @@
 "use client";
 
 import { FileSpreadsheet, FileUp, Pencil, Sparkles } from "lucide-react";
-import { KbIntakeDialog } from "@/components/forms/kb-intake";
+import { KbIntakeDialog } from "@/components/blocks/lazy";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "@/lib/api";

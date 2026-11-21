@@ -1,12 +1,13 @@
 "use client";
 
 import { Layers } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { shortcutFor } from "@/lib/shortcuts";
 import { railSections } from "@/lib/talk";
 import { cn } from "@/lib/utils";
 import { DialogHost } from "@/components/forms/dialogs";
 import { Spinner } from "@/components/primitives";
+import { CommandPalette, preloadCharts } from "@/components/blocks/lazy";
 import { CanvasView } from "./canvas";
 import { ColumnResizer, useColumnWidth } from "./column-width";
 import { ChatColumn } from "./chat-column";
@@ -14,7 +15,6 @@ import { DeskColumn } from "./desk-column";
 import { ChatProvider, useChat } from "./chat-context";
 import { DeskProvider, useDesk } from "./desk-context";
 import { MessagesColumn, MessagesDetail } from "./messages";
-import { CommandPalette } from "./palette";
 import { Rail } from "./rail";
 import { useSolo } from "./solo";
 import { WorkspaceColumn } from "./workspace-column";
@@ -38,6 +38,11 @@ function Shell() {
   const chat = useChat();
   const solo = useSolo();
   const colWidth = useColumnWidth(desk.section.kind === "workspace" ? "menu" : "chat");   // cột chọn màn hẹp hơn cột trò chuyện; kéo mép để đổi
+  // phần vẽ biểu đồ không nằm trong JS tải lần đầu; tải sẵn ngay sau lần vẽ đầu, song song với lúc chờ dữ liệu màn chủ (không đợi dữ liệu về rồi mới tải mã)
+  useEffect(preloadCharts, []);
+  // ⌘K (cmdk) chỉ tải khi mở lần đầu; mở rồi thì giữ để hoạt hoạ đóng / mở lần sau như cũ
+  const [paletteOn, setPaletteOn] = useState(false);
+  if (desk.paletteOpen && !paletteOn) setPaletteOn(true);
 
   // phím tắt (đọc trạng thái mới nhất qua ref — gắn một lần)
   const deskRef = useRef(desk);
@@ -113,7 +118,7 @@ function Shell() {
         {detail ? <MessagesDetail /> : <CanvasView />}
       </div>
       <DialogHost />
-      <CommandPalette />
+      {paletteOn ? <CommandPalette /> : null}
       <Toast />
       <span className="sr-only" aria-live="polite">{chat.live ? "Trợ lý đang trả lời" : ""}</span>
     </main>
