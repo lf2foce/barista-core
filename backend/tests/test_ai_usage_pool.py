@@ -162,3 +162,34 @@ async def test_a_row_the_database_refuses_is_dropped_at_once_and_does_not_block_
         await asyncio.gather(*tasks)
     assert await metering.flush()                                         # một lượt: dòng hỏng bị bỏ, dòng tốt được ghi
     assert await _count(cat_good) == 1 and await _count(cat_bad) == 0
+
+
+async def test_a_full_queue_never_drops_the_row_being_written(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rà 21/11/2026: vòng xả đang chờ ghi dòng đầu, một lượt khác thấy hàng đầy ⇒ trước đây bỏ ĐÚNG dòng đang ghi, rồi sau khi ghi xong ``popleft`` lấy
+    mất một dòng CHƯA ghi (mất lượt, không log). Nay dòng đang ghi rời hàng chờ trước khi chờ: hàng 2 chỗ, đang ghi a, thêm c ⇒ a, b, c đều được ghi."""
+    from types import SimpleNamespace
+
+    def row(name: str) -> Any:
+        return SimpleNamespace(surface="work", category=name, p=SimpleNamespace(tenant_id="t"), tries=0)
+
+    a, b, c = row("a"), row("b"), row("c")
+    written: list[str] = []
+    gate, started = asyncio.Event(), asyncio.Event()
+
+    async def fake_write(r: Any, *, wait: float | None = None) -> str:
+        if r is a:
+            started.set()
+            await gate.wait()
+        written.append(r.category)
+        return "ok"
+
+    monkeypatch.setattr(metering, "_write", fake_write)
+    monkeypatch.setattr(metering, "BACKLOG_MAX", 2)
+    monkeypatch.setattr(metering, "_backlog", __import__("collections").deque([a, b]))
+    monkeypatch.setattr(metering, "_flusher", asyncio.get_running_loop().create_future())   # vòng nền "đang chạy" ⇒ _queue không tự xả
+    flushing = asyncio.create_task(metering.flush())
+    await started.wait()
+    metering._queue(c)            # đúng lúc a đang ghi
+    gate.set()
+    assert await flushing is True
+    assert written == ["a", "b", "c"] and not metering._backlog

@@ -33,12 +33,16 @@ SHA=$(git rev-parse HEAD)
 [ "$(git rev-parse origin/main)" = "$SHA" ] || { echo "HEAD ($SHA) chưa trùng origin/main — commit + push trước"; exit 1; }
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/barista-release.XXXXXX")
 SHIP=$(mktemp -d "${TMPDIR:-/tmp}/barista-ship.XXXXXX")   # đúng tar.gz sẽ gửi: mã lõi của commit + gói của bản cài
+# CHỤP file bản cài MỘT LẦN ở đầu lượt: kiểm (gói ghim) và gửi lên VPS dùng đúng bản chụp này — phiên khác sửa barista-ops giữa lượt không làm lệch
+# giữa gói đã kiểm và file gửi đi (rà 21/11/2026). Tên file giữ nguyên (<bản cài>.json); BARISTA_OPS_DIR vẫn trỏ repo thật (đã đặt ở trên).
+SNAP=$(mktemp -d "${TMPDIR:-/tmp}/barista-instance.XXXXXX")
+cp "$INSTANCE_FILE" "$SNAP/" && INSTANCE_FILE="$SNAP/$(basename "$INSTANCE_FILE")"
 # Pha kiểm dùng chung với scripts/premerge.sh (deploy/checks.sh): DB test RIÊNG của lần kiểm này (mã lần chạy ⇒ barista_erp_test_<mã>(_gwN) …; pytest
 # tự xoá khi xong, bẫy EXIT xoá nốt phần còn sót) — phiên khác đang chạy test trên cùng máy không đụng DB của lần kiểm này và ngược lại.
 . deploy/checks.sh
 export BARISTA_TEST_RUN_ID="rel${SHA:0:8}$$"
 cleanup() {
-  rm -rf "$WORK" "$SHIP"
+  rm -rf "$WORK" "$SHIP" "$SNAP"
   drop_test_dbs
 }
 trap cleanup EXIT

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Kiểm nhanh trước khi đẩy (~1 phút): quét tên khách / email thật / khoá bí mật (barista-ops), khoá phát hành (khi đẩy main), ruff + pyright (khi backend/ hoặc deploy/ đổi), tsc (khi web/ đổi), BỘ TEST LUẬT (khi bộ quy định đổi — GitHub CI
-# đã tắt nên đây là cổng sớm nhất cho luật, runbook 13). KHÔNG chạy bộ test đầy đủ
+# Kiểm nhanh trước khi đẩy (~1 phút): quét tên khách / email thật / khoá bí mật (barista-ops), khoá phát hành (khi đẩy main), ruff + pyright (khi backend/ hoặc deploy/ đổi), tsc (khi web/ đổi), BỘ TEST LUẬT (khi bộ quy định đổi — cổng sớm
+# nhất cho luật, runbook 13; CI trên GitHub (.github/workflows/ci.yml) chạy đủ bộ test cho mọi PR / main). KHÔNG chạy bộ test đầy đủ
 # (backend/scripts/test_repeat.sh chạy tay trước phát hành). Bỏ qua khẩn cấp: git push --no-verify.
 # Cài: bash scripts/install_hooks.sh
 set -uo pipefail
@@ -10,16 +10,16 @@ ZERO=0000000000000000000000000000000000000000
 
 changed=""
 to_main=0
-pushed=()
+pushed=()   # "<commit> <gốc>" — quét MỌI commit trong gốc..commit, không chỉ đầu nhánh (rà 21/11/2026)
 while read -r _lref lsha rref rsha; do
   [[ "$lsha" == "$ZERO" ]] && continue   # xoá nhánh
-  pushed+=("$lsha")
   [[ "$rref" == refs/heads/main ]] && to_main=1
   if [[ "$rsha" == "$ZERO" ]]; then      # nhánh mới: so với main (hoặc origin/main)
     base="$(git merge-base "$lsha" origin/main 2>/dev/null || git merge-base "$lsha" main 2>/dev/null || true)"
   else
     base="$rsha"
   fi
+  pushed+=("$lsha ${base:-}")
   if [[ -n "$base" ]] && git cat-file -e "$base" 2>/dev/null; then
     changed+=$'\n'"$(git diff --name-only "$base" "$lsha")"
   else
@@ -33,7 +33,7 @@ fail=0
 siblings="$(dirname "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")")"
 scan="${BARISTA_OPS_DIR:-$siblings/barista-ops}/share/scan-core.sh"
 if [[ -f "$scan" ]]; then
-  for sha in "${pushed[@]}"; do bash "$scan" "$sha" || fail=1; done
+  for pair in "${pushed[@]}"; do read -r sha base <<<"$pair"; bash "$scan" "$sha" "$base" || fail=1; done
 else
   echo "pre-push: bỏ qua quét tên khách — không thấy $scan"
 fi

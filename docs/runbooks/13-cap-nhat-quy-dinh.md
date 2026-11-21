@@ -56,9 +56,10 @@ khi bấm Tính lại; lệnh Tính lại trả `law_changes` + tổng thực nh
 Sổ sách › Bộ quy định › Khai dữ kiện (vd chuyển khai GTGT theo tháng, không còn lao động) — áp cho kỳ mở sau. Loại hình (doanh nghiệp / hộ) đổi ở
 Thiết lập dịch vụ.
 
-## Test luật khi không có GitHub CI (0154)
+## Test luật (0154)
 
-Workflow GitHub chỉ chạy tay (tài khoản hết hạn mức). Cổng thật là `deploy/release.sh`: chạy `ruff + pyright + pytest -q` ĐẦY ĐỦ trên bản `git archive` của commit trước khi gửi lên máy chủ,
+GitHub CI (`.github/workflows/ci.yml`) chạy đủ `ruff + pyright + pytest` và web cho mọi PR và mỗi lần đẩy main (không dùng secret, không phát hành).
+Cổng trước khi lên máy chủ vẫn là `deploy/release.sh`: chạy `ruff + pyright + pytest -q` ĐẦY ĐỦ trên bản `git archive` của commit trước khi gửi lên máy chủ,
 không có đường bỏ qua. Cổng sớm: `.githooks/pre-push` (bật bằng `bash scripts/install_hooks.sh`, runbook 11) — khi đổi `backend/src/barista/regulations/`, `kernel/regulations.py` hoặc
 `modules/pay/engine.py` nó chạy `test_regulations`, `test_pay_statutory`, `test_books`, `test_business_calendar`, `test_minors`, `test_pack_surface` (~45 giây). Bỏ qua khẩn cấp:
 `git push --no-verify` — rồi `release.sh` vẫn chạy đủ bộ test.

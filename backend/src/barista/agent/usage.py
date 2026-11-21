@@ -186,16 +186,22 @@ async def flush(*, wait: float | None = None) -> bool:
 
 
 async def _flush(wait: float | None) -> bool:
+    """Dòng đang ghi RỜI hàng chờ trước khi chờ ghi (rà 21/11/2026): ``_queue`` của lượt khác thấy hàng đầy bỏ dòng cũ nhất ĐANG CHỜ — không bao giờ
+    bỏ đúng dòng đang ghi, rồi ``popleft`` sau khi ghi lại lấy mất một dòng chưa ghi. Ghi hỏng (thử lại) ⇒ dòng về đầu hàng; bị huỷ giữa chừng ⇒ cũng về."""
     while _backlog:
-        row = _backlog[0]
-        if await _write(row, wait=wait) != RETRY:   # đã ghi, hoặc lỗi vĩnh viễn đã log — rời hàng chờ
-            _backlog.popleft()
+        row = _backlog.popleft()
+        try:
+            outcome = await _write(row, wait=wait)
+        except BaseException:
+            _backlog.appendleft(row)
+            raise
+        if outcome != RETRY:   # đã ghi, hoặc lỗi vĩnh viễn đã log
             continue
         row.tries += 1
         if row.tries >= MAX_TRIES:
-            _backlog.popleft()
             log.error("bỏ lượt dùng AI %s/%s của công ty %s sau %d lần ghi hỏng", row.surface, row.category, row.p.tenant_id, row.tries)
             continue
+        _backlog.appendleft(row)
         return False
     return True
 
