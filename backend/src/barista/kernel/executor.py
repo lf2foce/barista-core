@@ -5,6 +5,7 @@ luật duyệt (nếu lệnh bị đặt luật: tạo phiếu thay vì chạy) 
 Truy vấn (``query``): kiểm quyền → giao dịch READ ONLY (handler đọc không ghi được — DB chặn).
 """
 
+import base64
 import hashlib
 import json
 import logging
@@ -654,6 +655,10 @@ def visible_actions(p: Principal, out: Any) -> Any:
     acts = res.get("actions")
     if isinstance(acts, list) and acts and all(isinstance(a, dict) and "command" in a for a in acts):
         res["actions"] = [a for a in acts if can_run(p, a["command"])]
+    if isinstance(a := res.get("action"), dict) and "command" in a and not can_run(p, a["command"]):
+        res.pop("action")   # ô / mục bấm được (ui.field(action=) — 0251): người xem không chạy được lệnh ⇒ ô thường
+    if "label" in res and isinstance(o := res.get("open"), dict) and "query" in o and not can_run(p, o["query"]):
+        res.pop("open")   # ô dẫn sang trang người xem không mở được (vd màn Quản trị) ⇒ chữ thường, không lộ đường vào
     return res
 
 
@@ -848,6 +853,23 @@ def basis_changed(then: dict[str, str] | None, now: dict[str, str] | None, *, sh
     now = now or {}
     keys = then.keys() & now.keys() if shared_only else then.keys() | now.keys()
     return sorted(k for k in keys if then.get(k) != now.get(k))
+
+
+def basis_token(basis: dict[str, str] | None) -> str:
+    """Căn cứ ⇒ chữ ASCII gắn vào nút trang (``ui.act(basis=)``) để app gửi lại ở tiêu đề ``X-Expect-Basis`` (0251). Chỉ là dấu phiên bản, không phải dữ liệu:
+    app sửa chữ này cũng chỉ làm mất phép so cho CHÍNH người bấm — quyền vẫn do executor."""
+    return base64.urlsafe_b64encode(json.dumps(basis or {}, sort_keys=True, ensure_ascii=False).encode()).decode() if basis else ""
+
+
+def basis_of_token(raw: str | None) -> dict[str, str] | None:
+    """Ngược ``basis_token``; trống / hỏng ⇒ None (không so — như app cũ không gửi)."""
+    if not raw:
+        return None
+    try:
+        got = json.loads(base64.urlsafe_b64decode(raw.encode()))
+    except (ValueError, UnicodeError):
+        return None
+    return {str(k): str(v) for k, v in got.items()} if isinstance(got, dict) else None
 
 
 def stale_message(changed: list[str]) -> str:
@@ -1238,9 +1260,12 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
             if chain and await approvals.sole_owner(conn, p, chain):
                 # chủ tài khoản DUY NHẤT tự đổi: không ai trên để duyệt (0029) ⇒ chạy ngay, ghi rõ trong nhật ký, báo mọi quản trị
                 chain, note = None, approvals.SOLE_OWNER_NOTE + (f": {what}" if what else "")
-            basis = await basis_of(ctx, op, model) if (chain or expect_basis is not None) else None
+            basis = await basis_of(ctx, op, model) if (chain or expect_basis is not None or op.basis_required) else None
+            if op.basis_required and expect_basis is None and basis:
+                raise Conflict(op.basis_required)   # 0251: lệnh chốt thứ người bấm phải nhìn trước — không nêu căn cứ đã thấy ⇒ không chạy
             if changed := basis_changed(expect_basis, basis, shared_only=edited):
-                raise Conflict(stale_message(changed))
+                # người bấm (thẻ đề xuất / nút trang) đã thấy căn cứ khác hiện tại — không phải phiếu xin duyệt ⇒ "từ lúc bạn xem"
+                raise Conflict(f"Căn cứ đã đổi từ lúc bạn xem: {', '.join(changed)} — xem lại rồi làm lại")
             if chain:
                 aid = await approvals.create(conn, p, chain=chain, command=name, input=payload,
                                              summary=f"{p.name or p.email}: {op.title}" + (f" — {what}" if what else ""),

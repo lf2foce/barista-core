@@ -55,6 +55,10 @@ export type ActionSpec = {
   import_only?: boolean;
   /** Đường HTTP RIÊNG của gói cho lệnh này (vd chấm công: máy chủ đọc địa chỉ mạng của kết nối) — trống ⇒ `/v1/commands/{command}`. */
   route?: string;
+  /** CĂN CỨ người xem đang thấy (0071 / 0251): gửi lại nguyên chữ ở tiêu đề `X-Expect-Basis` khi chạy — số đã đổi ⇒ server trả `conflict`. */
+  basis?: string;
+  /** Câu hỏi lại của nút không có ô nào để điền (server soạn — vd "Phát hành = cấp số và khoá nội dung…"); trống ⇒ câu chung. */
+  confirm?: string;
 };
 
 export type OpenSpec = { query: string; bind: Record<string, string>; title: string };
@@ -264,7 +268,24 @@ export type Paging = { offset: number; limit: number; total: number; complete: b
 
 export type Compact = { shown: number; total: number | null };
 
-export type DetailField = { label: string; value: Json; format: string };
+/** Ô bấm được (0251, chỉ THÊM): `open` mở trang khác (vd "Thuộc: Giao dịch …"), `action` mở form của đúng ô (vd ô thiếu ⇒ điền); `placeholder` hiện khi ô trống. */
+export type DetailField = { label: string; value: Json; format: string; open?: OpenRef; action?: ActionSpec; placeholder?: string };
+/** Mẩu chữ của tờ giấy (0251): chữ của mẫu `{t}`; ô `{t, k, layer}` — `record` số từ hồ sơ (khoá), `company` thông tin công ty, `missing` ô trống (chạm điền), `person` người nhập. */
+export type SheetRun = { t: string; k?: string; layer?: string };
+export type SheetBlock = { type: string; text: string; runs?: SheetRun[]; columns?: string[]; rows?: string[][]; total?: string[]; align?: string[] };
+/** CHÍNH TỜ GIẤY (0251) — màn mặc định của giấy lập từ hồ sơ. `actions`: nút điền ô thiếu (khoá ô = `preset.key`). */
+export type Sheet = {
+  title: string;
+  number: string;
+  draftMark: string;
+  blocks: SheetBlock[];
+  signers: string[];
+  notes: string[];
+  actions: ActionSpec[];
+  legend: { layer: string; label: string }[];
+  /** Chạm số từ hồ sơ ⇒ mở hồ sơ để sửa (số không sửa trên giấy). */
+  open?: OpenRef;
+};
 /** `table` (0102): bảng thật trong văn bản (vd bảng phí của công văn) — vẽ bảng, không ghép chữ có dấu |. */
 export type SectionTable = { columns: string[]; rows: string[][]; total: string[] };
 export type DetailSection = { title: string; fields: DetailField[]; text: string | null; table: SectionTable | null };
@@ -286,6 +307,8 @@ export type DetailPage = {
   /** 0102: có ⇒ vẽ trình xem bản gốc; `textRole: "extracted"` ⇒ các mục là chữ bóc / OCR (tab phụ), mặc định mở bản gốc. */
   original: DetailOriginal | null;
   textRole: string | null;
+  /** 0251: có ⇒ vẽ tờ giấy làm góc nhìn mặc định (cạnh "Bản in"). */
+  sheet: Sheet | null;
 };
 
 export type OpenRef = { title?: string; query: string; input: Input };

@@ -56,7 +56,17 @@ def test_values_are_inserted_after_parsing_so_record_text_is_never_syntax() -> N
 
 def test_agent_modes() -> None:
     ops = registry.OPS
-    assert ops["papers.start_draft"].agent == "propose" and ops["papers.set_field"].agent == "propose"
-    assert ops["papers.issue"].agent == "deny" and ops["papers.publish_template"].agent == "deny"
-    assert ops["papers.refresh_draft"].agent == "allow"
-    assert all(ops[n].agent == "allow" for n in ("papers.drafts", "papers.view", "papers.templates_list", "papers.template_view"))
+    assert ops["papers.start_draft"].agent == "allow" and ops["papers.start_draft"].auto and ops["papers.set_field"].agent == "propose"
+    assert ops["papers.issue"].agent == "deny" and ops["papers.void"].agent == "deny" and ops["papers.publish_template"].agent == "deny"
+    assert ops["papers.issue"].basis is not None and "papers.refresh_draft" not in ops and "papers.drafts" not in ops
+    assert all(ops[n].agent == "allow" for n in ("papers.pending", "papers.view", "papers.templates_list", "papers.template_view"))
+
+
+def test_paper_authority_resources_are_granted_only_with_manage() -> None:
+    """ADR 0251: tài nguyên THẨM QUYỀN của loại giấy (``papers.office`` + tài nguyên gói khai cho chứng từ của mình, tên ``<module>.papers``) quyết cả AI
+    phát hành lẫn AI THẤY bản chưa phát hành (chính sách đọc của papers.documents). Cấp ``read`` / ``write`` không kèm ``manage`` cho một vai = cho vai đó
+    thấy bản chưa phát hành của người khác mà không phát hành được — bộ mặc định của lõi và mọi gói đang cài không được làm vậy."""
+    from barista import presets
+    authority = {r for r in registry.RESOURCES if r == "papers.office" or r.endswith(".papers")}
+    bad = [g for g in presets.grants() if g[1] in authority and "manage" not in g[3].split()]
+    assert "papers.office" in authority and not bad, bad

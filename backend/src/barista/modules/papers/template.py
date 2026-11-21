@@ -239,17 +239,37 @@ def fill(blocks: list[Block], catalog: dict[str, Field], values: dict[str, Any],
     out: list[dict[str, Any]] = []
     title = ""
 
-    def sub(text: str) -> str:
-        def one(m: re.Match[str]) -> str:
+    def runs(text: str) -> list[dict[str, Any]]:
+        """Đoạn chữ ⇒ các mẩu: chữ của mẫu ``{t}`` và ô ``{t, k, layer}`` — ``layer`` record (số từ hồ sơ / công ty: khoá, sửa ở nguồn) · person (người
+        nhập trên giấy) · missing (ô trống: chạm điền). App vẽ tờ giấy tô theo lớp (ADR 0251); chữ liền (``text``) là các mẩu nối lại."""
+        out: list[dict[str, Any]] = []
+        at = 0
+        for m in TOKEN.finditer(text):
+            if m.start() > at:
+                out.append({"t": text[at:m.start()]})
             k, flt = m[1], m[2] or ""
             v = values.get(k)
             if empty(v):
                 if k not in missing:
                     missing.append(k)
-                return GAP
-            out = fmt(v, catalog[k].kind if k in catalog else "text", flt)
-            return f"{out} [{marks[k]}]" if k in marks else out
-        return TOKEN.sub(one, text)
+                out.append({"t": GAP, "k": k, "layer": "missing"})
+            else:
+                shown = fmt(v, catalog[k].kind if k in catalog else "text", flt)
+                out.append({"t": f"{shown} [{marks[k]}]" if k in marks else shown, "k": k, "layer": "person" if k in marks else "record"})
+            at = m.end()
+        if at < len(text):
+            out.append({"t": text[at:]})
+        return out
+
+    def sub(text: str) -> str:
+        return "".join(r["t"] for r in runs(text))
+
+    def block(kind: str, text: str) -> dict[str, Any]:
+        rs = runs(text)
+        b: dict[str, Any] = {"type": kind, "text": "".join(r["t"] for r in rs)}
+        if any("k" in r for r in rs):
+            b["runs"] = rs
+        return b
 
     for b in blocks:
         if any(empty(values.get(k)) != neg for neg, k in b.when):
@@ -267,9 +287,9 @@ def fill(blocks: list[Block], catalog: dict[str, Field], values: dict[str, Any],
                 else:
                     out.append(_table(f, list(v or [])))
             else:
-                out.append({"type": "para", "text": sub("{{" + b.text + "}}")})
+                out.append(block("para", "{{" + b.text + "}}"))
         else:
-            out.append({"type": b.type, "text": sub(b.text)})
+            out.append(block(b.type, b.text))
     return Filled(title, out, missing, to_markdown(title, out))
 
 

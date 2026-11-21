@@ -184,6 +184,10 @@ class Op:
     # FORM THEO Ý ĐỊNH (ADR 0250, 1.72): các ô form mở ra HỎI TRƯỚC (ý định của người — vd việc gì, mốc nào, ai chịu trách nhiệm) + một ô "Mô tả / thả file";
     # phần còn lại do "Soạn giúp" (``core.draft_input``) điền thành chip máy đoán, hoặc người bấm "Điền tay toàn bộ". Rỗng = form đủ ô như cũ.
     intent: tuple[str, ...] = ()
+    # CĂN CỨ BẮT BUỘC (ADR 0251): khác rỗng ⇒ người bấm PHẢI nêu căn cứ đã thấy (``expect_basis`` — nút trang ``ui.act(basis=)`` / thẻ đề xuất / phiếu
+    # duyệt) khi căn cứ hiện tại khác rỗng; thiếu ⇒ ``conflict`` với câu này, không chạy. Lệnh chốt thứ người bấm phải nhìn trước (vd phát hành giấy
+    # theo số hồ sơ) — chạy "mù" từ một cửa không mang căn cứ là chốt thứ chưa ai xem.
+    basis_required: str = ""
 
 
 @dataclass(frozen=True)
@@ -835,7 +839,8 @@ class Module:
                   import_rows: Callable[..., Awaitable[list[dict[str, Any]]]] | None = None,
                   pin: Pin | None = None, consistent: bool = False, import_key: ImportKey | None = None,
                   import_table: ImportTable | None = None, extra: str = "",
-                  info: tuple[str, ...] = (), auto: bool = False, intent: tuple[str, ...] = ()) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+                  info: tuple[str, ...] = (), auto: bool = False, intent: tuple[str, ...] = (),
+                  basis_required: str = "") -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
         full = f"{self.key}.{name}"
         if extra and not (kind == "command" and extra in extra_fields.SUBJECTS and extra_fields.SUBJECTS[extra].module == self.key):
             raise ValueError(f"{full}: extra={extra!r} chỉ cho lệnh của module đã khai đối tượng đó (Module.extensible)")
@@ -892,7 +897,7 @@ class Module:
             OPS[full] = Op(full, kind, self.key, resource, action, fn, _input_model(fn), title,
                            description or (fn.__doc__ or "").strip(), internal, importable, min_scope, agent, shows, needs, category, public,
                            basis, callers, why, family, description, aside, sensitive, apps, prepare, promotable, target, undone_by, risk,
-                           import_rows, pin, consistent, import_key, import_table, extra, info, auto, intent)
+                           import_rows, pin, consistent, import_key, import_table, extra, info, auto, intent, basis_required)
             if sweep:
                 SWEEPS[full] = sweep
             return fn
@@ -907,7 +912,7 @@ class Module:
                 undone_by: tuple[str, ...] = (), risk: str = "", min_scope: str | None = None,
                 import_rows: Callable[..., Awaitable[list[dict[str, Any]]]] | None = None, pin: Pin | None = None,
                 prepare: Callable[..., Awaitable[Any]] | None = None, consistent: bool = False, import_key: ImportKey | None = None,
-                import_table: ImportTable | None = None, extra: str = "", auto: bool = False, intent: tuple[str, ...] = ()):
+                import_table: ImportTable | None = None, extra: str = "", auto: bool = False, intent: tuple[str, ...] = (), basis_required: str = ""):
         """``intent`` (ADR 0250, 1.72): ô Ý ĐỊNH của form — form mở ra chỉ hỏi các ô này + một ô "Mô tả / thả file"; "Soạn giúp" (``core.draft_input``) để trợ lý
         soạn ĐỦ đầu vào của đúng lệnh này (chip máy đoán, người sửa rồi gửi qua executor như thường). Khai ô người biết mà máy không đoán được (việc gì, mốc
         nào, ai chịu trách nhiệm) — không khai ô máy suy ra được (danh sách việc, hạn từng việc). Không khai ⇒ form đủ ô như cũ.
@@ -921,7 +926,7 @@ class Module:
         ``needs``: gói nghiệp vụ lệnh cần thêm (tắt ⇒ lệnh coi như không có, nút không hiện).
         ``sweep``: lệnh nội bộ chạy trong vòng quét định kỳ — SQL trả ``tenant_id`` các công ty đang có việc tới hạn (``SWEEPS``).
         ``basis``: căn cứ của lệnh (0071) — ``async (ctx, input) -> {nhãn người đọc: dấu phiên bản}``; cần tuyệt đối không khe thì khoá dòng
-        (``FOR SHARE``) trong hàm.
+        (``FOR SHARE``) trong hàm. ``basis_required`` (0251): câu báo khi người bấm KHÔNG nêu căn cứ đã thấy mà căn cứ hiện tại khác rỗng ⇒ không chạy.
         ``callers`` + ``why``: hợp đồng quyền hệ thống (module được ``call_system`` tới lệnh này, lý do + quyền mở tới đâu).
         ``family``: dịch vụ lõi mở cho gói ngoài mà lõi không biết tên — module nào khai ``consumes(family)`` cũng được ``call_system`` (cùng ``callers=``).
         ``aside``: thẻ đề xuất của trợ lý là gợi ý BÊN LỀ — không chặn lượt trả lời (việc phụ người làm khi tiện, vd ghi nhớ).
@@ -938,11 +943,13 @@ class Module:
         chuẩn bị gọi nhà cung cấp ngoài giao dịch (``prep.query`` đọc bằng quyền hệ thống, giao dịch đọc ngắn), handler ghi kết quả."""
         if prepare is not None and internal and not sweep:
             raise ValueError(f"{self.key}.{name}: prepare chỉ cho lệnh người gọi trực tiếp hoặc vòng quét (không cho lệnh nội bộ khác)")
+        if basis_required and basis is None:
+            raise ValueError(f"{self.key}.{name}: basis_required cần basis=")
         return self._register("command", name, resource, action, title, description, internal, importable, agent=agent,
                               shows=shows, needs=needs, public=public, category=category, sweep=sweep, basis=basis, callers=callers, why=why,
                               family=family, aside=aside, sensitive=sensitive, apps=apps, promotable=promotable, target=target, undone_by=undone_by, risk=risk,
                               import_rows=import_rows, pin=pin, min_scope=min_scope, prepare=prepare, consistent=consistent, import_key=import_key, import_table=import_table, extra=extra,
-                              auto=auto, intent=intent)
+                              auto=auto, intent=intent, basis_required=basis_required)
 
     def query(self, name: str, *, resource: str | None, title: str, action: str = "read", description: str = "",
               internal: bool = False, min_scope: str | None = None, agent: str = "allow", needs: tuple[str, ...] = (),

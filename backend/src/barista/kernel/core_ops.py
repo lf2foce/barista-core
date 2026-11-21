@@ -31,7 +31,7 @@ Pack("base", "Nền",
                                ("core.ai_skills", "all", "read write manage"),   # kỹ năng trợ lý (0198): soạn + duyệt (người duyệt khác người soạn)
                                ("core.ai_tools", "all", "read write"),   # bộ công cụ trợ lý theo vai (0218) — không cấp quyền
                                ("core.approvals", "all", "read"), ("kb.common", "all", "read write manage"),
-                               ("papers", "all", "read write manage"), ("papers.templates", "all", "read write manage"), ("flow", "all", "read write manage"),
+                               ("papers", "all", "read write"), ("papers.office", "all", "read write manage"), ("papers.templates", "all", "read write manage"), ("flow", "all", "read write manage"),
                                ("flow.templates", "all", "read write manage"), ("flow.automations", "all", "read write manage"),
                                ("asks", "all", "read write"), ("connectors", "all", "read write manage"),
                                ("work", "all", "read write"),),
@@ -50,7 +50,7 @@ Pack("base", "Nền",
                                   ("core.ai_skills", "all", "read write manage"),   # kỹ năng trợ lý = cách làm nghiệp vụ của công ty (0198)
                                   ("core.ai_tools", "all", "read write"),   # trợ lý của vai mang sẵn nhóm công cụ nào (0218)
                                   ("ledger", "all", "read"), ("kb.common", "all", "read write manage"), ("memory.legacy", "all", "read write"),
-                                  ("papers", "all", "read write manage"), ("papers.templates", "all", "read write manage"), ("flow", "all", "read write manage"),
+                                  ("papers", "all", "read write"), ("papers.office", "all", "read write manage"), ("papers.templates", "all", "read write manage"), ("flow", "all", "read write manage"),
                                   ("flow.templates", "all", "read write manage"), ("flow.automations", "all", "read write manage"),
                                ("asks", "all", "read write"), ("connectors", "all", "read"),
                                   ("work", "all", "read"),),

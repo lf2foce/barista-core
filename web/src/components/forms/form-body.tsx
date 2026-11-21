@@ -330,7 +330,7 @@ export function FormBody({
           return;
         }
       }
-      const r = await api.command(action.command, input, key, action.route);
+      const r = await api.command(action.command, input, key, action.route, action.basis);
       if (r.status === "ok") {
         const msg = r.replayed ? "Đã gửi trước đó — không chạy lại" : `Đã xong: ${action.title}`;
         const warn = savedWarning(r.output);
@@ -515,7 +515,7 @@ export function FormBody({
           })}
         </div>
       ) : spec ? (
-        <p className="t14 text-muted-foreground">Không cần điền gì thêm — bấm “{action.title}” để xác nhận.</p>
+        <p className="t14 text-muted-foreground">{action.confirm || `Không cần điền gì thêm — bấm “${action.title}” để xác nhận.`}</p>
       ) : null}
       {error ? <ErrorLine>{error}</ErrorLine> : null}
       {step === "intent" ? (

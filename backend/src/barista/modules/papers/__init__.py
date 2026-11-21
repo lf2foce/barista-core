@@ -19,6 +19,8 @@ from psycopg.types.json import Jsonb
 from barista.api import Action as A
 from barista.api import (
     Ctx,
+    Denied,
+    Desk,
     Input,
     Invalid,
     Module,
@@ -33,15 +35,48 @@ from barista.api import (
     today,
     ui,
     web,
+    zone,
 )
-from barista.kernel import convert
+from barista.kernel import attention, convert, registry
 
-m = Module("papers", "Giấy tờ", pack="base", resources={"papers": "Giấy tờ & công văn", "papers.templates": "Mẫu văn bản (soạn thảo)"},
+OFFICE = "papers.office"   # tài nguyên THẨM QUYỀN của văn bản hành chính (ADR 0251) — chỉ cấp cho vai ban hành, luôn kèm ``manage``
+m = Module("papers", "Giấy tờ", pack="base", resources={"papers": "Giấy tờ & công văn", "papers.templates": "Mẫu văn bản (soạn thảo)",
+                                                       OFFICE: "Văn bản hành chính — ban hành"},
            setup=("papers.templates",))
 
 LETTER = "letter"   # công văn — loại duy nhất của lõi; loại khác do gói khai khi soạn (save_draft)
-STATUS = {"draft": "Dự thảo", "issued": "Đã ban hành", "void": "Đã huỷ"}
 CONTRACT = "contract"   # khuôn của văn bản soạn từ mẫu (0118) — Quốc hiệu, tên văn bản, các mục, bảng, khung ký nhiều bên
+
+
+# ── HAI HỌ GIẤY (ADR 0251) — MỘT nguồn cho khoá lẫn nhãn trạng thái / nút. Họ của một giấy = theo THẨM QUYỀN của loại giấy: tài nguyên ``papers.office``
+#    ⇒ văn bản hành chính của công ty; tài nguyên gói khai cho chứng từ theo hồ sơ của mình ⇒ chứng từ (theo hồ sơ). Giá trị trong DB giữ draft / issued / void.
+FAMILIES: dict[str, dict[str, Any]] = {
+    "office": {"label": "Văn bản hành chính", "status": {"draft": "Dự thảo", "issued": "Đã ban hành", "void": "Hết hiệu lực"},
+               "issue": "Ban hành", "discard": "Bỏ dự thảo", "draft_mark": "DỰ THẢO", "file": "Du-thao"},
+    "record": {"label": "Chứng từ theo hồ sơ", "status": {"draft": "Đang lập", "issued": "Đã phát hành", "void": "Hết hiệu lực"},
+               "issue": "Phát hành", "discard": "Bỏ bản đang lập", "draft_mark": "CHƯA PHÁT HÀNH", "file": "Chua-phat-hanh"},
+}
+VOID = "Cho hết hiệu lực"
+STATUS = {"draft": "Chưa cấp số", "issued": "Đã cấp số", "void": "Hết hiệu lực"}   # bộ lọc chung cho cả hai họ (nhãn theo họ: ``status_label``)
+STATES = {f"{f}.{k}": v for f, x in FAMILIES.items() for k, v in x["status"].items()}   # cột trạng thái của danh sách: "<họ>.<trạng thái>"
+TONES = {f"{f}.{k}": t for f in FAMILIES for k, t in (("draft", "orange"), ("issued", "green"), ("void", "gray"))}
+
+
+def family_of(authority: str) -> str:
+    return "office" if authority == OFFICE else "record"
+
+
+def status_label(d: dict[str, Any]) -> str:
+    return FAMILIES[family_of(d["authority"])]["status"][d["status"]]
+
+
+def can_issue(ctx: Ctx, d: dict[str, Any]) -> bool:
+    """Người này ban hành / phát hành được loại giấy này — quyền một nguồn: ``manage`` trên tài nguyên thẩm quyền của giấy (grants)."""
+    return ctx.p.can(d["authority"], "manage")
+
+
+def authority_label(resource: str) -> str:
+    return registry.RESOURCES.get(resource, resource)
 
 # ── Thông tin công ty ──
 
@@ -104,12 +139,12 @@ async def set_settings(ctx: Ctx, inp: SetSettings) -> dict[str, Any]:
 # ── Soạn nháp ──
 
 async def _insert(ctx: Ctx, *, kind: str, kind_label: str, title: str, abbr: str, layout: str, summary: str, recipient: str,
-                  content: dict[str, Any], ref: str) -> dict[str, Any]:
+                  content: dict[str, Any], ref: str, authority: str = OFFICE) -> dict[str, Any]:
     team = await ctx.home_team(ctx.p.user_id)
     pid = await ctx.val(
-        """INSERT INTO papers.documents (kind, kind_label, title, abbr, layout, year, summary, recipient, content, ref, created_by, team_id)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-        (kind, kind_label, title, abbr, layout, today().year, summary, recipient, Jsonb(content), ref, ctx.p.user_id, team))
+        """INSERT INTO papers.documents (kind, kind_label, title, abbr, layout, year, summary, recipient, content, ref, created_by, team_id, authority)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+        (kind, kind_label, title, abbr, layout, today().year, summary, recipient, Jsonb(content), ref, ctx.p.user_id, team, authority))
     return {"paper_id": pid, "status": "draft", "summary": summary}
 
 
@@ -123,6 +158,8 @@ class Draft(Input):
     recipient: str = field("Kính gửi", "", max_length=300)
     content: dict[str, Any]
     ref: str = field("Liên quan", "", max_length=200)
+    authority: str = field("Thẩm quyền ban hành", "", max_length=80,
+                           help="Tài nguyên thẩm quyền của loại giấy (ADR 0251) — trống = văn bản hành chính (papers.office); chứng từ của gói: tài nguyên gói khai")
 
 
 @m.command("save_draft", resource="papers", title="Lưu bản soạn (cho gói)", internal=True, agent="deny", family="paper_draft",
@@ -140,8 +177,11 @@ async def save_draft(ctx: Ctx, inp: Draft) -> dict[str, Any]:
         raise Invalid("Mã loại giấy chỉ chữ thường / gạch dưới, khác công văn và khác dãy của mẫu văn bản (mau_…)")
     if inp.layout == "handout" and not isinstance(inp.content.get("handout"), dict):
         raise Invalid("Tài liệu gửi khách cần nội dung handout")
+    authority = inp.authority or OFFICE
+    if authority not in registry.RESOURCES:
+        raise Invalid(f"Thẩm quyền {authority} chưa được khai (tài nguyên của module)")
     return await _insert(ctx, kind=inp.kind, kind_label=inp.kind_label, title=inp.title.upper(), abbr=inp.abbr.upper(), layout=inp.layout,
-                         summary=inp.summary, recipient=inp.recipient, content=inp.content, ref=inp.ref)
+                         summary=inp.summary, recipient=inp.recipient, content=inp.content, ref=inp.ref, authority=authority)
 
 
 class Letter(Input):
@@ -163,24 +203,46 @@ async def draft_letter(ctx: Ctx, inp: Letter) -> dict[str, Any]:
                          recipient=inp.recipient, content=content, ref="")
 
 
-# ── Ban hành / huỷ ──
+# ── Ban hành / phát hành · hết hiệu lực ──
 
 class PaperRef(Input):
     paper_id: UUID = field("Giấy tờ", hidden=True)
 
 
-@m.command("issue", resource="papers", action="manage", title="Ban hành (cấp số)", agent="deny")
-async def issue(ctx: Ctx, inp: PaperRef) -> dict[str, Any]:
-    """Cấp số liên tục theo loại trong năm (từ 01 mỗi năm), khoá nội dung. Chỉ người bấm — trợ lý không ban hành."""
-    d = await ctx.one("SELECT * FROM papers.documents WHERE id = %s FOR UPDATE", (inp.paper_id,))
+async def _issue_basis(ctx: Ctx, inp: PaperRef) -> dict[str, str]:
+    """Căn cứ của lệnh ban hành (0071): số liệu hồ sơ + dữ kiện người nhập của giấy theo mẫu — đổi giữa lúc xem và lúc bấm ⇒ "xem lại" (0251)."""
+    return await compose.issue_basis(ctx, inp.paper_id)
+
+
+def can_discard(ctx: Ctx, d: dict[str, Any]) -> bool:
+    """Bỏ bản chưa cấp số: người lập hoặc người có thẩm quyền loại đó; giấy đã cấp số chỉ người có thẩm quyền cho hết hiệu lực."""
+    return can_issue(ctx, d) or (d["status"] == "draft" and d["created_by"] == ctx.p.user_id)
+
+
+async def _authorized(ctx: Ctx, paper_id: UUID, *, discard: bool = False) -> dict[str, Any]:
+    d = await ctx.one("SELECT * FROM papers.documents WHERE id = %s FOR UPDATE", (paper_id,))
     if d is None:
         raise NotFound("Không thấy giấy tờ")
+    await compose.require_seen(ctx, d)
+    if not (can_discard(ctx, d) if discard else can_issue(ctx, d)):
+        raise Denied(f"Bạn không có thẩm quyền {FAMILIES[family_of(d['authority'])]['issue'].lower()} loại giấy này ({authority_label(d['authority'])})")
+    return d
+
+
+@m.command("issue", resource="papers", action="write", title="Ban hành / phát hành (cấp số)", agent="deny", basis=_issue_basis, consistent=True,
+           basis_required="Mở lại giấy để xem bản mới nhất rồi bấm lại — giấy theo hồ sơ chỉ phát hành đúng bản bạn vừa xem")
+async def issue(ctx: Ctx, inp: PaperRef) -> dict[str, Any]:
+    """Chốt số + cấp số liên tục theo loại trong năm (từ 01 mỗi năm) + cất .docx đóng băng. Thẩm quyền theo LOẠI giấy (``manage`` trên tài nguyên thẩm
+    quyền của giấy — ADR 0251), không theo quyền giấy tờ chung. Chỉ người bấm — trợ lý không ban hành.
+    Giấy theo hồ sơ: người bấm PHẢI nêu căn cứ đã thấy (``basis_required``); cả lệnh chạy trong MỘT ảnh dữ liệu (``consistent`` — REPEATABLE READ) nên
+    căn cứ đã so, nội dung chốt, số cấp và tệp .docx đóng băng đều từ CÙNG một bản số — hồ sơ đổi giữa lúc so và lúc chốt không lọt vào tệp."""
+    d = await _authorized(ctx, inp.paper_id)
     if d["layout"] == "handout":
         raise Invalid(f"{d['kind_label']} là tài liệu gửi khách — không cần ban hành / cấp số")
     if d["status"] != "draft":
-        raise Invalid("Chỉ ban hành được bản dự thảo")
-    if d["template_version_id"] is not None:   # soạn từ mẫu (0118): còn ô thiếu / hồ sơ đã đổi ⇒ chặn, đọc lại bằng quyền người ban hành
-        await compose.check_issue(ctx, d["id"])
+        raise Invalid(f"Giấy đã {status_label(d).lower()}")
+    if d["template_version_id"] is not None:   # soạn từ mẫu (0118 / 0251): đọc số mới nhất bằng quyền người bấm, còn ô thiếu ⇒ chặn; đủ ⇒ chốt nội dung
+        await compose.freeze(ctx, d)
     await ctx.exec("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"papers:{ctx.p.tenant_id}:{d['kind']}:{d['year']}",))
     n = int(await ctx.val("SELECT coalesce(max(number), 0) + 1 FROM papers.documents WHERE kind = %s AND year = %s",
                           (d["kind"], d["year"])))
@@ -190,22 +252,23 @@ async def issue(ctx: Ctx, inp: PaperRef) -> dict[str, Any]:
     await ctx.exec("UPDATE papers.documents SET status = 'issued', number = %s, symbol = %s, issued_by = %s, issued_on = core.today()"
                    " WHERE id = %s", (n, symbol, ctx.p.user_id, d["id"]))
     await _store_issued(ctx, d["id"])   # MỌI giấy ban hành (cả công văn tự do — ADR 0249 lát 4): tệp đóng băng lúc cấp số
-    return {"paper_id": d["id"], "symbol": symbol}
+    return {"paper_id": d["id"], "symbol": symbol, "summary": f"{d['kind_label']} số {symbol} — {FAMILIES[family_of(d['authority'])]['status']['issued'].lower()}"}
 
 
-@m.command("void", resource="papers", action="manage", title="Huỷ giấy tờ", agent="deny")
+@m.command("void", resource="papers", action="write", title="Cho hết hiệu lực", agent="deny")
 async def void(ctx: Ctx, inp: PaperRef) -> dict[str, Any]:
-    if (d := await ctx.one("SELECT * FROM papers.documents WHERE id = %s", (inp.paper_id,))) is not None:
-        await compose.require_seen(ctx, d)   # giấy theo mẫu: phải đọc được hồ sơ nguồn
-    n = await ctx.exec("UPDATE papers.documents SET status = 'void' WHERE id = %s AND status <> 'void'", (inp.paper_id,))
-    if not n:
-        raise NotFound("Không thấy giấy tờ")
-    return {"paper_id": inp.paper_id, "status": "void"}
+    """Giấy đã cấp số ⇒ hết hiệu lực (số giữ nguyên, tệp ban hành giữ nguyên); bản chưa cấp số ⇒ bỏ. Cùng thẩm quyền với ban hành loại giấy đó."""
+    d = await _authorized(ctx, inp.paper_id, discard=True)
+    if d["status"] == "void":
+        raise Invalid("Giấy đã hết hiệu lực")
+    await ctx.exec("UPDATE papers.documents SET status = 'void' WHERE id = %s", (d["id"],))
+    return {"paper_id": d["id"], "status": "void"}
 
 
 # ── Xem / danh sách / xuất ──
 
 class PaperFilter(Input):
+    family: str = field("Họ giấy", "", options={"": "Tất cả", **{k: f["label"] for k, f in FAMILIES.items()}})
     status: str = field("Trạng thái", "", options={"": "Tất cả", **STATUS})
     kind: str = field("Loại", "", options_query="papers.kind_options")
 
@@ -216,28 +279,83 @@ async def kind_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
                                        ORDER BY kind, created_at DESC"""))
 
 
+def rows_of(ctx: Ctx, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Dòng danh sách: họ + trạng thái theo họ (``state``), nút ban hành / phát hành chỉ khi người xem có thẩm quyền loại đó (``can_issue`` — server quyết)."""
+    hide = ("template_version_id", "subject_kind", "subject_id", "created_by")
+    return [{**{k: v for k, v in r.items() if k not in hide}, "family": family_of(r["authority"]), "state": f"{family_of(r['authority'])}.{r['status']}",
+             "about": about(r), "on": r["issued_on"] or r["created_at"].astimezone(zone()).date(),
+             "can_issue": r["status"] == "draft" and r["layout"] != "handout" and can_issue(ctx, r),
+             "can_discard": r["status"] == "draft" and can_discard(ctx, r)} for r in rows]
+
+
+def about(r: dict[str, Any]) -> str:
+    """Cột "Về": giấy lập từ hồ sơ ⇒ mã + tên hồ sơ (vd "C-2214 · Nguyễn Minh An"); công văn ⇒ trích yếu."""
+    if r.get("template_version_id") is None:
+        return r["summary"]
+    title = r["summary"].removeprefix(r["kind_label"] + " — ")
+    return title if r["ref"] and r["ref"] in title else " · ".join(x for x in (r["ref"], title) if x)
+
+
+LIST_SQL = """SELECT d.id, d.kind, d.kind_label, d.status, d.layout, d.authority, d.created_by,
+                     CASE WHEN d.layout = 'handout' THEN (CASE WHEN (d.content->'handout'->>'internal')::boolean THEN 'Nội bộ' ELSE 'Gửi khách' END)
+                          ELSE coalesce(nullif(d.symbol, ''), '—') END AS symbol,
+                     d.summary, d.recipient, d.ref, u.name AS author, d.created_at, d.issued_on, d.template_version_id, d.subject_kind, d.subject_id
+              FROM papers.documents d LEFT JOIN core.users u ON u.id = d.created_by"""
+
+
 @m.query("list", resource="papers", title="Giấy tờ & công văn")
 async def list_papers(ctx: Ctx, inp: PaperFilter) -> dict[str, Any]:
+    """MỘT danh sách cho hai họ (lọc theo họ). Bản chưa cấp số chỉ người lập + người có thẩm quyền loại đó thấy (RLS — ADR 0251)."""
     rows = await ctx.all(
-        """SELECT d.id, d.kind, d.kind_label, d.status, d.layout,
-                  CASE WHEN d.layout = 'handout' THEN (CASE WHEN (d.content->'handout'->>'internal')::boolean THEN 'Nội bộ' ELSE 'Gửi khách' END) ELSE coalesce(nullif(d.symbol, ''), 'Dự thảo') END AS symbol,
-                  d.summary, d.recipient, u.name AS author, d.created_at, d.issued_on, d.template_version_id, d.subject_kind, d.subject_id,
-                  CASE WHEN d.template_version_id IS NULL THEN 'no' ELSE 'yes' END AS templated, cardinality(r.missing) AS missing
-           FROM papers.documents d LEFT JOIN core.users u ON u.id = d.created_by
-           LEFT JOIN papers.revisions r ON r.document_id = d.id AND r.rev = d.rev AND d.template_version_id IS NOT NULL
-           WHERE (%(s)s = '' OR d.status = %(s)s) AND (%(k)s = '' OR d.kind = %(k)s)
-           ORDER BY d.created_at DESC LIMIT 1000""", {"s": inp.status, "k": inp.kind})
-    rows = [{k: v for k, v in r.items() if k not in ("template_version_id", "subject_kind", "subject_id")} for r in await compose.visible(ctx, rows)]
+        LIST_SQL + """ WHERE (%(s)s = '' OR d.status = %(s)s) AND (%(k)s = '' OR d.kind = %(k)s)
+                         AND (%(f)s = '' OR (d.authority = %(office)s) = (%(f)s = 'office'))
+                       ORDER BY d.created_at DESC LIMIT 1000""", {"s": inp.status, "k": inp.kind, "f": inp.family, "office": OFFICE})
+    rows = rows_of(ctx, await compose.visible(ctx, rows))
+    labels = FAMILIES[inp.family]["status"] if inp.family else {"draft": "Chưa cấp số", "issued": "Đã cấp số", "void": "Hết hiệu lực"}
+    month = today().replace(day=1)
     drafts = sum(1 for r in rows if r["status"] == "draft" and r["layout"] != "handout")
-    gaps = sum(1 for r in rows if r["status"] == "draft" and r["missing"])   # bản soạn theo mẫu còn ô chưa có dữ kiện (19/11/2026: gộp màn "Soạn theo mẫu" vào đây)
+    issued = sum(1 for r in rows if r["status"] == "issued" and r["issued_on"] and r["issued_on"] >= month)
+    voided = sum(1 for r in rows if r["status"] == "void")
     return ui.table(rows, [
-        ui.col("symbol", "Số"), ui.col("kind_label", "Loại"),
-        ui.col("summary", "Trích yếu", width=300), ui.col("recipient", "Kính gửi", width=200),
-        ui.col("status", "Trạng thái", "badge", labels=STATUS, tones={"draft": "orange", "issued": "green", "void": "gray"}),
-        ui.col("missing", "Ô thiếu", "number"),
-        ui.col("author", "Người soạn"), ui.col("created_at", "Soạn lúc", "datetime"), ui.col("issued_on", "Ban hành", "date"),
-    ], title="Giấy tờ & công văn", limit=1000, kpis=[ui.kpi("Dự thảo chờ ban hành", drafts, tone="orange" if drafts else None),
-                                                      ui.kpi("Còn thiếu dữ kiện", gaps, tone="orange" if gaps else None)])
+        ui.col("symbol", "Số"), ui.col("kind_label", "Loại"), ui.col("about", "Về", width=320),
+        ui.col("state", "Trạng thái", "badge", labels=STATES, tones=TONES), ui.col("on", "Ngày", "date"), ui.col("author", "Người lập"),
+    ], title="Giấy tờ & công văn", limit=1000,
+        kpis=[ui.kpi(labels["draft"], drafts, tone="orange" if drafts else None), ui.kpi(f"{labels['issued']} tháng này", issued),
+              ui.kpi(labels["void"], voided)])
+
+
+@m.query("pending", resource="papers", title="Giấy chờ ban hành / phát hành")
+async def pending(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    """Việc của NGƯỜI CÓ THẨM QUYỀN (bàn việc — 0094): giấy đã lập sẵn (người / trợ lý / luật tự động) chờ mình ban hành / phát hành. Một dòng đọc ngay
+    "Phiếu giữ chỗ C-2206 đã lập sẵn", chạm mở thẳng tờ giấy."""
+    rows = await ctx.all(LIST_SQL + " WHERE d.status = 'draft' AND d.layout <> 'handout' ORDER BY d.created_at LIMIT 300")
+    rows = [r for r in rows_of(ctx, await compose.visible(ctx, rows)) if r["can_issue"]]
+    for r in rows:
+        r["what"] = " ".join(x for x in (r["kind_label"], r["ref"], "đã lập sẵn") if x)
+        r["about"] = r["summary"].removeprefix(r["kind_label"] + " — ") if r["ref"] else r["about"]   # mã đã ở cột Giấy ⇒ chỉ tên hồ sơ
+    return ui.table(rows, [ui.col("what", "Giấy", width=320), ui.col("about", "Về", width=300), ui.col("author", "Người lập"),
+                           ui.col("created_at", "Lập lúc", "datetime")],
+                    title="Giấy chờ ban hành / phát hành", limit=300, kpis=[ui.kpi("Chờ bạn", len(rows), tone="orange" if rows else None)])
+
+
+def _attn_pending(o: Any) -> Any:
+    n = attention.kpi(o, "Chờ bạn")
+    return attention.line("accent", f"{attention.num(n)} giấy đã lập sẵn chờ bạn ban hành / phát hành", "Mở giấy, xem lại số rồi bấm một nút") if n else None
+
+
+def issue_action(d: dict[str, Any], basis: str = "") -> dict[str, Any]:
+    verb = FAMILIES[family_of(d["authority"])]["issue"]
+    return ui.act("papers.issue", verb, {"paper_id": str(d["id"])}, "primary", basis=basis,
+                  confirm=f"{verb} = cấp số và khoá nội dung đúng như tờ giấy bạn đang xem; sau đó không sửa được, chỉ cho hết hiệu lực.")
+
+
+def tail_actions(ctx: Ctx, d: dict[str, Any]) -> list[dict[str, Any]]:
+    """Nút phụ của trang giấy: chỉ "Cho hết hiệu lực" trên giấy đã cấp số (người có thẩm quyền). Bỏ bản chưa cấp số là nút của DÒNG ở danh sách —
+    thanh trên của tờ giấy chỉ giữ nút chính + Tải (anh Anh 21/11/2026)."""
+    ref = {"paper_id": str(d["id"])}
+    if d["status"] == "issued" and can_issue(ctx, d):
+        return [ui.act("papers.void", VOID, ref, "destructive")]
+    return []
 
 
 @m.query("view", resource="papers", title="Xem giấy tờ")
@@ -258,21 +376,20 @@ async def view(ctx: Ctx, inp: PaperRef) -> dict[str, Any]:
         body.append(ui.section("", table={"columns": c["table"]["columns"], "rows": c["table"]["rows"], "total": c["table"].get("total") or []}))
     if c.get("after"):
         body.append(ui.section("", text="\n\n".join(c["after"])))
-    name = f"{(d['symbol'] or 'Du-thao').replace('/', '-')} {d['kind_label']}"
+    name = file_name(d)
     page = ui.detail(d["summary"] or d["kind_label"], [
-        ui.section("Thông tin", [
-            ui.field("Số", d["symbol"] or "(dự thảo — cấp số khi ban hành)"), ui.field("Loại", d["kind_label"]),
-            ui.field("Kính gửi", d["recipient"]), ui.field("Trạng thái", STATUS[d["status"]]),
-        ]),
+        ui.section("", [ui.field("Số", d["symbol"] or "—"), ui.field("Kính gửi", d["recipient"])]),
         *body,
-    ], subtitle=f"{d['kind_label']} · {STATUS[d['status']]}")
+    ], subtitle=f"{d['kind_label']} · {status_label(d)}")
     page["original"] = {"title": "Bản in", "path": f"/v1/papers/{d['id']}/pdf", "filename": f"{name}.pdf", "page": None, "kind": "pdf"}
     page["links"] = [{"title": "Tải .docx", "path": f"/v1/papers/{d['id']}/docx", "filename": f"{name}.docx"},
                      {"title": "Tải .pdf", "path": f"/v1/papers/{d['id']}/pdf", "filename": f"{name}.pdf"}]
-    if d["status"] == "draft":
-        page["actions"] = [{"command": "papers.issue", "title": "Ban hành (cấp số)", "style": "primary", "bind": {},
-                            "preset": {"paper_id": str(d["id"])}, "when": {}, "importable": False}]
+    page["actions"] = ([issue_action(d)] if d["status"] == "draft" and can_issue(ctx, d) else []) + tail_actions(ctx, d)
     return page
+
+
+def file_name(d: dict[str, Any]) -> str:
+    return f"{(d['symbol'] or FAMILIES[family_of(d['authority'])]['file']).replace('/', '-')} {d['kind_label']}"
 
 
 @m.query("export", resource="papers", title="Xuất .docx", agent="deny")
@@ -282,11 +399,13 @@ async def export(ctx: Ctx, inp: PaperRef) -> dict[str, Any]:
     if d is None:
         raise NotFound("Không thấy giấy tờ")
     await compose.require_seen(ctx, d)
-    if d["status"] == "issued" and (kept := await _issued_file(ctx, d["id"])):   # bản ban hành: đúng tệp đã cất lúc cấp số
+    if d["status"] != "draft" and (kept := await _issued_file(ctx, d["id"])):   # đã cấp số (cả khi hết hiệu lực): đúng tệp đã cất lúc cấp số
         return {"filename": kept[0], "docx_b64": base64.b64encode(kept[1]).decode()}
-    # dựng theo dữ liệu hiện tại: bản dự thảo / đã huỷ, và giấy ban hành TRƯỚC ADR 0249 lát 4 (công văn tự do chưa cất tệp lúc cấp số)
+    if d["status"] == "draft" and d["template_version_id"] is not None:   # bản chưa cấp số theo mẫu: số MỚI NHẤT của hồ sơ, bằng quyền người tải (0251)
+        d = await compose.live_document(ctx, d)
+    # dựng theo dữ liệu hiện tại: bản chưa cấp số, và giấy cấp số TRƯỚC ADR 0249 lát 4 (công văn tự do chưa cất tệp lúc cấp số)
     data = render_docx(d, await settings(ctx))
-    return {"filename": f"{(d['symbol'] or 'Du-thao').replace('/', '-')}.docx", "docx_b64": base64.b64encode(data).decode()}
+    return {"filename": f"{file_name(d).split(' ')[0]}.docx", "docx_b64": base64.b64encode(data).decode()}
 
 
 def _d(v: Any) -> str:
@@ -360,7 +479,7 @@ def render_docx(d: dict[str, Any], s: dict[str, Any]) -> bytes:
     center, right, just = WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.RIGHT, WD_ALIGN_PARAGRAPH.JUSTIFY
 
     if draft:
-        para(doc, "DỰ THẢO", bold=True, size=12, align=right)
+        para(doc, FAMILIES[family_of(d["authority"])]["draft_mark"], bold=True, size=12, align=right)
     # Phần đầu: tên cơ quan + số ký hiệu (trái) | Quốc hiệu, tiêu ngữ, địa danh ngày tháng (phải)
     head = doc.add_table(rows=1, cols=2)
     head.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -520,16 +639,21 @@ def _render_handout(d: dict[str, Any], s: dict[str, Any]) -> bytes:
 
 
 # ---- Màn hình (0069): module tự khai phân hệ / góp màn vào phân hệ khác; workspaces.py chỉ ráp và lọc theo quyền
+ISSUE_ROW = tuple(A("papers.issue", f["issue"], bind={"paper_id": "id"}, when={"can_issue": [True], "family": [k]}, style="primary")
+                  for k, f in FAMILIES.items())
+DISCARD_ROW = tuple(A("papers.void", f["discard"], bind={"paper_id": "id"}, when={"can_discard": [True], "family": [k]}, style="destructive")
+                    for k, f in FAMILIES.items())
 m.screens("docs", (
-    # MỘT màn cho mọi giấy tờ (19/11/2026): trước có thêm màn "Soạn theo mẫu" (``compose``) liệt kê riêng bản soạn từ mẫu — cùng bảng, cùng thẻ xem, hai
-    # màn cạnh nhau làm người dùng không biết giấy tờ của mình ở đâu. Hai nút soạn (từ mẫu · công văn tự do) ở đây; khoá cũ ⇒ ``aliases`` giữ ghim.
+    # MỘT màn cho mọi giấy tờ, lọc theo họ (ADR 0251). Nút tạo DUY NHẤT ở đây: công văn (văn bản công ty, không có hồ sơ). Chứng từ lập TỪ
+    # HỒ SƠ (nút trên thẻ hồ sơ của gói, ``papers.start_draft``), không còn hộp chọn mẫu + chọn hồ sơ từ danh sách dài. Khoá cũ ⇒ ``aliases`` giữ ghim.
     Screen("papers", "Giấy tờ & công văn", "doc.richtext", "papers.list", aliases=("compose",),
-           actions=(A("papers.start_draft", style="primary"), A("papers.draft_letter")),
-           row_actions=(A("papers.refresh_draft", bind={"paper_id": "id"}, when={"status": ["draft"], "templated": ["yes"]}),
-                        A("papers.issue", bind={"paper_id": "id"}, when={"status": ["draft"]}, style="primary"),
-                        A("papers.void", bind={"paper_id": "id"}, when={"status": ["draft", "issued"]}, style="destructive")),
-           row_click="open", open=Open("papers.view", {"paper_id": "id"}, "Xem giấy tờ")),
+           actions=(A("papers.draft_letter", style="primary"),),
+           row_actions=ISSUE_ROW + DISCARD_ROW, row_click="open", open=Open("papers.view", {"paper_id": "id"}, "Xem giấy tờ")),
 ), rank=-3)   # 0231: văn bản có số hiệu đứng ĐẦU phân hệ "Văn bản & tài liệu" (trước kho tài liệu — màn của chủ phân hệ, rank 0)
+m.screens("work", (
+    Screen("papers_pending", "Giấy chờ ban hành / phát hành", "checkmark.seal", "papers.pending", desk=Desk("decide", say=_attn_pending, rank=120),
+           row_actions=ISSUE_ROW, row_click="open", open=Open("papers.view", {"paper_id": "id"}, "Xem giấy")),
+), rank=55)
 m.screens("admin", (
     Screen("paper_settings", "Thông tin công ty trên giấy tờ", "building.columns", "papers.settings_view", group="Hệ thống",
            needs_action=True, actions=(A("papers.set_settings", style="primary"),)),
@@ -543,10 +667,10 @@ async def search_papers(ctx: Ctx, inp: SearchIn) -> list[dict[str, Any]]:
     """Tên / số / ký hiệu giấy tờ ("12/QĐ", "quyet dinh 12") — trong phạm vi người tìm xem được (RLS); có dấu hay không, từng từ."""
     t = SearchTerms(inp.q)
     rows = await compose.visible(ctx, await ctx.all(
-        f"""SELECT id, title, kind_label, status, number, symbol, template_version_id, subject_kind, subject_id FROM papers.documents
+        f"""SELECT id, title, kind_label, status, number, symbol, authority, template_version_id, subject_kind, subject_id FROM papers.documents
             WHERE {t.match("title", "number::text", "symbol")} ORDER BY {t.rank("title", "symbol")}, created_at DESC LIMIT %(_n)s""", t.params))
     return [{"title": r["title"], "subtitle": " · ".join(x for x in (r["kind_label"], f"Số {r['number']}/{r['symbol']}" if r["number"] else "") if x),
-             "badge": STATUS.get(r["status"], r["status"]), "tone": "muted", "open": {"query": "papers.view", "input": {"paper_id": str(r["id"])}}}
+             "badge": status_label(r), "tone": "muted", "open": {"query": "papers.view", "input": {"paper_id": str(r["id"])}}}
             for r in rows]
 
 

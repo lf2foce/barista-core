@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from barista import presets, workspaces
-from barista.kernel import attention, packs, registry, screens
+from barista.kernel import attention, executor, packs, registry, screens
 from barista.kernel.attention import Line
 from barista.kernel.executor import Ctx
 from barista.kernel.fields import Input, NoInput
@@ -132,8 +132,10 @@ async def test_the_pack_supplies_fields_to_compose_without_papers_naming_it(demo
         await ok(admin, "papers.publish_template", template_id=str(t["template_id"]))
         d = await ok(admin, "papers.start_draft", template_id=str(t["template_id"]), ref="x1")
         page = await q(admin, "papers.view", paper_id=str(d["paper_id"]))
-        assert d["missing"] == [] and "Nhận Đồ X1, giá 1.250.000 đồng (Một triệu hai trăm năm mươi nghìn đồng)" in page["sections"][-1]["text"]
-        assert (await ok(admin, "papers.issue", paper_id=str(d["paper_id"])))["symbol"].startswith("01/BN-")
+        assert d["missing"] == [] and "Nhận Đồ X1, giá 1.250.000 đồng (Một triệu hai trăm năm mươi nghìn đồng)" in str(page["sheet"]["blocks"])
+        btn = next(a for a in page["actions"] if a["command"] == "papers.issue")   # giấy theo hồ sơ: bấm kèm căn cứ đã thấy (0251)
+        r = await executor.run(admin, "papers.issue", {"paper_id": str(d["paper_id"])}, expect_basis=executor.basis_of_token(btn["basis"]))
+        assert r.status == "ok" and r.output["symbol"].startswith("01/BN-")
     finally:
         await owner_val("DELETE FROM core.grants WHERE tenant_id = %s AND resource = 'demo' RETURNING 1", (tenant,))
         await owner_val("DELETE FROM core.tenant_packs WHERE tenant_id = %s AND pack = 'demo' RETURNING 1", (tenant,))

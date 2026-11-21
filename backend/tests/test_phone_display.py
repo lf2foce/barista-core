@@ -70,7 +70,7 @@ _PHONE_KEY = re.compile(r"(^|_)phone$")
 _SAFE = {"phone_display", "mask_phone", "mask_value"}   # hàm đưa số ra chữ đúng luật
 # {"<file>:<dòng>": lý do} — chỗ đưa cột SĐT thô vào chữ mà CÓ CHỦ ĐÍCH. Thêm một dòng = đã xem từng chỗ, không phải tắt test.
 ALLOWED: dict[str, str] = {
-    "modules/papers/__init__.py:484": "SĐT CÔNG TY trên giấy tờ: chữ tự do do quản trị gõ (papers.settings.phone), in đúng như họ muốn — không phải cột SĐT khách E.164",
+    "modules/papers/__init__.py:603": "SĐT CÔNG TY trên giấy tờ: chữ tự do do quản trị gõ (papers.settings.phone), in đúng như họ muốn — không phải cột SĐT khách E.164",
 }
 
 

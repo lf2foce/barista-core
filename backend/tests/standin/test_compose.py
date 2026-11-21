@@ -72,74 +72,129 @@ def section(page: dict[str, Any], title: str) -> dict[str, Any]:
     return next(s for s in page["sections"] if s["title"].startswith(title))
 
 
-async def test_order_slip_from_an_order_end_to_end(who: Who) -> None:
+async def issue(p: Principal, pid: str) -> executor.Result:
+    """Bấm Phát hành như app: mở giấy, gửi lại căn cứ nút mang theo (0251 — giấy theo hồ sơ bắt buộc có căn cứ)."""
+    page = await q(p, "papers.view", paper_id=pid)
+    btn = next((a for a in page["actions"] if a["command"] == "papers.issue"), None)
+    return await executor.run(p, "papers.issue", {"paper_id": pid}, expect_basis=executor.basis_of_token(btn["basis"]) if btn else None)
+
+
+async def issued(p: Principal, pid: str) -> dict[str, Any]:
+    r = await issue(p, pid)
+    assert r.status == "ok", (r.status, r.error)
+    return r.output
+
+
+def field_of(page: dict[str, Any], label: str) -> dict[str, Any]:
+    return next(f for s in page["sections"] for f in s["fields"] if f["label"] == label)
+
+
+async def test_order_slip_reads_live_numbers_and_issues_once(who: Who) -> None:
+    """ADR 0251: giấy chưa phát hành luôn là SỐ MỚI NHẤT của hồ sơ; ô thiếu là chỗ trống trên giấy, chạm điền; phát hành chốt số + cấp số + .docx đóng băng."""
     admin, sale = await who("admin"), await who("sale1")
     tid = await slip_template(admin)
     code = await new_order(admin, sale)
 
     draft = await ok(sale, "papers.start_draft", template_id=tid, ref=code.lower())
-    assert draft["rev"] == 1 and draft["missing"] == [ADDRESS]   # đơn không giữ địa chỉ ⇒ người nhập; "Ngày ký" nằm trong mục điều kiện tắt ⇒ không tính
+    assert draft["missing"] == [ADDRESS] and draft["company_missing"] == []   # "Ngày ký" nằm trong mục điều kiện tắt ⇒ không tính
     pid = str(draft["paper_id"])
     page = await q(sale, "papers.view", paper_id=pid)
-    facts = {f["label"]: f["value"] for f in section(page, "Dữ kiện")["fields"]}
-    assert facts["Giá trị đơn"] == f"5.000.000.000 đồng — từ hồ sơ {code}" and facts["Tên pháp nhân ký"].endswith("— thông tin công ty")
-    assert facts[ADDRESS] == "(thiếu)" and "Còn thiếu" in [s["title"][:9] for s in page["sections"]]
-    assert section(page, "Điều 2").get("text", "").startswith("Bên đặt hàng thanh toán 5.000.000.000 đồng (bằng chữ: Năm tỷ đồng)")
-    plan = next(s for s in page["sections"] if s.get("table"))["table"]
+    belongs = field_of(page, "Thuộc")
+    assert belongs["value"].startswith(f"Đơn dịch vụ {code}") and belongs["open"]["query"] == "orderdesk.case_file"   # chạm mở hồ sơ
+    assert "Đang lập" in page["subtitle"] and "Dự thảo" not in page["subtitle"]                # chứng từ giao dịch: không dùng chữ "dự thảo"
+    gap = field_of(page, ADDRESS)
+    assert gap["value"] == "" and gap["action"]["command"] == "papers.set_field" and gap["action"]["preset"]["key"] == "customer_address"
+    sheet = page["sheet"]
+    assert sheet["title"] == "PHIẾU ĐẶT HÀNG" and sheet["draft_mark"] == "CHƯA PHÁT HÀNH"
+    pay = next(b for b in sheet["blocks"] if b["text"].startswith("Bên đặt hàng thanh toán"))
+    assert pay["text"].startswith("Bên đặt hàng thanh toán 5.000.000.000 đồng (bằng chữ: Năm tỷ đồng)")
+    assert {"t": "5.000.000.000 đồng", "k": "amount_vnd", "layer": "record"} in pay["runs"]                 # số từ hồ sơ: khoá, sửa ở hồ sơ
+    hole = next(r for b in sheet["blocks"] for r in b.get("runs", []) if r.get("k") == "customer_address")
+    assert hole["layer"] == "missing" and [a["preset"]["key"] for a in sheet["actions"]] == ["customer_address"]   # ô thiếu: chạm điền ngay trên giấy
+    plan = next(b for b in sheet["blocks"] if b["type"] == "table")
     assert plan["columns"] == ["Đợt", "Nội dung", "Hạn", "Số tiền"] and plan["total"] == ["Tổng cộng", "5.000.000.000 đồng"]
-    assert {a["command"] for a in page["actions"]} == {"papers.refresh_draft", "papers.set_field"}   # sale không có quyền ban hành
-    assert "papers.issue" in {a["command"] for a in (await q(admin, "papers.view", paper_id=pid))["actions"]}
+    assert page["actions"] == []                                                            # sale lập được, không phát hành (thẩm quyền loại giấy)
+    mine = next(r for r in (await q(sale, "papers.list"))["rows"] if str(r["id"]) == pid)
+    assert mine["can_discard"] is True and mine["can_issue"] is False                        # bỏ bản đang lập: nút của dòng, không ở thanh trên
+    issue_btn = next(a for a in (await q(admin, "papers.view", paper_id=pid))["actions"] if a["command"] == "papers.issue")
+    assert issue_btn["title"] == "Phát hành" and issue_btn["basis"]
+    assert (await executor.query(await who("giamdoc"), "papers.view", {"paper_id": pid})).status == "not_found"   # chỉ người lập + người phát hành thấy
 
     text = docx_text((await q(sale, "papers.export", paper_id=pid))["docx_b64"])
-    assert "DỰ THẢO" in text and "PHIẾU ĐẶT HÀNG" in text and "Năm tỷ đồng" in text and "BÊN ĐẶT HÀNG" in text and "Đặt cọc" in text
+    assert "CHƯA PHÁT HÀNH" in text and "PHIẾU ĐẶT HÀNG" in text and "Năm tỷ đồng" in text and "BÊN ĐẶT HÀNG" in text and "Đặt cọc" in text
 
-    # ô thiếu ⇒ không ban hành, lời báo nói rõ ô nào
-    r = await executor.run(admin, "papers.issue", {"paper_id": pid})
+    # ô thiếu ⇒ không phát hành, lời báo nói rõ ô nào
+    r = await issue(admin, pid)
     assert r.status == "invalid" and f"còn thiếu: {ADDRESS}" in (r.error or "")
 
-    # người nhập dữ kiện: ghi tên + lúc + căn cứ; ô hồ sơ đã có giá trị thì không sửa ở đây
-    assert [o["value"] for o in await q(sale, "papers.fillable_field_options", paper_id=pid)] == ["customer_address"]
+    # điền ngay trên giấy: ghi tên + lúc + căn cứ; ô hồ sơ đã có giá trị thì không sửa ở đây
     bad = await executor.run(sale, "papers.set_field", {"paper_id": pid, "key": "amount_vnd", "value": "1.000.000"})
     assert bad.status == "invalid" and "hồ sơ gốc" in (bad.error or "")
-    got = await ok(sale, "papers.set_field", paper_id=pid, key="customer_address", value="Số 9 phố Mẫu, Hà Nội", reason="khách cung cấp")
-    assert got["rev"] == 2 and got["missing"] == []
-    person = await owner_val("""SELECT row_to_json(f) FROM papers.fields f WHERE document_id = %s AND rev = 2 AND key = 'customer_address'""",
-                             (draft["paper_id"],))
-    assert person["origin"] == "person" and person["entered_by"] == str(sale.user_id) and person["reason"] == "khách cung cấp"
+    await ok(sale, "papers.set_field", paper_id=pid, key="customer_address", value="Số 9 phố Mẫu, Hà Nội", reason="khách cung cấp")
+    person = await owner_val("SELECT row_to_json(e) FROM papers.entries e WHERE document_id = %s AND key = 'customer_address'", (draft["paper_id"],))
+    assert person["entered_by"] == str(sale.user_id) and person["reason"] == "khách cung cấp"
+    assert await owner_val("SELECT count(*) FROM papers.revisions WHERE document_id = %s", (draft["paper_id"],)) == 0   # không còn "bản N" khi đang lập
 
-    # hồ sơ đổi sau khi soạn (đơn được ký ⇒ có ngày ký) ⇒ ban hành bị chặn, "Cập nhật số" ra bản mới kèm thay đổi, dữ kiện người nhập vẫn giữ
+    # hồ sơ đổi ⇒ giấy tự theo, không nút "cập nhật số"; người đang xem bản cũ bấm phát hành ⇒ "xem lại" (căn cứ 0071), không cấp số
+    seen = next(a for a in (await q(admin, "papers.view", paper_id=pid))["actions"] if a["command"] == "papers.issue")["basis"]
     await ok(admin, "orderdesk.sign", code=code)
     await events.drain()
     day = f"{today():%d/%m/%Y}"
-    r = await executor.run(admin, "papers.issue", {"paper_id": pid})
-    assert r.status == "invalid" and "Hồ sơ đã đổi sau bản soạn (Ngày ký)" in (r.error or "")
-    fresh = await ok(sale, "papers.refresh_draft", paper_id=pid)
-    assert fresh["rev"] == 3 and [(c["label"], c["before"], c["after"]) for c in fresh["changes"]] == [("Ngày ký", "(trống)", day)]
-    assert (await ok(sale, "papers.refresh_draft", paper_id=pid))["changes"] == []          # không đổi gì ⇒ không ra bản
-    page = await q(sale, "papers.view", paper_id=pid)
-    assert section(page, "Thay đổi ở bản 3")["fields"] == [{"label": "Ngày ký", "value": f"(trống) → {day}", "format": "text"}]
-    assert f"người nhập: {sale.name}" in {f["label"]: f["value"] for f in section(page, "Dữ kiện")["fields"]}[ADDRESS]
+    assert f"Ngày ký hợp đồng: {day}" in str((await q(sale, "papers.view", paper_id=pid))["sheet"])
+    stale = await executor.run(admin, "papers.issue", {"paper_id": pid}, expect_basis=executor.basis_of_token(seen))
+    assert stale.status == "conflict" and "Căn cứ đã đổi từ lúc bạn xem: Số liệu trên giấy (đơn dịch vụ" in (stale.error or "")
+    assert await owner_val("SELECT status FROM papers.documents WHERE id = %s", (draft["paper_id"],)) == "draft"
 
-    # ban hành: số theo loại của mẫu (dãy riêng), tệp .docx cất ở kho tệp, tải lại đúng tệp đó kể cả khi hồ sơ đổi tiếp
-    out = await ok(admin, "papers.issue", paper_id=pid)
+    # phát hành: số theo loại của mẫu (dãy riêng), tệp .docx cất ở kho tệp, tải lại đúng tệp đó kể cả khi hồ sơ đổi tiếp
+    fresh = next(a for a in (await q(admin, "papers.view", paper_id=pid))["actions"] if a["command"] == "papers.issue")["basis"]
+    out = (await executor.run(admin, "papers.issue", {"paper_id": pid}, expect_basis=executor.basis_of_token(fresh))).output
     assert "/PDH-" in out["symbol"]
     fid = await owner_val("SELECT file_id FROM papers.files WHERE document_id = %s AND role = 'issued'", (draft["paper_id"],))
     assert fid is not None and await owner_val("SELECT module FROM core.files WHERE id = %s", (fid,)) == "papers"
     first = (await q(admin, "papers.export", paper_id=pid))["docx_b64"]
-    assert f"Số: {out['symbol']}" in docx_text(first) and "DỰ THẢO" not in docx_text(first) and f"Ngày ký hợp đồng: {day}" in docx_text(first)
+    assert f"Số: {out['symbol']}" in docx_text(first) and "CHƯA PHÁT HÀNH" not in docx_text(first) and f"Ngày ký hợp đồng: {day}" in docx_text(first)
     # dữ kiện người nhập in CÓ đánh dấu: số chú thích sau giá trị + dòng "do ai nhập ngày nào" cuối văn bản
     assert "Địa chỉ liên hệ: Số 9 phố Mẫu, Hà Nội [1]" in docx_text(first)
     assert f"[1] {ADDRESS}: thông tin do {sale.name} nhập ngày" in docx_text(first)
-    assert out["symbol"] in (await q(admin, "papers.view", paper_id=pid))["sections"][0]["fields"][0]["value"]
+    issued = await q(await who("giamdoc"), "papers.view", paper_id=pid)                          # đã phát hành ⇒ người chỉ đọc thấy, không nút ghi
+    assert field_of(issued, "Số")["value"] == out["symbol"] and issued["actions"] == [] and "Đã phát hành" in issued["subtitle"]
     await owner_val("UPDATE orderdesk.orders SET title = 'Tư vấn triển khai — giai đoạn 2' WHERE code = %s AND tenant_id = %s RETURNING 1",
-                    (code, admin.tenant_id))                                                # hồ sơ đổi tiếp sau ban hành (gói không có lệnh sửa đơn)
+                    (code, admin.tenant_id))                                                # hồ sơ đổi tiếp sau phát hành (gói không có lệnh sửa đơn)
     assert (await q(admin, "papers.export", paper_id=pid))["docx_b64"] == first
-    assert (await executor.run(sale, "papers.refresh_draft", {"paper_id": pid})).status == "invalid"   # đã ban hành ⇒ khoá
+    assert "giai đoạn 2" not in str((await q(admin, "papers.view", paper_id=pid))["sheet"])   # trang đã phát hành đọc bản chốt
+    assert (await executor.run(sale, "papers.set_field", {"paper_id": pid, "key": "customer_address", "value": "x"})).status == "invalid"
     revs = await owner_val("SELECT array_agg(via ORDER BY rev) FROM papers.revisions WHERE document_id = %s", (draft["paper_id"],))
-    assert revs == ["template", "person", "refresh"]
-    listing = await q(sale, "papers.drafts")
-    row = next(r for r in listing["rows"] if str(r["id"]) == pid)
-    assert row["status"] == "issued" and row["rev"] == 3 and row["missing"] == 0
+    assert revs == ["issue"]
+    row = next(r for r in (await q(admin, "papers.list", family="record"))["rows"] if str(r["id"]) == pid)
+    assert row["state"] == "record.issued" and row["can_issue"] is False
+
+    # hết hiệu lực: chỉ người có thẩm quyền loại giấy; số + tệp giữ nguyên
+    assert (await executor.run(sale, "papers.void", {"paper_id": pid})).status == "denied"
+    await ok(admin, "papers.void", paper_id=pid)
+    assert "Hết hiệu lực" in (await q(admin, "papers.view", paper_id=pid))["subtitle"]
+    assert (await q(admin, "papers.export", paper_id=pid))["docx_b64"] == first
+
+
+async def test_unissued_papers_are_seen_by_author_and_issuer_only(who: Who) -> None:
+    """ADR 0251: bản chưa cấp số chỉ người lập + người có thẩm quyền loại đó thấy (RLS); thẩm quyền theo LOẠI giấy — giám đốc ban hành công văn của
+    mình, không thấy / không phát hành chứng từ đơn của sale; danh sách việc của người phát hành có dòng "đã lập sẵn"."""
+    admin, sale1, sale2, boss = await who("admin"), await who("sale1"), await who("sale2"), await who("giamdoc")
+    pid = str((await ok(sale1, "papers.start_draft", template_id=await slip_template(admin), ref=await new_order(admin, sale1)))["paper_id"])
+    for p in (sale2, boss):
+        assert pid not in {str(r["id"]) for r in (await q(p, "papers.list"))["rows"]}
+    assert pid in {str(r["id"]) for r in (await q(sale1, "papers.list"))["rows"]}
+    waiting = await q(admin, "papers.pending")
+    row = next(r for r in waiting["rows"] if str(r["id"]) == pid)
+    assert row["what"].endswith("đã lập sẵn") and row["can_issue"] and row["family"] == "record"
+    assert pid not in {str(r["id"]) for r in (await q(boss, "papers.pending"))["rows"]}
+    # công văn: họ hành chính — giám đốc soạn thấy nút Ban hành; sale không thấy công văn chưa ban hành của giám đốc
+    letter = str((await ok(boss, "papers.draft_letter", recipient="Phòng thử", subject="thử thẩm quyền", body="Nội dung"))["paper_id"])
+    acts = {a["command"]: a["title"] for a in (await q(boss, "papers.view", paper_id=letter))["actions"]}
+    assert acts["papers.issue"] == "Ban hành" and "Dự thảo" in (await q(boss, "papers.view", paper_id=letter))["subtitle"]
+    assert (await executor.query(sale1, "papers.view", {"paper_id": letter})).status == "not_found"
+    assert (await executor.run(boss, "papers.issue", {"paper_id": pid})).status == "not_found"     # chứng từ đơn: giám đốc không có thẩm quyền
+    await ok(boss, "papers.issue", paper_id=letter)
+    assert "Đã ban hành" in (await q(boss, "papers.view", paper_id=letter))["subtitle"]
 
 
 async def test_composer_needs_to_see_the_record_and_cancelled_orders_are_refused(who: Who) -> None:
@@ -182,26 +237,32 @@ async def test_templates_are_versioned_and_published_versions_never_change(who: 
         await owner_val("UPDATE papers.template_versions SET body = 'x' WHERE template_id = %s AND version = 1 RETURNING 1", (tid,))
     await ok(admin, "papers.publish_template", template_id=tid)
     second = await ok(sale, "papers.start_draft", template_id=tid, ref=code)
-    assert section(await q(sale, "papers.view", paper_id=str(second["paper_id"])), "Thông tin")["fields"][1]["value"] == "Phiếu thử phiên bản — v2"
-    # bản soạn trước giữ mẫu v1 (cập nhật số vẫn ráp theo v1: còn bảng lịch thanh toán mà v2 đã bỏ)
+    assert "mẫu v2" in (await q(sale, "papers.view", paper_id=str(second["paper_id"])))["subtitle"]
+    # giấy lập trước giữ mẫu v1 (số SỐNG vẫn ráp theo v1: còn bảng lịch thanh toán mà v2 đã bỏ) — hồ sơ đổi thì giấy tự theo, không bấm gì
     await owner_val("UPDATE orderdesk.orders SET title = 'Tư vấn vận hành' WHERE code = %s AND tenant_id = %s RETURNING 1", (code, admin.tenant_id))
-    again = await ok(sale, "papers.refresh_draft", paper_id=str(first["paper_id"]))
-    assert again["rev"] == 2 and [c["label"] for c in again["changes"]] == ["Nội dung đơn"]
     page = await q(sale, "papers.view", paper_id=str(first["paper_id"]))
-    assert section(page, "Thông tin")["fields"][1]["value"] == "Phiếu thử phiên bản — v1" and any(s.get("table") for s in page["sections"])
-    assert "Tư vấn vận hành" in str(page["sections"])
+    assert "mẫu v1" in page["subtitle"] and any(b["type"] == "table" for b in page["sheet"]["blocks"])
+    assert "Tư vấn vận hành" in str(page["sheet"])
     # mỗi mẫu một dãy số riêng
-    assert (await ok(admin, "papers.issue", paper_id=str(first["paper_id"])))["symbol"].startswith("01/PTV-")
+    assert (await issued(admin, str(first["paper_id"])))["symbol"].startswith("01/PTV-")
 
 
-async def test_agent_proposes_a_draft_and_cannot_issue(who: Who) -> None:
+async def test_agent_prepares_a_paper_and_only_a_person_issues(who: Who) -> None:
+    """Trợ lý / luật tự động lập sẵn được (chưa cấp số, rủi ro thấp); phát hành luôn do người có thẩm quyền bấm. Một mẫu cho loại hồ sơ ⇒ không hỏi mẫu."""
     admin, sale = await who("admin"), await who("sale1")
-    tid = await slip_template(admin)
+    await slip_template(admin)
     code = await new_order(admin, sale)
-    r = await executor.run(sale.as_agent(), "papers.start_draft", {"template_id": tid, "ref": code})
-    assert r.status == "proposed" and r.output["preview"]["missing"] == [ADDRESS]
-    pid = (await ok(sale, "papers.start_draft", template_id=tid, ref=code))["paper_id"]
-    assert (await executor.run(admin.as_agent(), "papers.issue", {"paper_id": str(pid)})).status == "denied"
+    only = {r["name"] for r in await owner_val(
+        "SELECT coalesce(json_agg(json_build_object('name', name)), '[]') FROM papers.templates WHERE tenant_id = %s AND subject_kind = %s AND active",
+        (admin.tenant_id, pack.ORDER))}
+    r = await executor.run(sale.as_agent(), "papers.start_draft", {"ref": code, "subject_kind": pack.ORDER})
+    if len(only) == 1:
+        assert r.status == "ok" and r.output["missing"] == [ADDRESS]
+    else:   # bộ test khác đã thêm mẫu cùng loại ⇒ phải chọn
+        assert r.status == "invalid" and "chọn một mẫu" in (r.error or "")
+        r = await executor.run(sale.as_agent(), "papers.start_draft", {"ref": code, "template_id": await slip_template(admin)})
+        assert r.status == "ok"
+    assert (await executor.run(admin.as_agent(), "papers.issue", {"paper_id": str(r.output["paper_id"])})).status == "denied"
 
 
 async def test_issued_file_is_readable_only_through_the_paper(who: Who) -> None:
@@ -211,7 +272,7 @@ async def test_issued_file_is_readable_only_through_the_paper(who: Who) -> None:
     code = await new_order(admin, sale)
     pid = (await ok(sale, "papers.start_draft", template_id=tid, ref=code))["paper_id"]
     await ok(sale, "papers.set_field", paper_id=str(pid), key="customer_address", value="Số 1 phố Mẫu")
-    await ok(admin, "papers.issue", paper_id=str(pid))
+    await issued(admin, str(pid))
     fid = await owner_val("SELECT file_id FROM papers.files WHERE document_id = %s", (pid,))
     async with db.tenant_tx(admin, rollback=True) as conn:
         with pytest.raises(Exception, match="phân hệ khác"):
@@ -232,26 +293,24 @@ async def test_company_facts_are_never_typed_on_a_paper(who: Who) -> None:
     try:
         d = await ok(sale, "papers.start_draft", template_id=str(t["template_id"]), ref=await new_order(admin, sale))
         pid = str(d["paper_id"])
-        assert d["missing"] == ["Số tài khoản công ty"]
-        assert await q(sale, "papers.fillable_field_options", paper_id=pid) == []
+        assert d["missing"] == [] and d["company_missing"] == ["Số tài khoản công ty"]   # không nằm trong danh sách thiếu của tờ giấy
+        note = field_of(await q(sale, "papers.view", paper_id=pid), "Thông tin công ty")
+        assert note["value"].startswith("Công ty chưa khai số tài khoản công ty") and "open" not in note and "action" not in note   # sale: chỉ một dòng
+        assert field_of(await q(admin, "papers.view", paper_id=pid), "Thông tin công ty")["open"]["query"] == "papers.settings_view"   # quản trị: tới màn khai
         r = await executor.run(sale, "papers.set_field", {"paper_id": pid, "key": "company_bank_account", "value": "9999 SALE OWN ACCOUNT"})
         assert r.status == "invalid" and "thông tin công ty / pháp nhân" in (r.error or "")
-        r = await executor.run(admin, "papers.issue", {"paper_id": pid})
-        assert r.status == "invalid" and "thông tin công ty / pháp nhân còn trống: Số tài khoản công ty" in (r.error or "")
-        assert "Quản trị › Pháp nhân hoặc Thông tin công ty trên giấy tờ" in (r.error or "")
-        # dòng "người nhập" giả cho ô công ty (bản cũ / ghi tay vào DB) ⇒ vẫn không in, vẫn chặn
-        await owner_val("""UPDATE papers.fields SET value = '"9999 SALE OWN ACCOUNT"', display = '9999 SALE OWN ACCOUNT', origin = 'person',
-                           entered_by = %s, entered_at = now() WHERE document_id = %s AND key = 'company_bank_account' RETURNING 1""", (sale.user_id, d["paper_id"]))
-        await owner_val("UPDATE papers.revisions SET missing = '{}' WHERE document_id = %s RETURNING 1", (d["paper_id"],))
-        r = await executor.run(admin, "papers.issue", {"paper_id": pid})
+        r = await issue(admin, pid)
+        assert r.status == "invalid" and "công ty chưa khai Số tài khoản công ty" in (r.error or "") and "Quản trị khai một lần" in (r.error or "")
+        # dòng "người nhập" giả cho ô công ty (ghi tay vào DB) ⇒ vẫn không in, vẫn chặn
+        await owner_val("""INSERT INTO papers.entries (tenant_id, document_id, key, value, display, entered_by)
+                           VALUES (%s, %s, 'company_bank_account', '"9999 SALE OWN ACCOUNT"', '9999 SALE OWN ACCOUNT', %s) RETURNING 1""",
+                        (admin.tenant_id, d["paper_id"], sale.user_id))
+        r = await issue(admin, pid)
         assert r.status == "invalid" and "Số tài khoản công ty" in (r.error or "")
-        refreshed = await ok(sale, "papers.refresh_draft", paper_id=pid)
-        assert refreshed["missing"] == ["Số tài khoản công ty"]
         assert "9999" not in docx_text((await q(sale, "papers.export", paper_id=pid))["docx_b64"])
     finally:
         await owner_val("UPDATE papers.settings SET bank_account = %s WHERE tenant_id = %s RETURNING 1", (old, admin.tenant_id))
-    await ok(sale, "papers.refresh_draft", paper_id=pid)
-    assert "/TK-" in (await ok(admin, "papers.issue", paper_id=pid))["symbol"]
+    assert "/TK-" in (await issued(admin, pid))["symbol"]   # công ty khai xong ⇒ giấy tự theo, phát hành được
 
 
 async def test_drafts_are_hidden_from_people_who_cannot_read_the_source_record(who: Who) -> None:
@@ -266,19 +325,23 @@ async def test_drafts_are_hidden_from_people_who_cannot_read_the_source_record(w
     assert rh.can("papers", "read") and not rh.can("orderdesk", "read")
     pid = str((await ok(sale, "papers.start_draft", template_id=await slip_template(admin), ref=await new_order(admin, sale, "Khách Ẩn Thử")))["paper_id"])
     letter = await ok(rh, "papers.draft_letter", recipient="Phòng thử", subject="thử", body="Nội dung")
-    assert pid not in {str(r["id"]) for r in (await q(rh, "papers.drafts"))["rows"]}
+    # tài liệu gửi khách / hồ sơ nội bộ (handout) không có bước ban hành ⇒ không phải "bản chưa ban hành": ai có phạm vi giấy tờ vẫn đọc như cũ (0251 —
+    # vd kiểm soát viên đọc bộ hồ sơ kiểm tra chuyên viên xuất)
+    handout = (await executor.run(system_principal(admin.tenant_id, sale.user_id), "papers.save_draft", {
+        "kind": "order_brief", "kind_label": "Bản tóm tắt đơn", "summary": "Tóm tắt thử", "layout": "handout",
+        "content": {"handout": {"headline": "Tóm tắt", "internal": True, "facts": [], "sections": []}}})).output["paper_id"]
+    assert str(handout) in {str(r["id"]) for r in (await q(rh, "papers.list"))["rows"]}
     listed = {str(r["id"]) for r in (await q(rh, "papers.list"))["rows"]}
     assert pid not in listed and str(letter["paper_id"]) in listed
     for op in ("papers.view", "papers.export"):
         assert (await executor.query(rh, op, {"paper_id": pid})).status == "not_found", op
-    assert await q(rh, "papers.fillable_field_options", paper_id=pid) == []
     assert (await executor.run(rh, "papers.set_field", {"paper_id": pid, "key": "customer_address", "value": "x"})).status == "not_found"
 
     def found(page: Any) -> set[str]:   # ⌘K: mã giấy mở được từ kết quả tìm
         return {str((i.get("open") or {}).get("input", {}).get("paper_id")) for b in page.get("blocks", []) for i in b.get("items", [])}
 
     assert pid not in found(await q(rh, "core.find", q="PHIẾU ĐẶT HÀNG")) and pid in found(await q(admin, "core.find", q="PHIẾU ĐẶT HÀNG"))
-    assert pid in {str(r["id"]) for r in (await q(admin, "papers.drafts"))["rows"]}       # người đọc được đơn vẫn thấy
+    assert pid in {str(r["id"]) for r in (await q(admin, "papers.list"))["rows"]}         # người phát hành đọc được đơn vẫn thấy
 
 
 async def test_control_characters_are_refused_and_never_reach_the_docx(who: Who) -> None:
@@ -302,3 +365,78 @@ async def test_template_series_never_collide_with_pack_paper_kinds(who: Who) -> 
     r = await executor.run(system_principal(admin.tenant_id), "papers.save_draft",
                            {"kind": "mau_phieu_dat_hang", "kind_label": "x", "summary": "x", "content": {}})
     assert r.status == "invalid" and "mau_" in (r.error or "")
+
+
+async def test_issue_needs_the_basis_the_issuer_saw_and_freezes_exactly_that(who: Who, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rà Codex (OpenAI) 21/11/2026 — hai ca thật trên nhánh lát 1:
+    1. Giấy theo hồ sơ mà lệnh KHÔNG mang căn cứ người bấm đã thấy ⇒ không cấp số ("mở lại giấy"), không chạy mù.
+    2. Hồ sơ đổi SAU bước so căn cứ, TRƯỚC bước chốt ⇒ tệp phát hành vẫn là ĐÚNG bản đã so (một ảnh dữ liệu cho cả lệnh — ``consistent``)."""
+    from barista.modules.papers import compose
+    admin, sale = await who("admin"), await who("sale1")
+    code = await new_order(admin, sale, "Khách Chốt Đúng Bản")
+    pid = str((await ok(sale, "papers.start_draft", template_id=await slip_template(admin), ref=code))["paper_id"])
+    await ok(sale, "papers.set_field", paper_id=pid, key="customer_address", value="Số 5 phố Mẫu")
+
+    blind = await executor.run(admin, "papers.issue", {"paper_id": pid})
+    assert blind.status == "conflict" and "Mở lại giấy" in (blind.error or "")
+    assert await owner_val("SELECT status FROM papers.documents WHERE id = %s", (pid,)) == "draft"
+
+    real_live = compose.live
+
+    async def changed_between_check_and_freeze(ctx: Any, d: dict[str, Any]) -> Any:
+        # người khác sửa đơn và COMMIT ngay sau khi lệnh đã so căn cứ (kết nối riêng của owner) — rồi lệnh mới đọc để chốt
+        await owner_val("UPDATE orderdesk.orders SET title = 'Nội dung ĐỔI SAU KHI SO' WHERE code = %s AND tenant_id = %s RETURNING 1",
+                        (code, admin.tenant_id))
+        return await real_live(ctx, d)
+
+    seen = executor.basis_of_token(next(a for a in (await q(admin, "papers.view", paper_id=pid))["actions"] if a["command"] == "papers.issue")["basis"])
+    monkeypatch.setattr(compose, "live", changed_between_check_and_freeze)   # chỉ trong lệnh phát hành: sau khi executor đã so căn cứ
+    r = await executor.run(admin, "papers.issue", {"paper_id": pid}, expect_basis=seen)
+    monkeypatch.setattr(compose, "live", real_live)
+    assert r.status == "ok", r.error
+    out = r.output
+    text = docx_text((await q(admin, "papers.export", paper_id=pid))["docx_b64"])
+    assert f"Số: {out['symbol']}" in text and "Tư vấn triển khai" in text and "ĐỔI SAU KHI SO" not in text   # tệp = bản đã so
+    assert await owner_val("SELECT title FROM orderdesk.orders WHERE code = %s AND tenant_id = %s", (code, admin.tenant_id)) == "Nội dung ĐỔI SAU KHI SO"
+
+
+async def test_the_issue_button_carries_the_basis_of_the_sheet_it_sits_on(who: Who, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rà Codex (OpenAI) 21/11/2026 — ca thứ ba: tờ giấy và dấu căn cứ của nút Phát hành phải từ CÙNG một lượt đọc hồ sơ. Nếu trang đọc hồ sơ hai lần
+    (một cho tờ, một cho nút) mà hồ sơ đổi giữa hai lần, nút mang dấu của nội dung người xem CHƯA thấy ⇒ bấm là phát hành nội dung đó."""
+    from barista.modules.papers import compose
+    admin, sale = await who("admin"), await who("sale1")
+    code = await new_order(admin, sale, "Khách Một Lượt Đọc")
+    pid = str((await ok(sale, "papers.start_draft", template_id=await slip_template(admin), ref=code))["paper_id"])
+    await ok(sale, "papers.set_field", paper_id=pid, key="customer_address", value="Số 7 phố Mẫu")
+
+    # 1) trong CÙNG một lượt dựng trang: lần đọc thứ hai (nếu có) thấy hồ sơ đã đổi ⇒ trang chỉ được đọc MỘT lần, nút mang dấu của đúng tờ đang hiện
+    real = compose._record_of
+    calls: list[int] = []
+
+    async def drifting(ctx: Any, d: dict[str, Any], **kw: Any) -> dict[str, Any]:
+        rec = await real(ctx, d, **kw)
+        calls.append(1)
+        if len(calls) > 1:
+            rec = {**rec, "values": {**rec["values"], "order_title": "Nội dung ĐỔI GIỮA HAI LẦN ĐỌC"}}
+        return rec
+
+    monkeypatch.setattr(compose, "_record_of", drifting)
+    page = await q(admin, "papers.view", paper_id=pid)
+    monkeypatch.setattr(compose, "_record_of", real)
+    assert len(calls) == 1, "trang giấy đọc hồ sơ nhiều lần — tờ và nút có thể lệch nhau"
+    shown = str(page["sheet"])
+    assert "Tư vấn triển khai" in shown and "ĐỔI GIỮA HAI LẦN ĐỌC" not in shown
+    seen = executor.basis_of_token(next(a for a in page["actions"] if a["command"] == "papers.issue")["basis"])
+    out = (await executor.run(admin, "papers.issue", {"paper_id": pid}, expect_basis=seen)).output   # hồ sơ thật không đổi ⇒ phát hành đúng tờ đã thấy
+    text = docx_text((await q(admin, "papers.export", paper_id=pid))["docx_b64"])
+    assert f"Số: {out['symbol']}" in text and "Tư vấn triển khai" in text and "ĐỔI GIỮA HAI LẦN ĐỌC" not in text
+
+    # 2) hồ sơ đổi giữa lần dựng trang và lần bấm ⇒ dấu của tờ đã thấy ≠ tờ dựng lại lúc bấm ⇒ conflict, không cấp số
+    code2 = await new_order(admin, sale, "Khách Đổi Sau Khi Xem")
+    pid2 = str((await ok(sale, "papers.start_draft", template_id=await slip_template(admin), ref=code2))["paper_id"])
+    await ok(sale, "papers.set_field", paper_id=pid2, key="customer_address", value="Số 8 phố Mẫu")
+    seen2 = executor.basis_of_token(next(a for a in (await q(admin, "papers.view", paper_id=pid2))["actions"] if a["command"] == "papers.issue")["basis"])
+    await owner_val("UPDATE orderdesk.orders SET title = 'Nội dung đổi sau khi xem' WHERE code = %s AND tenant_id = %s RETURNING 1", (code2, admin.tenant_id))
+    stale = await executor.run(admin, "papers.issue", {"paper_id": pid2}, expect_basis=seen2)
+    assert stale.status == "conflict" and "Căn cứ đã đổi từ lúc bạn xem" in (stale.error or "")
+    assert await owner_val("SELECT status FROM papers.documents WHERE id = %s", (pid2,)) == "draft"

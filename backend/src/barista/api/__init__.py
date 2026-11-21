@@ -232,6 +232,7 @@ __version__ = "1.76.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                              Migration base/107 (bảng ``admin.brand``) + compose/073 — chỉ thêm, không bảo trì.
 #                         1.73: ``files.signed_url`` cho gói (link ký ≤ 60 giây, ảnh / PDF xem tại chỗ) + hai khối nền ``ui.b_image`` / ``ui.b_split`` (gói tự ghép bố cục: ảnh nguồn bên trái, dòng đọc bên phải…) — chỉ thêm, không migration
 #                         1.74: SỐ TÓM TẮT cho màn tổng hợp của gói (đọc bằng quyền người xem — ``ctx.call_as_optional(…, ctx.p)``): ``health.summary``, ``leadflow.summary``, ``acct.cashflow_projection``, ``core.approvals_summary`` — cùng con số màn của module đó hiện, không dựng màn; họ ``receivable`` nhận ``acct.receivable_totals`` (tổng phải thu / đã thu theo mã gốc của nguồn gọi — ô tổng của màn danh sách trên cả tập). Chỉ thêm, không migration
+#                         1.75 (ADR 0251, CHỈ THÊM): ``Module.command(basis_required=…)`` — người bấm phải nêu căn cứ đã thấy; ``ui.act(basis=…)`` nút trang mang căn cứ (app gửi lại ở ``X-Expect-Basis``); ``ui.field(open=, action=, placeholder=)`` ô trang chi tiết bấm được; ``papers.field_catalog`` nhận ``authority`` (tài nguyên thẩm quyền phát hành chứng từ của gói)
 
 __all__ = [
     "VN",
