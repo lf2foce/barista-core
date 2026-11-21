@@ -225,7 +225,9 @@ async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str,
                 await _close(conn, proposal_id, "dismissed", None)
                 return _result("dismissed")
             inp: dict[str, Any] = data if isinstance(data, dict) and data else row["input"]
-            r = await executor.run(p, row["command"], inp, key=key, expect_basis=row["basis"], edited=inp != row["input"])
+            # khoá thực thi CỐ ĐỊNH theo mã đề xuất (không theo ``key`` của lượt bấm): lệnh đã ghi mà thẻ chưa kịp đóng (chết giữa hai giao dịch) ⇒ lần bấm lại
+            # nhận đúng kết quả đã có (``replayed``), đóng thẻ — không chạy lệnh lần hai
+            r = await executor.run(p, row["command"], inp, key=f"proposal:{proposal_id}", expect_basis=row["basis"], edited=inp != row["input"])
         if r.ok or r.status == "pending_approval":
             await _close(conn, proposal_id, "done", executor.jsonable(r.output))
     return _result(r.status, r.error or "", executor.jsonable(r.output), r.approval_id)

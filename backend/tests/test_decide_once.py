@@ -88,3 +88,33 @@ async def test_two_simultaneous_approvals_run_the_target_command_once() -> None:
     ran = await owner_val("SELECT count(*) FROM core.audit_log WHERE tenant_id = %s AND command = 'admin.set_grant' AND ref = %s AND status = 'ok'",
                           (tid, r.approval_id))
     assert ran == 1
+
+
+async def test_command_written_but_card_not_saved_runs_once_when_pressed_again(who: Who) -> None:
+    """Lệnh và thẻ commit ở HAI giao dịch: lệnh đã ghi xong, tiến trình chết trước khi đóng thẻ ⇒ thẻ còn mở. Bấm lại (khoá bấm khác) ⇒ nhận kết quả đã có
+    nhờ khoá thực thi cố định theo mã đề xuất, thẻ đóng, vẫn đúng MỘT việc."""
+    sale = await who("sale1")
+    title = "Việc đề xuất sáng — lệnh đã ghi, thẻ chưa lưu (test)"
+    card = await _file_card(sale, title)
+    row = await owner_val("SELECT input FROM core.proposals WHERE id = %s", (card,))
+    first = await executor.run(sale, "flow.create_task", row, key=f"proposal:{card}")   # đúng lần chạy mà thẻ không kịp ghi nhận
+    assert first.status == "ok" and await _tasks(title) == 1
+    assert await owner_val("SELECT status FROM core.proposals WHERE id = %s", (card,)) == "open"
+    again = await morning.decide(sale, card, "confirm", None, "press-again")
+    assert again["status"] == "ok" and await _tasks(title) == 1
+    assert await owner_val("SELECT status FROM core.proposals WHERE id = %s", (card,)) == "done"
+
+
+async def test_chat_command_written_but_card_not_saved_runs_once_when_pressed_again(who: Who) -> None:
+    sale = await who("sale1")
+    phone = fresh_phone()
+    model = Scripted([[call("crm.create_lead", name="Khách lệnh đã ghi", phone=phone, offering_code="HSR")], "Đã tạo."])
+    first = Log()
+    await chat.chat_turn(sale, "Thêm khách", emit=first, model=model)
+    card = first.proposals()[0]
+    ran = await executor.run(sale, "crm.create_lead", card["input"], key=f"chat-card:{card['id']}")
+    assert ran.status == "ok" and await owner_val("SELECT count(*) FROM crm.customers WHERE phone = %s", (phone,)) == 1
+    again = Log()
+    await chat.decide(sale, card["id"], "confirm", card["input"], "press-again", emit=again, model=model)
+    assert await owner_val("SELECT count(*) FROM crm.customers WHERE phone = %s", (phone,)) == 1
+    assert again.of("decided") and again.of("decided")[0]["status"] == "ok"

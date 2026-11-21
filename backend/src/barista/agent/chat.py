@@ -1202,7 +1202,7 @@ async def decide(p: Principal, card_id: str, decision: str, input: dict[str, Any
             # Căn cứ lúc chạy thử phải còn nguyên (0071). Người đã sửa ô trên thẻ ⇒ chỉ so căn cứ cùng nhãn (đối tượng người tự chọn lại không tính).
             edited = "input" in entry and entry["input"] != executor.jsonable(input)
             with executor.tracing(f"chat:{turns[idx].get('trace', '')}"):   # cùng vết với lượt đã soạn thẻ: "trợ lý soạn → ai xác nhận"
-                r = await executor.run(p, entry["command"], input, key=key, expect_basis=entry.get("basis"), edited=edited)   # quyền NGƯỜI bấm
+                r = await executor.run(p, entry["command"], input, key=f"chat-card:{card_id}", expect_basis=entry.get("basis"), edited=edited)   # quyền NGƯỜI bấm; khoá cố định theo thẻ (ADR 0253)
             if r.status not in ("ok", "pending_approval"):
                 await emit({"type": "rejected", "card_id": card_id, "status": r.status, "message": r.error})
                 return
