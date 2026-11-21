@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     eval_noise_tools: int = 0
     # Đổi Word / Excel → PDF để xem trong app (kernel/convert.py, 0102): đường dẫn soffice; trống = tự tìm trong PATH (image API cài sẵn)
     soffice_path: str = ""
+    # Dựng PDF / ảnh ấn phẩm từ trang HTML (kernel/convert.py, ADR 0252): đường dẫn trình duyệt không giao diện (Chromium / Chrome); trống = tự tìm trong PATH
+    chrome_path: str = ""
     agent_thinking: str = "low"   # mức "nghĩ" của model trong chat (low / medium / high) — đổi được để đo bằng scripts/eval_assistant.py
     agent_tool_desc_chars: int = 1000  # độ dài tối đa phần mô tả mỗi công cụ gửi model (cắt ở ranh giới câu / từ) — đo bằng scripts/eval_*.py
     agent_max_tool_calls: int = 20   # trần số lần gọi công cụ / một câu hỏi (câu xuyên phân hệ ~11 bước — 0065); câu tổng quát nên đi qua công cụ "brief" của phân hệ (1–3 bước)

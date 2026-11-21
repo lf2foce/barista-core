@@ -48,6 +48,7 @@ from barista.api import (
     Pack,
     Screen,
     Workspace,
+    company_settings,
     convert,
     docread,
     field,
@@ -62,7 +63,7 @@ from barista.kernel import executor
 from barista.kernel.errors import OpError
 from barista.kernel.executor import jsonable
 from barista.kernel.principal import Principal, elevate
-from barista.modules.compose import check, kinds, layout, render
+from barista.modules.compose import check, kinds, layout, render, stock
 from barista.modules.compose import html as htmlpage
 
 # Gói riêng, TÙY CHỌN, mặc định TẮT (công ty chưa có dòng core.tenant_packs ⇒ tắt; quản trị bật ở "Store"): màn, thao tác, công cụ trợ lý của
@@ -72,6 +73,9 @@ Pack("compose", "Ấn phẩm (thử nghiệm)",
      "PowerPoint / trang web, gửi link cho khách và biết khách đã mở",
      kind="capability")
 m = Module("compose", "Ấn phẩm", pack="compose")
+# Ảnh AI = ảnh MINH HOẠ (0252): mặc định TẮT; công ty bật mới thêm / xuất được ảnh minh hoạ trong ấn phẩm (``stock.py``)
+AI_IMAGES = m.setting("ai_images", "Cho dùng ảnh minh hoạ (ảnh AI) trong ấn phẩm", default=False,
+                      help="Bật: ấn phẩm được chèn ảnh minh hoạ do AI tạo (bộ ảnh mẫu của hệ thống), luôn in chú thích “Ảnh minh hoạ” và tách khỏi ảnh thật của công ty. Tắt: không chèn / xuất được.")
 log = logging.getLogger("barista.compose")
 
 STATUS = {"drafting": "Đang soạn", "ready": "Xong", "failed": "Chưa soạn được", "stopped": "Đã dừng"}
@@ -140,7 +144,7 @@ Cách làm:
 
 def _slot(s: str) -> dict[str, str]:
     """Chỗ đứng hợp lệ ⇒ ``{"slot": s}`` (chỉ THÊM trường; trống / lạ ⇒ không trường — khối chảy như bản cũ)."""
-    return {"slot": s} if s in layout.SLOTS and s else {}
+    return {"slot": s} if s and layout.valid_slot(s) else {}
 
 
 def _cell(v: Any, c: dict[str, Any]) -> Any:
@@ -548,7 +552,7 @@ def _known(blocks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 class Start(Input):
     """Đường AI soạn theo lời người (không có công thức từ hồ sơ). Loại ``document`` không còn nhận: văn bản ở phân hệ Giấy tờ (0231)."""
-    kind: Literal["flyer", "brochure", "slides", "post"] = field("Loại", "brochure", options={k: LABELS[k] for k in kinds.OFFERED})
+    kind: Literal["flyer", "brochure", "slides", "post", "memo", "teaser"] = field("Loại", "brochure", options={k: LABELS[k] for k in kinds.OFFERED})
     brief: str = field("Cần soạn gì", kind="textarea", max_length=2000,
                        example="Tờ giới thiệu [[offering|l]] mới cho khách: điểm nổi bật, bảng giá hàng còn bán, chính sách bán hàng")
 
@@ -1034,6 +1038,8 @@ async def refresh_data(ctx: Ctx, inp: SessionRef) -> dict[str, Any]:
             b["data"]["note"] = "Không cập nhật được lần này (thiếu quyền / truy vấn đổi) — số là ảnh chụp cũ."
             continue
         snap["title"], snap["source"] = b["data"].get("title") or snap["title"], {**src, "at": datetime.now(zone()).isoformat()}
+        if b["data"].get("estimate"):
+            snap["estimate"] = True
         b["data"] = snap
     out = await _save(ctx, s, s["title"], flag_numbers(s["blocks"]), "Cập nhật số liệu", ai=False)
     return {**out, "failed": failed}
@@ -1084,6 +1090,8 @@ async def _visible_docs(ctx: Ctx) -> set[str]:
 
 async def _read_image(ctx: Ctx, im: dict[str, Any], visible: set[str]) -> tuple[bytes, str] | None:
     """Thân ảnh của một khối image BẰNG QUYỀN người gọi: ảnh kho (``kb.original``) hoặc ảnh trích từ PDF (đọc được tài liệu nguồn). Không đọc được ⇒ ``None``."""
+    if im.get("stock"):   # ảnh minh hoạ của hệ thống: không thuộc kho tài liệu nào — chỉ có khi công ty bật (``_guard_illustrations`` kiểm lúc xuất)
+        return stock.read(str(im["stock"]))
     if im.get("derived_id"):
         row = await ctx.one("SELECT file_id, document_id FROM compose.derived_images WHERE id = %s", (im["derived_id"],))
         if row is None or str(row["document_id"]) not in visible:
@@ -1122,8 +1130,21 @@ def _ready(s: dict[str, Any]) -> list[dict[str, Any]]:
     return blocks
 
 
-async def _html(ctx: Ctx, s: dict[str, Any], blocks: list[dict[str, Any]]) -> str:
-    return htmlpage.page(s["title"], blocks, await brand(ctx), await _images(ctx, blocks), layout.clean(s["layout"]))
+async def _guard_illustrations(ctx: Ctx, blocks: list[dict[str, Any]]) -> None:
+    """Ảnh minh hoạ chỉ ra ngoài khi công ty đang BẬT cài đặt (tắt sau khi chèn ⇒ chặn xuất / gửi cho tới khi gỡ ảnh hoặc bật lại)."""
+    if any(stock.is_ai(b) for b in blocks) and not await company_settings.enabled(ctx.conn, ctx.p.tenant_id, AI_IMAGES):
+        raise Invalid("Ấn phẩm có ảnh minh hoạ (ảnh AI) nhưng công ty đang tắt cài đặt này — gỡ các ảnh đó hoặc nhờ quản trị bật lại")
+
+
+async def _html(ctx: Ctx, s: dict[str, Any], blocks: list[dict[str, Any]], *, only: int = 0) -> str:
+    """MỘT bộ vẽ HTML cho bản gửi (link chia sẻ), tệp .html VÀ PDF (trình duyệt in chính trang này). Ảnh AI phải mang đủ nhãn “Ảnh minh hoạ” — thiếu ⇒ chặn."""
+    await _guard_illustrations(ctx, blocks)
+    images = await _images(ctx, blocks)
+    page = htmlpage.page(s["title"], blocks, await brand(ctx), images, layout.clean(s["layout"]), only=only)
+    shown = sum(page.count(htmlpage.data_url(images[b["id"]])) for b in blocks if stock.is_ai(b) and b["id"] in images)   # lần ảnh AI THỰC SỰ nằm trên trang (mẫu có thể bỏ ảnh không có chỗ)
+    if not only and page.count('class="illus"') < shown:
+        raise Invalid("Ảnh minh hoạ thiếu chú thích “Ảnh minh hoạ” trên bản xuất — không xuất / gửi được")
+    return page
 
 
 @m.command("export", resource=None, title="Xuất tệp", agent="allow")
@@ -1141,15 +1162,27 @@ async def export(ctx: Ctx, inp: Export) -> dict[str, Any]:
     slides = inp.format == "pptx" or (inp.format == "pdf" and s["kind"] == "slides")
     if inp.format == "html":
         data = (await _html(ctx, s, blocks)).encode()
+    elif inp.format == "pdf" and not slides:
+        # PDF = in CHÍNH trang HTML của bản xem bằng trình duyệt không giao diện (0252) — không còn đường Word → LibreOffice; thiếu trình duyệt ⇒ lỗi rõ ràng, không lùi đường khác
+        try:
+            data = await convert.html_to_pdf(await _html(ctx, s, blocks))
+        except convert.Unavailable as e:
+            raise Invalid(str(e)) from None
     else:
+        await _guard_illustrations(ctx, blocks)
         b = await brand(ctx)
         images = {k: v[0] for k, v in (await _images(ctx, blocks)).items()}
         data = render.pptx(s["title"], blocks, b, images) if slides else render.docx(s["title"], s["kind"], blocks, b, images, lay)
-        if inp.format == "pdf":
+        if inp.format == "pdf":   # slide: chưa có bản xem HTML ⇒ PowerPoint → PDF bằng LibreOffice (quyết định ghi ở ADR 0252)
             try:
-                data = await convert.to_pdf(f"{stem}.{'pptx' if slides else 'docx'}", data)
+                data = await convert.to_pdf(f"{stem}.pptx", data)
             except convert.Unavailable as e:
                 raise Invalid(str(e)) from None
+        elif not slides:
+            try:
+                render.assert_illustrations(data, sum(1 for blk in blocks if stock.is_ai(blk) and blk["id"] in images))
+            except ValueError:
+                raise Invalid("Ảnh minh hoạ thiếu chú thích “Ảnh minh hoạ” trên bản xuất — không xuất được") from None
     filename = f"{stem}.{inp.format}"
     stored = await files.put(ctx, data, filename, MIME[inp.format], max_bytes=20 * 1024 * 1024)
     eid = await ctx.val("INSERT INTO compose.exports (session_id, version, format, filename, file_id) VALUES (%s, %s, %s, %s, %s) RETURNING id",
@@ -1190,15 +1223,16 @@ async def set_layout(ctx: Ctx, inp: SetLayout) -> dict[str, Any]:
 
 
 class SetSlot(BlockRef):
-    slot: str = field("Chỗ đứng", "", options=layout.SLOTS)
+    slot: str = field("Chỗ đứng", "", options={**layout.SLOTS, **layout.PAGE_SLOTS})
 
 
 @m.command("set_slot", resource=None, title="Đổi chỗ đứng của khối", agent="allow")
 async def set_slot(ctx: Ctx, inp: SetSlot) -> dict[str, Any]:
     """Đặt khối vào chỗ khác trong bố cục (bìa · cột 1–3 · ô nổi bật · lưới ảnh · chân liên hệ; trống = chảy). Không đổi nội dung khối."""
     s = await _load(ctx, inp.session_id)
-    if inp.slot not in layout.SLOTS:
-        raise Invalid("Chỗ đứng không có")
+    options = layout.slot_options(layout.template_of(s["layout"]))
+    if inp.slot not in options:
+        raise Invalid("Chỗ đứng không có trong trang mẫu này")
     hit = False
     for b in s["blocks"]:
         if b["id"] == inp.block:
@@ -1207,7 +1241,82 @@ async def set_slot(ctx: Ctx, inp: SetSlot) -> dict[str, Any]:
             b.update(_slot(inp.slot))
     if not hit:
         raise NotFound("Không thấy khối này")
-    return await _save(ctx, s, s["title"], flag_numbers(s["blocks"]), f"Đổi chỗ đứng khối {inp.block}: {layout.SLOTS[inp.slot]}", ai=False)
+    return await _save(ctx, s, s["title"], flag_numbers(s["blocks"]), f"Đổi chỗ đứng khối {inp.block}: {options[inp.slot]}", ai=False)
+
+
+# ── Ảnh minh hoạ (ảnh AI — ADR 0252) + xem từng trang ──
+
+class StockImages(Input):
+    theme: str = field("Chủ đề", "", help="Trống = mọi chủ đề", options={"": "Tất cả", **stock.themes()})
+
+
+@m.query("stock_images", resource=None, title="Bộ ảnh minh hoạ mẫu", agent="allow")
+async def stock_images(ctx: Ctx, inp: StockImages) -> dict[str, Any]:
+    """Bộ ảnh minh hoạ do AI tạo mà hệ thống mang sẵn (chủ đề, khổ). ``enabled`` = công ty đã bật dùng ảnh minh hoạ chưa (tắt ⇒ chưa chèn được)."""
+    return {"enabled": await company_settings.enabled(ctx.conn, ctx.p.tenant_id, AI_IMAGES), "label": stock.LABEL,
+            "images": [{"id": i.id, "label": i.label, "ratio": i.ratio, "theme": i.theme} for i in stock.items().values() if not inp.theme or i.theme == inp.theme]}
+
+
+class AddIllustration(SessionRef):
+    stock_id: str = field("Ảnh minh hoạ", hidden=True)
+    slot: str = field("Chỗ đứng", "", options={**layout.SLOTS, **layout.PAGE_SLOTS})
+
+
+@m.command("add_illustration", resource=None, title="Chèn ảnh minh hoạ (ảnh AI)", agent="allow")
+async def add_illustration(ctx: Ctx, inp: AddIllustration) -> dict[str, Any]:
+    """Chèn một ảnh MINH HOẠ của bộ mẫu vào cuối bản soạn. Chỉ khi công ty bật cài đặt; ảnh mang nguồn ``ai`` và luôn in chú thích “Ảnh minh hoạ”."""
+    if not await company_settings.enabled(ctx.conn, ctx.p.tenant_id, AI_IMAGES):
+        raise Invalid("Công ty chưa bật ảnh minh hoạ (ảnh AI) — quản trị bật trong Cài đặt công ty")
+    it = stock.get(inp.stock_id)
+    if it is None:
+        raise NotFound("Không có ảnh minh hoạ này")
+    s = await _load(ctx, inp.session_id)
+    if len(s["blocks"]) >= MAX_BLOCKS:
+        raise Invalid(f"Ấn phẩm đã đủ {MAX_BLOCKS} khối")
+    blk = {"id": f"b{_max_id(s['blocks']) + 1}", "flags": [], **stock.block(it), **_slot(inp.slot)}
+    return await _save(ctx, s, s["title"], flag_numbers([*s["blocks"], blk]), f"Chèn ảnh minh hoạ: {it.label}", ai=False)
+
+
+async def _preview(ctx: Ctx, s: dict[str, Any], blocks: list[dict[str, Any]]) -> str:
+    """Trang HTML xem trước của mẫu nhiều trang = đúng trang HTML của bản gửi / PDF; ảnh thu nhỏ cho nhẹ. Không đọc được ⇒ rỗng (web hiện bản dòng chảy)."""
+    try:
+        images = {k: (_thumb_bytes(v[0]), "image/jpeg") for k, v in (await _images(ctx, blocks)).items()}
+        return htmlpage.page(s["title"], blocks, await brand(ctx), images, layout.clean(s["layout"]))
+    except (OpError, ValidationError):
+        return ""
+
+
+def _thumb_bytes(data: bytes, px: int = 1100) -> bytes:
+    import io
+
+    from PIL import Image
+
+    im = Image.open(io.BytesIO(data))
+    im.thumbnail((px, px))
+    buf = io.BytesIO()
+    im.convert("RGB").save(buf, "JPEG", quality=72)
+    return buf.getvalue()
+
+
+class PageRef(SessionRef):
+    page: int = field("Trang", 1, ge=1, le=10)
+
+
+@m.query("page_image", resource=None, title="Ảnh một trang của ấn phẩm", agent="allow")
+async def page_image(ctx: Ctx, inp: PageRef) -> dict[str, Any]:
+    """Ảnh PNG của MỘT trang (mẫu nhiều trang) đúng như PDF — chỗ cắm cho bước tự soát bố cục (agent xem ảnh trang đã vẽ). Bản còn số lệch thì không dựng."""
+    s = await _load(ctx, inp.session_id)
+    tpl = layout.template_of(s["layout"])
+    if not (tpl and tpl.get("pages")):
+        raise Invalid("Chỉ ấn phẩm nhiều trang cố định mới xem từng trang")
+    blocks = _ready(s)
+    if inp.page > len(layout.sections(blocks, tpl, s["title"])):
+        raise NotFound("Ấn phẩm không có trang này")
+    try:
+        png = await convert.html_to_png(await _html(ctx, s, blocks, only=inp.page), 1123, 794)
+    except convert.Unavailable as e:
+        raise Invalid(str(e)) from None
+    return {"page": inp.page, "content_type": "image/png", "data_b64": base64.b64encode(png).decode()}
 
 
 class SetCover(SessionRef):
@@ -1477,6 +1586,8 @@ async def _build(ctx: Ctx, spec: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             snap["title"] = str(sp.get("title") or "") or snap["title"]
             snap["source"] = {"query": q, "title": op.title, "input": sp.get("input") or {}, "at": datetime.now(zone()).isoformat()}
+            if sp.get("estimate"):
+                snap["estimate"] = True   # công thức khai số của truy vấn này là ƯỚC TÍNH ⇒ nhãn "Ước tính" trên trang nhiều trang
             add({"type": "data", "origin": "data", "data": snap}, slot)
         elif t == "images":
             ctxcode = str(sp.get("context") or "")
@@ -1490,6 +1601,11 @@ async def _build(ctx: Ctx, spec: dict[str, Any]) -> list[dict[str, Any]]:
                 # không có ảnh nào (kho lẫn tài liệu) ⇒ chỗ giữ CHỈ ở màn soạn (ra tệp / trang gửi khách bị bỏ — ``_ready``); ảnh AI tạo: chưa có (0224 §8.3)
                 add({"type": "placeholder", "origin": "template", "placeholder": {
                     "label": str(sp["need"])[:80], "hint": f"Tải ảnh vào Kho tài liệu với phạm vi {ctxcode.upper()} (hoặc tài liệu PDF có ảnh), rồi soạn lại"}}, slot)
+        elif t == "illustrations":
+            # ảnh minh hoạ do AI tạo (bộ mẫu của lõi): CHỈ khi công ty bật cài đặt; tắt ⇒ bỏ qua (không chỗ giữ — ảnh thật vẫn là đường chính)
+            if await company_settings.enabled(ctx.conn, ctx.p.tenant_id, AI_IMAGES):
+                for it in stock.pick(str(sp.get("theme") or ""), str(sp.get("ratio") or ""), skip=int(sp.get("skip") or 0), limit=int(sp.get("limit") or 1)):
+                    add(stock.block(it), slot)
         elif t == "excerpts":
             got = 0
             for d in await _docs(ctx, str(sp.get("context") or "")):
@@ -1628,7 +1744,7 @@ async def list_(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     rows = await ctx.all("""SELECT id, title, kind, status, version, updated_at, subject_label, customer_label, jsonb_array_length(blocks) AS blocks
                             FROM compose.sessions ORDER BY updated_at DESC LIMIT 100""")
     return ui.table(rows, [ui.col("title", "Tên", width=280), ui.col("kind", "Loại", "badge", labels=LABELS,
-                                                                       tones={"document": "blue", "brochure": "orange", "slides": "purple", "flyer": "pink", "post": "teal"}),
+                                                                       tones={"document": "blue", "brochure": "orange", "slides": "purple", "flyer": "pink", "post": "teal", "memo": "indigo", "teaser": "indigo"}),
                            ui.col("subject_label", "Về hồ sơ", width=200), ui.col("customer_label", "Cho khách", width=160),
                            ui.col("status", "Trạng thái", "badge", labels=STATUS, tones={"drafting": "orange", "ready": "green", "failed": "red", "stopped": "gray"}),
                            ui.col("version", "Phiên bản", "number"), ui.col("updated_at", "Sửa lần cuối", "datetime")],
@@ -1646,8 +1762,8 @@ def _web_block(b: dict[str, Any]) -> dict[str, Any]:
     elif b["type"] == "quote":
         out |= {"text": b["quote"]["text"], "cite": b["quote"]["cite"], "document_id": b["quote"]["document_id"]}
     elif b["type"] == "image":
-        out |= {"caption": b["image"].get("caption", ""), "filename": b["image"].get("filename", ""), "document_id": b["image"]["document_id"],
-                "derived": bool(b["image"].get("derived_id"))}
+        out |= {"caption": b["image"].get("caption", ""), "filename": b["image"].get("filename", ""), "document_id": b["image"].get("document_id", ""),
+                "derived": bool(b["image"].get("derived_id")), "illustration": stock.LABEL if stock.is_ai(b) else ""}
     elif b["type"] == "placeholder":
         out |= {"text": b["placeholder"]["label"], "caption": b["placeholder"]["hint"]}
     return out
@@ -1686,10 +1802,10 @@ def _turns(s: dict[str, Any]) -> list[dict[str, Any]]:
 async def _web_blocks(ctx: Ctx, blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Khối cho web. Ảnh TRÍCH từ PDF không có địa chỉ tệp riêng cho trình duyệt ⇒ kèm bản thu nhỏ (``thumb``, data URL) — chỉ khi người xem đọc được tài liệu nguồn."""
     out = [_web_block(b) for b in blocks]
-    if any(b["type"] == "image" and b["image"].get("derived_id") for b in blocks):
+    if any(b["type"] == "image" and (b["image"].get("derived_id") or b["image"].get("stock")) for b in blocks):
         visible = await _visible_docs(ctx)
         for b, w in zip(blocks, out, strict=True):
-            if b["type"] == "image" and b["image"].get("derived_id"):
+            if b["type"] == "image" and (b["image"].get("derived_id") or b["image"].get("stock")):
                 try:
                     got = await _read_image(ctx, b["image"], visible)
                 except (OpError, ValidationError):
@@ -1731,8 +1847,10 @@ async def _composer(ctx: Ctx, s: dict[str, Any] | None) -> dict[str, Any]:
         "blocks": await _web_blocks(ctx, blocks), "stats": _stats(blocks),
         # bố cục (0224): máy chủ xếp khối vào phần (bìa · dòng chảy · cột · ô nổi bật · lưới ảnh · chân) — web chỉ vẽ theo đây; ``template`` rỗng = bố cục cũ
         "layout": {"template": (layout.clean(s["layout"]).get("template") or "") if s else "", "templates": kinds.templates(kind),
-                   "slots": [{"key": k, "label": v} for k, v in layout.SLOTS.items()],
-                   "sections": layout.sections(blocks, tpl, s["title"]) if tpl and s else []},
+                   "slots": [{"key": k, "label": v} for k, v in layout.slot_options(tpl).items()],
+                   "sections": layout.sections(blocks, tpl, s["title"]) if tpl and s else [],
+                   # mẫu nhiều trang: web hiện CHÍNH trang HTML của bản gửi / PDF (khung nhúng) — một bộ vẽ, không vẽ lại ở web
+                   "html": await _preview(ctx, s, blocks) if tpl and tpl.get("pages") and s else ""},
         "shares": [{"id": str(x["id"]), "recipient": x["recipient"], "version": x["version"], "at": x["created_at"].isoformat(),
                     "expires_at": x["expires_at"].isoformat(), "views": x["views"],
                     "last_viewed_at": x["last_viewed_at"].isoformat() if x["last_viewed_at"] else "",
@@ -1749,7 +1867,7 @@ async def _composer(ctx: Ctx, s: dict[str, Any] | None) -> dict[str, Any]:
         "commands": {"start": "compose.start", "revise": "compose.revise", "remove": "compose.remove_block", "edit": "compose.edit_block",
                      "refresh": "compose.refresh_data", "restore": "compose.restore", "export": "compose.export", "download": "compose.download",
                      "delete": "compose.delete", "view": "compose.view", "stop": "compose.stop", "set_layout": "compose.set_layout",
-                     "set_slot": "compose.set_slot", "set_cover": "compose.set_cover", "share": "compose.share", "unshare": "compose.unshare",
+                     "set_slot": "compose.set_slot", "set_cover": "compose.set_cover", "stock_images": "compose.stock_images", "add_illustration": "compose.add_illustration", "share": "compose.share", "unshare": "compose.unshare",
                      # làm từ hồ sơ (ADR 0249): công thức + ô chọn hồ sơ / khách (truy vấn chọn) + làm bản cho khách khác
                      "recipe": "compose.brochure", "subjects": "compose.subject_options", "customers": "crm.lead_pick", "duplicate": "compose.duplicate"},
     }

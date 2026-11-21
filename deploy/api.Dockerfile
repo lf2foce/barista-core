@@ -3,9 +3,12 @@ FROM python:3.14-slim
 COPY --from=ghcr.io/astral-sh/uv:0.9.9 /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
 WORKDIR /app
-# Xem trước Word / Excel trong app = đổi sang PDF bằng LibreOffice chạy ngầm (0102); font có dấu tiếng Việt + font cùng khổ Times / Arial
+# Xem trước Word / Excel trong app = đổi sang PDF bằng LibreOffice chạy ngầm (0102); font có dấu tiếng Việt + font cùng khổ Times / Arial.
+# PDF / ảnh trang ấn phẩm = in chính trang HTML bằng Chromium không giao diện (0252): gói `chromium-headless-shell` (bản tối thiểu, không có giao diện / ngôn ngữ thừa;
+# ~+230 MB cài đặt cùng thư viện phụ thuộc). Trang tự chứa (phông + ảnh nhúng) nên không cần thêm font hệ thống. Dựng ảnh thiếu `chromium-headless-shell` ⇒ build lỗi ngay, không đợi lúc chạy.
 RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui \
-        fonts-dejavu-core fonts-liberation \
+        fonts-dejavu-core fonts-liberation chromium-headless-shell \
+    && command -v chromium-headless-shell \
     && rm -rf /var/lib/apt/lists/*
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project

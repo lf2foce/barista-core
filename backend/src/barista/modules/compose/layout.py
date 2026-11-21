@@ -17,6 +17,7 @@ from barista.modules.compose import render, vn
 SLOTS = {"": "Dòng chảy", "cover": "Bìa", "col1": "Cột 1", "col2": "Cột 2", "col3": "Cột 3", "tiles": "Ô nổi bật", "grid": "Lưới ảnh",
          "footer": "Chân liên hệ"}
 COLS = ("col1", "col2", "col3")
+PAGE_SLOTS = {f"p{n}": f"Trang {n}" for n in range(1, 11)}   # mẫu nhiều trang cố định (``pages``): khối đứng ở trang nào
 
 # Trang mẫu: ``style`` kiểu hiển thị số (``vn`` = "2,85 tỷ", "48 m²" — ``vn.py``; trống = in đủ); ``customer`` = trang gửi khách (không dòng nguồn nội bộ — một chú thích
 # cập nhật lúc nào); ``labels`` nhãn mục do mẫu đặt (điểm nổi bật, lưới ảnh, chân); ``fonts`` tên phông (trang web NHÚNG phông; Word chỉ đặt tên, không nhúng), ``look`` bộ giao diện của trang web (``editorial`` = kiểu tạp chí / tờ giới thiệu cao cấp,
@@ -38,6 +39,34 @@ TEMPLATES["flyer"] = {"label": "Tờ rơi", "about": "Một trang: bìa ảnh l�
 TEMPLATES["brochure"]["customer"] = True
 
 
+def _page(key: str, form: str, about: str, media: str = "none") -> dict[str, str]:
+    return {"key": key, "form": form, "about": about, "media": media}
+
+
+# Mẫu NHIỀU TRANG CỐ ĐỊNH (0252): mỗi trang một khuôn (``form``: cover · contents · body · close) + chỗ ảnh (``media``: right · left · none), là dữ liệu như mọi trang mẫu —
+# không code riêng từng mẫu. Khối đứng vào trang bằng ``slot = "p<n>"`` (khối không nêu thì theo trang của khối liền trước); trong trang chỗ nào do LOẠI KHỐI quyết: tiêu đề đầu
+# trang = tiêu đề trang (một câu kết luận), đoạn chữ = chữ, khối số liệu chỉ ô số = dải ô, khối số liệu có dòng = bảng, ảnh = ảnh, chân liên hệ (``footer``) = thẻ liên hệ ở trang ``close``.
+# Khổ A4 NGANG. Trang trống bị bỏ khi vẽ (số trang tính trên trang có nội dung).
+_PAGED = {"cover": "hero", "tile_cols": 4, "grid_cols": 2, "margin_cm": 0, "style": vn.STYLE_VN, "customer": True, "look": "paged", "landscape": True,
+          "fonts": {"display": "Cormorant Garamond", "text": "Be Vietnam Pro"}, "labels": {"tiles": "Điểm nổi bật", "grid": "Hình ảnh", "footer": "Liên hệ"}}
+TEMPLATES["memo10"] = {**_PAGED, "label": "Hồ sơ chào bán 10 trang", "kicker": "Hồ sơ chào bán", "about": "A4 ngang, 10 trang cố định: bìa · bảo mật + mục lục · tóm tắt · điểm nổi bật · vị trí · tài sản · thị trường · so sánh · tài chính chỉ báo · quy trình + liên hệ",
+                       "pages": (_page("p1", "cover", "Bìa: ảnh lớn, tên tài sản (tiêu đề), một câu phụ, tối đa 4 ô số nổi bật"),
+                                 _page("p2", "contents", "Bảo mật + mục lục: một đoạn lưu ý bảo mật và nguồn số liệu (mục lục tự dựng từ tiêu đề các trang)", "right"),
+                                 _page("p3", "body", "Tóm tắt: 1 câu kết luận làm tiêu đề, 2 đoạn ngắn, 3–4 ô số"),
+                                 _page("p4", "body", "Điểm nổi bật: tiêu đề kết luận, một dải 6 ô số / điểm, một ảnh dải ngang"),
+                                 _page("p5", "body", "Vị trí: 1 ảnh, 2 đoạn, bảng khoảng cách / kết nối", "right"),
+                                 _page("p6", "body", "Mô tả tài sản: ảnh + bảng thông số", "left"),
+                                 _page("p7", "body", "Thị trường: 3 ô số, 1–2 đoạn, một ảnh", "right"),
+                                 _page("p8", "body", "Tài sản so sánh: bảng"),
+                                 _page("p9", "body", "Tài chính chỉ báo: ô số + bảng (số ước tính ghi rõ)"),
+                                 _page("p10", "close", "Quy trình + liên hệ: các bước tiếp theo, chân liên hệ"))}
+TEMPLATES["teaser4"] = {**_PAGED, "label": "Tóm tắt 4 trang", "kicker": "Tóm tắt chào bán", "about": "A4 ngang, 4 trang cố định: bìa · tổng quan + điểm nổi bật · vị trí + thị trường · tài chính chỉ báo + bước tiếp theo",
+                        "pages": (_page("p1", "cover", "Bìa: ảnh lớn, tên tài sản (tiêu đề), một câu phụ, tối đa 4 ô số nổi bật"),
+                                  _page("p2", "body", "Tổng quan: tiêu đề kết luận, 2 đoạn, 4 ô điểm nổi bật, một ảnh", "right"),
+                                  _page("p3", "body", "Vị trí và thị trường: ảnh, đoạn, bảng / ô số", "left"),
+                                  _page("p4", "close", "Tài chính chỉ báo + bước tiếp theo: ô số, bảng, chân liên hệ"))}
+
+
 def clean(layout: Any) -> dict[str, Any]:
     """Bố cục lưu được: ``{}`` hoặc ``{"template": <khoá đã khai>}`` — khoá lạ bị bỏ (không tin đầu vào)."""
     if isinstance(layout, dict) and layout.get("template") in TEMPLATES:
@@ -51,9 +80,20 @@ def template_of(layout: Any) -> dict[str, Any] | None:
     return TEMPLATES[key] if key else None
 
 
+def valid_slot(s: str) -> bool:
+    return s in SLOTS or s in PAGE_SLOTS
+
+
 def slot_of(b: dict[str, Any]) -> str:
     s = b.get("slot") or ""
-    return s if s in SLOTS else ""
+    return s if valid_slot(s) else ""
+
+
+def slot_options(tpl: dict[str, Any] | None) -> dict[str, str]:
+    """Chỗ đứng chọn được của một trang mẫu: mẫu nhiều trang ⇒ các trang của nó + chân liên hệ; mẫu thường ⇒ ``SLOTS``."""
+    if tpl and tpl.get("pages"):
+        return {**{p["key"]: PAGE_SLOTS[p["key"]] for p in tpl["pages"]}, "footer": SLOTS["footer"]}
+    return dict(SLOTS)
 
 
 def _tiles_ok(b: dict[str, Any]) -> bool:
@@ -93,6 +133,8 @@ def _rows(run: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def sections(blocks: list[dict[str, Any]], tpl: dict[str, Any], title: str = "") -> list[dict[str, Any]]:
     """Khối ⇒ các phần bố cục theo thứ tự đọc: bìa (nếu có) · phần thân · chân. Mọi khối xuất hiện đúng một lần (kiểm bằng test). ``title``: tiêu đề bản (đã
     in lớn ở bìa) — ô nổi bật có đúng giá trị đó bị bỏ, khỏi lặp tên dự án."""
+    if tpl.get("pages"):
+        return paged_sections(blocks, tpl)
     cover = [b for b in blocks if slot_of(b) == "cover"]
     foot = [b for b in blocks if slot_of(b) == "footer"]
     body = [b for b in blocks if slot_of(b) not in ("cover", "footer")]
@@ -127,6 +169,29 @@ def sections(blocks: list[dict[str, Any]], tpl: dict[str, Any], title: str = "")
         out.append({"kind": "footer", "ids": [b["id"] for b in foot], "lines": {b["id"]: footer_lines(b) for b in foot},
                     "title": str((tpl.get("labels") or {}).get("footer", ""))})   # dòng chữ dựng ở máy chủ — web chỉ vẽ
     return out
+
+
+def paged_sections(blocks: list[dict[str, Any]], tpl: dict[str, Any]) -> list[dict[str, Any]]:
+    """Mẫu nhiều trang: mỗi trang của mẫu ⇒ một phần ``page`` (``ids`` = khối của trang theo thứ tự). Khối nêu ``slot`` trang nào thì vào trang đó; khối không nêu (hoặc nêu chỗ
+    không thuộc mẫu) theo trang của khối liền trước (đầu bản ⇒ trang 1); chân liên hệ vào trang ``close`` cuối (không có ⇒ trang cuối). Trang không có khối bị bỏ. Mọi khối xuất hiện đúng một lần."""
+    pages = tpl["pages"]
+    keys = [p["key"] for p in pages]
+    by_page: dict[str, list[str]] = {k: [] for k in keys}
+    foot: list[str] = []
+    cur = keys[0]
+    for b in blocks:
+        s = slot_of(b)
+        if s == "footer":
+            foot.append(b["id"])
+            continue
+        if s in by_page:
+            cur = s
+        by_page[cur].append(b["id"])
+    close = next((p["key"] for p in reversed(pages) if p["form"] == "close"), keys[-1])
+    by_page[close] += foot
+    live = [p for p in pages if by_page[p["key"]]]
+    return [{"kind": "page", "key": p["key"], "n": i + 1, "of": len(live), "form": p["form"], "media": p["media"], "about": p["about"], "ids": by_page[p["key"]]}
+            for i, p in enumerate(live)]
 
 
 def block_ids(secs: list[dict[str, Any]]) -> list[str]:

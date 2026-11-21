@@ -62,7 +62,7 @@ describe("composer", () => {
   it("bản soạn cũ (không bố cục, không chia sẻ) ⇒ mặc định rỗng", () => {
     const page = decodePage({ kind: "card", title: "Cũ", blocks: [{ type: "composer", session_id: "s", blocks: [{ id: "b1", type: "paragraph", text: "x" }] }] });
     if (page.kind !== "card" || page.blocks[0].type !== "composer") throw new Error("composer");
-    expect(page.blocks[0].layout).toEqual({ template: "", templates: [], slots: [], sections: [] });
+    expect(page.blocks[0].layout).toEqual({ template: "", templates: [], slots: [], sections: [], html: "" });
     expect(page.blocks[0].shares).toEqual([]);
     expect(page.blocks[0].blocks[0].slot).toBe("");
   });

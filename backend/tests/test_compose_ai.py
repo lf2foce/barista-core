@@ -207,6 +207,6 @@ async def test_new_marketing_kinds_are_stored_and_a_flyer_gets_its_one_page_layo
             compose.MODEL = None
         comp = (await q(sale, "compose.view", session_id=out["session_id"]))["blocks"][0]
         assert comp["status"] == "ready", comp["error"]
-        assert comp["kind"] == kind and [k["key"] for k in comp["kinds"]] == ["flyer", "brochure", "slides", "post"]
+        assert comp["kind"] == kind and [k["key"] for k in comp["kinds"]] == ["flyer", "brochure", "slides", "post", "memo", "teaser"]
         assert comp["layout"]["template"] == ("flyer" if kind == "flyer" else "plain")   # loại quyết mẫu (kinds.py)
         assert [t["key"] for t in comp["layout"]["templates"]] == [comp["layout"]["template"]]   # chỉ mẫu hợp loại được mời chọn

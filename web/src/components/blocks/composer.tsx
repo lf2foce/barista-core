@@ -224,7 +224,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
     if (live) return;
     setLocal(null);
     setDoc({ ...doc, session_id: "", title: "Ấn phẩm mới", brief: "", version: 0, status: "new", status_label: "", error: "", blocks: [],
-             stats: { flagged: 0, placeholders: 0, data: 0 }, layout: { ...doc.layout, template: "", sections: [] }, shares: [], versions: [], exports: [], turns: [] });
+             stats: { flagged: 0, placeholders: 0, data: 0 }, layout: { ...doc.layout, template: "", sections: [], html: "" }, shares: [], versions: [], exports: [], turns: [] });
   }
 
   async function remove(id: string) {
@@ -948,10 +948,14 @@ function DocumentPanel({ doc, live, busy, onRevise, onEdit, onRemove, onRefresh,
             </p>
           </div>
         ) : null}
-        {(!live || live.blocks) && !live?.blocks && doc.layout.template && doc.layout.sections.length ? (
+        {(!live || live.blocks) && !live?.blocks && doc.layout.html ? (
+          // mẫu nhiều trang: đúng trang HTML của bản gửi / PDF — sandbox rỗng (không script, không điều hướng)
+          <iframe title="Xem trước ấn phẩm" srcDoc={doc.layout.html} sandbox="" className="h-[70vh] w-full rounded-lg border border-hairline bg-surface2" />
+        ) : null}
+        {(!live || live.blocks) && !live?.blocks && !doc.layout.html && doc.layout.template && doc.layout.sections.length ? (
           <LayoutBody doc={doc} title={title} color={color} busy={locked || !ready} onRevise={onRevise} onEdit={onEdit} onRemove={onRemove} onSlot={onSlot} onCover={onCover} />
         ) : null}
-        {(!live || live.blocks) && !(!live?.blocks && doc.layout.template && doc.layout.sections.length) && blocks.map((b) => (
+        {(!live || live.blocks) && !(!live?.blocks && (doc.layout.html || (doc.layout.template && doc.layout.sections.length))) && blocks.map((b) => (
           <BlockRow key={b.id} b={b} color={color} busy={locked || !ready} kind={doc.kind}
                     onRevise={(instruction, mode) => onRevise(b.id, instruction, mode)} onEdit={(text) => onEdit(b.id, text)} onRemove={() => onRemove(b.id)} />
         ))}
@@ -1125,10 +1129,11 @@ function BlockRow({ b, color, busy, kind, onRevise, onEdit, onRemove, slots, onS
               <p className="t12 mt-1 text-muted-foreground">{b.caption}</p>
             </div>
           ) : b.type === "image" ? (
-            b.document_id && (!b.derived || b.thumb) ? (
-              <figure className="flex flex-col gap-1">
-                {/* eslint-disable-next-line @next/next/no-img-element -- ảnh trong kho tài liệu của công ty, qua BFF (cookie phiên); ảnh trích từ PDF: bản thu nhỏ nhúng sẵn */}
-                <img src={b.derived ? b.thumb : documentFileUrl(b.document_id, null)} alt={b.caption || b.filename || "Hình minh hoạ"} loading="lazy" className={imgClass ?? "max-h-72 w-full rounded-lg object-cover"} />
+            b.thumb || (b.document_id && !b.derived) ? (
+              <figure className="relative flex flex-col gap-1">
+                {/* eslint-disable-next-line @next/next/no-img-element -- ảnh trong kho tài liệu của công ty, qua BFF (cookie phiên); ảnh trích từ PDF / ảnh minh hoạ: bản thu nhỏ nhúng sẵn */}
+                <img src={b.thumb || documentFileUrl(b.document_id, null)} alt={b.caption || b.filename || "Hình minh hoạ"} loading="lazy" className={imgClass ?? "max-h-72 w-full rounded-lg object-cover"} />
+                {b.illustration ? <span className="t12 absolute bottom-2 right-2 rounded bg-black/60 px-2 py-0.5 text-white">{b.illustration}</span> : null}
                 {b.caption ? <figcaption className="t12 text-muted-foreground">{b.caption}</figcaption> : null}
               </figure>
             ) : <p className="t12 rounded-lg bg-surface2 px-3 py-2 text-muted-foreground">Ảnh: {b.filename}{b.caption ? ` — ${b.caption}` : ""}</p>

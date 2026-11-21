@@ -1,5 +1,5 @@
 {
- "version": "1.74.0",
+ "version": "1.76.0",
  "names": [
   "Action",
   "Ask",
@@ -147,6 +147,8 @@
   ],
   "convert": [
    "Unavailable",
+   "html_to_pdf",
+   "html_to_png",
    "to_pdf"
   ],
   "docread": [

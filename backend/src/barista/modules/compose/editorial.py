@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from barista.modules.compose import check, layout, render, vn
-from barista.modules.compose.html import data_url, esc
+from barista.modules.compose.html import ILLUS_CSS, badge, data_url, esc
 
 SERIF = '"Cormorant Garamond","Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif'
 SANS = '"Be Vietnam Pro",-apple-system,"Segoe UI","Helvetica Neue",Arial,sans-serif'
@@ -225,17 +225,17 @@ def _data(b: dict[str, Any], tpl: dict[str, Any], accent: str, deep: str) -> str
     return "".join(parts)
 
 
-def _mosaic(figs: list[tuple[str, str, str]]) -> str:
-    """Lưới ảnh: ảnh đầu rộng cả hàng, các ảnh sau chia hàng 3 (hoặc 2) — ``figs``: (data url, chữ thay thế, chú thích)."""
+def _mosaic(figs: list[tuple[str, str, str, str]]) -> str:
+    """Lưới ảnh: ảnh đầu rộng cả hàng, các ảnh sau chia hàng 3 (hoặc 2) — ``figs``: (data url, chữ thay thế, chú thích, nhãn ảnh AI hoặc rỗng)."""
     spans, rest = [6], len(figs) - 1
     while rest > 0:
         take = 2 if rest in (2, 4) else 1 if rest == 1 else 3
         spans += [6 // take] * take
         rest -= take
     cells = []
-    for (src, alt, cap), sp in zip(figs, spans, strict=False):
+    for (src, alt, cap, tag), sp in zip(figs, spans, strict=False):
         c = f"<figcaption>{esc(cap)}</figcaption>" if cap else ""
-        cells.append(f'<figure style="--s:{sp}"><img src="{src}" alt="{esc(alt)}" loading="lazy">{c}</figure>')
+        cells.append(f'<figure style="--s:{sp}"><div class="pw"><img src="{src}" alt="{esc(alt)}" loading="lazy">{tag}</div>{c}</figure>')
     return f'<div class="mosaic">{"".join(cells)}</div>'
 
 
@@ -263,7 +263,7 @@ def _flow(ids: list[str], by: dict[str, dict[str, Any]], images: dict[str, tuple
             chaps[-1][1].append(_data(b, tpl, accent, deep))
         elif t == "image" and (img := images.get(b["id"])):
             cap = (b.get("image") or {}).get("caption", "")
-            chaps[-1][1].append(f'<figure class="one"><img src="{data_url(img)}" alt="{esc(cap or "Hình minh hoạ")}" loading="lazy"></figure>')
+            chaps[-1][1].append(f'<figure class="one"><div class="pw"><img src="{data_url(img)}" alt="{esc(cap or "Hình minh hoạ")}" loading="lazy">{badge(b)}</div></figure>')
     return [f'<section class="chap">{h}{"".join(p)}</section>' for h, p in chaps if h or p]
 
 
@@ -291,7 +291,7 @@ def page(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images
     deep = layout.shade(primary, 0.45)
     accent = layout.readable_on_white(primary)
     css = (CSS.replace("__DEEP__", deep).replace("__ACCENT__", accent).replace("__SERIF__", SERIF)
-           .replace("__SANS__", SANS))
+           .replace("__SANS__", SANS)) + ILLUS_CSS
     by = {b["id"]: b for b in blocks}
     out: list[str] = []
     cover = contact = ""
@@ -303,7 +303,7 @@ def page(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images
             hero = images.get(s["hero"]) if s["hero"] else None
             logo = f'<img class="logo" src="{data_url((brand["logo"], brand.get("logo_type") or "image/png"))}" alt="Logo công ty">' if brand.get("logo") else ""
             sub = "".join(f'<p class="loc">{_txt(by[i]["text"])}</p>' for i in s["text"])
-            bg = f'<img class="bg" src="{data_url(hero)}" alt="">' if hero else ""
+            bg = f'<img class="bg" src="{data_url(hero)}" alt="">{badge(by[s["hero"]])}' if hero else ""
             cover = (f'<header class="cover{"" if hero else " plainbg"}" aria-label="Bìa">{bg}<div class="shade"></div>{logo}'
                      f'<div class="in"><span class="rule"></span><h1>{esc(title)}</h1>{sub}</div></header>')
         elif k == "tiles":
@@ -343,7 +343,7 @@ def page(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images
             for i in s["ids"]:
                 if img := images.get(i):
                     im = by[i].get("image") or {}
-                    figs.append((data_url(img), im.get("caption") or "Hình minh hoạ", im.get("caption") or ""))
+                    figs.append((data_url(img), im.get("caption") or "Hình minh hoạ", im.get("caption") or "", badge(by[i])))
             if figs:
                 num[0] += 1
                 out.append(f'<section class="chap pb"><h2 class="sec"><span class="n">{num[0]:02d}</span>{esc(s.get("title") or "Hình ảnh")}</h2>{_mosaic(figs)}</section>')

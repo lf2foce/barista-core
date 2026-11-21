@@ -81,6 +81,7 @@ NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | {"word/001_documents.sql",   # 0227
                                               # 0249 lát 2: cột có mặc định (ấn phẩm về hồ sơ / cho khách, công thức, nguồn) + chép nhận diện sang admin.brand, giao tệp logo
                                               # cho module Quản trị, khoá ghi bảng cũ (bản cũ còn đọc được; sửa ở bản cũ bị từ chối) ⇒ không bảo trì
                                               "compose/073_piece_subject_brand_move.sql",
+                                              "compose/074_multipage_kinds.sql",   # 0252: nới ràng buộc loại bản soạn (hồ sơ chào bán 10 trang, tóm tắt 4 trang) — chỉ nới ⇒ không bảo trì
                                               "compose/071_derived_images.sql",   # 0224 §8: bảng bộ đệm ảnh trích từ PDF (bảng mới, quyền theo tenant) — chỉ THÊM ⇒ không bảo trì
                                               "compose/069_rls_initplan.sql",   # 069: viết lại chính sách RLS của gói Soạn với AI thành InitPlan (như 054 của các gói khác) ⇒ không bảo trì
                                               "base/058_kinds_off.sql",   # 058: gói bật tính một lần mỗi câu, không bảo trì

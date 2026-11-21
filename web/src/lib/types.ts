@@ -717,6 +717,8 @@ export type ComposerItem = {
   /** ảnh TRÍCH từ tài liệu PDF (không có địa chỉ tệp riêng): bản thu nhỏ dạng data URL — trống nếu không còn quyền đọc tài liệu nguồn */
   derived: boolean;
   thumb: string;
+  /** ảnh AI = ảnh MINH HOẠ (0252): chữ chú thích bắt buộc ("Ảnh minh hoạ"); ảnh thật ⇒ rỗng */
+  illustration: string;
 };
 
 /** Phần bố cục do MÁY CHỦ xếp (backend modules/compose/layout.py) — web chỉ vẽ theo đây; mọi mã khối tra trong `blocks`. */
@@ -734,6 +736,8 @@ export type ComposerLayout = {
   templates: { key: string; label: string; about: string }[];
   slots: { key: string; label: string }[];
   sections: ComposerSection[];
+  /** mẫu nhiều trang: CHÍNH trang HTML của bản gửi / PDF (khung nhúng); rỗng = web tự vẽ theo `sections` */
+  html: string;
 };
 
 /** Một lần chia sẻ qua link: số lượt khách mở, còn hiệu lực hay không (link chỉ hiện đúng lúc tạo). */

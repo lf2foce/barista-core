@@ -30,6 +30,14 @@ class Kind:
         return self.templates[0] if self.templates else ""
 
 
+def _paged_shape(template: str, what: str) -> str:
+    """Lời dặn hình dạng của loại NHIỀU TRANG CỐ ĐỊNH — sinh từ danh sách trang của mẫu (``layout.TEMPLATES[..]["pages"]``), không viết hai lần."""
+    pages = layout.TEMPLATES[template]["pages"]
+    return (f"{what} A4 ngang, {len(pages)} trang cố định; mỗi khối nêu slot \"p<số trang>\" của trang nó đứng. Tiêu đề trang (heading 1 đầu trang) là MỘT CÂU KẾT LUẬN, không phải nhãn chung. "
+            "Số chỉ nằm ở khối data (ô số hoặc bảng); đoạn chữ không có chữ số; số ước tính ghi rõ trong đề / tên khối. Ảnh chỉ khi có (không tự tạo). "
+            + " · ".join(f"{p['key']} = {p['about']}" for p in pages) + ". Chân liên hệ slot \"footer\". Cần số mà không có ⇒ chỗ giữ \"[cần số liệu: …]\".")
+
+
 KINDS: dict[str, Kind] = {
     "flyer": Kind("Tờ rơi", ("flyer",), ("pdf", "html", "docx"),
                   "Tờ rơi MỘT trang, đọc trong 10 giây: tiêu đề lớn gây chú ý (heading 1), một câu phụ, 3–4 lợi ích ngắn (mỗi ý một đoạn rất ngắn), MỘT ưu đãi / "
@@ -45,6 +53,8 @@ KINDS: dict[str, Kind] = {
     "post": Kind("Bài đăng", ("plain",), ("html", "docx"),
                  "Bài đăng mạng xã hội: câu mở 1 dòng gây chú ý, 2–4 đoạn rất ngắn (có thể dùng gạch đầu dòng), lời kêu gọi hành động, 3–6 hashtag ở đoạn cuối. "
                  "Tối đa một ảnh (khối image) và một khối data nếu cần dẫn số. 3–8 khối. Giọng gần gũi, không viết hoa cả câu, không hứa quá sự thật. Không dùng slot."),
+    "memo": Kind("Hồ sơ chào bán 10 trang", ("memo10",), ("pdf", "html"), _paged_shape("memo10", "Hồ sơ chào bán tài sản")),
+    "teaser": Kind("Tóm tắt 4 trang", ("teaser4",), ("pdf", "html"), _paged_shape("teaser4", "Tóm tắt chào bán tài sản")),
     "document": Kind("Văn bản (bản cũ)", ("plain", "proposal"), ("docx", "pdf", "pptx", "html"),
                      "Tiêu đề mục (heading 1) cho từng phần; mỗi phần 1–3 đoạn ngắn + khối số liệu khi cần. 6–20 khối.", offered=False),
 }

@@ -113,12 +113,12 @@ async def test_exports_open_html_word_and_the_fallback_without_crashing(who: Who
     assert "Nguồn:" not in html and "theo quyền xem" not in html and "Thông tin cập nhật lúc" in html
     doc = Document(io.BytesIO(got["docx"]))
     assert len(doc.tables) >= 2 and len(doc.inline_shapes) >= 1                                                       # bìa + ảnh nhúng theo bố cục
-    if convert.binary():                                                                                              # PDF cần LibreOffice (máy dev có thể chưa cài)
+    if convert.chrome_binary():                                                                                       # PDF = in chính trang HTML bằng trình duyệt không giao diện (0252)
         e = await ok(sale, "compose.export", session_id=sid, format="pdf")
         assert base64.b64decode((await q(sale, "compose.download", export_id=e["export_id"]))["data_b64"])[:4] == b"%PDF"
     else:
         r = await executor.run(sale, "compose.export", {"session_id": sid, "format": "pdf"})
-        assert r.status == "invalid"                                                                                  # báo rõ "chưa cài", không vỡ
+        assert r.status == "invalid"                                                                                  # báo rõ "chưa cài trình duyệt", không vỡ, không lùi về Word
 
 
 async def test_layout_changes_are_versioned_and_slots_move_blocks(who: Who) -> None:

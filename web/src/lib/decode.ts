@@ -713,6 +713,7 @@ export function decodeComposerItem(x: unknown): ComposerItem {
     texts: arr(b.texts).map((t) => ({ title: str(obj(t).title), text: str(obj(t).text) })).filter((t) => t.text),
     derived: b.derived === true,
     thumb: str(b.thumb),
+    illustration: str(b.illustration),
   };
 }
 
@@ -749,6 +750,7 @@ function decodeComposerLayout(v: unknown): ComposerLayout {
     templates: arr(l.templates).map((t) => ({ key: str(obj(t).key), label: str(obj(t).label), about: str(obj(t).about) })),
     slots: arr(l.slots).map((t) => ({ key: str(obj(t).key), label: str(obj(t).label) })),
     sections: arr(l.sections).map(decodeComposerSection).filter((x): x is ComposerSection => x !== null),
+    html: str(l.html),
   };
 }
 

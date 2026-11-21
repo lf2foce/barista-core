@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from barista.api import phone_display, zone
-from barista.modules.compose import vn
+from barista.modules.compose import stock, vn
 
 log = logging.getLogger("barista.compose.render")
 
@@ -214,6 +214,8 @@ def _docx_layout(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any]
             if s["style"] == "hero" and s["hero"] and (img := images.get(s["hero"])) is not None:
                 try:
                     doc.add_paragraph().add_run().add_picture(io.BytesIO(img), width=Cm(width))
+                    if stock.is_ai(by[s["hero"]]):
+                        _illustration_note(doc)
                 except Exception:   # ảnh hỏng ⇒ chỉ còn dải màu, tệp vẫn xuất
                     log.warning("compose: không chèn được ảnh bìa", exc_info=True)
             t = table(1, 1, width)
@@ -265,6 +267,31 @@ def _docx_layout(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any]
     return out.getvalue()
 
 
+def _illustration_note(doc: Any) -> None:
+    """Chú thích bắt buộc dưới ảnh AI (ADR 0252) — đoạn riêng, chữ cố định ``stock.LABEL``."""
+    from docx.shared import Pt
+
+    r = doc.add_paragraph().add_run(stock.LABEL)
+    r.italic = True
+    r.font.size = Pt(9)
+
+
+def assert_illustrations(data: bytes, expected: int) -> None:
+    """Kiểm bản .docx ĐÃ dựng: số chú thích "Ảnh minh hoạ" phải đủ số ảnh AI có trong tệp — thiếu ⇒ ``ValueError`` (người gọi báo lỗi, không giao tệp)."""
+    from docx import Document
+
+    def paras(container: Any) -> list[str]:
+        out = [p.text for p in container.paragraphs]
+        for t in getattr(container, "tables", []):
+            for row in t.rows:
+                for c in row.cells:
+                    out += paras(c)
+        return out
+
+    if sum(1 for x in paras(Document(io.BytesIO(data))) if x.strip() == stock.LABEL) < expected:
+        raise ValueError("thiếu chú thích Ảnh minh hoạ")
+
+
 def _docx_block(doc: Any, b: dict[str, Any], color: Any, images: dict[str, bytes], *, width_cm: float = 12, style: str = "", source: bool = True, display: str = "") -> None:
     """Một khối ⇒ Word. ``doc`` là tài liệu HOẶC một ô bảng (cùng có add_paragraph / add_table) — bố cục nhiều cột đặt khối vào ô."""
     from docx.enum.text import WD_COLOR_INDEX
@@ -302,6 +329,8 @@ def _docx_block(doc: Any, b: dict[str, Any], color: Any, images: dict[str, bytes
         if (data := images.get(b["id"])) is not None:
             try:
                 doc.add_paragraph().add_run().add_picture(io.BytesIO(data), width=Cm(width_cm))
+                if stock.is_ai(b):
+                    _illustration_note(doc)
             except Exception:   # ảnh hỏng ⇒ chừa dòng chữ báo thay ảnh, tệp vẫn xuất; log để biết ảnh nào hỏng
                 log.warning("compose: không chèn được ảnh vào tài liệu", exc_info=True)
                 doc.add_paragraph(f"[ảnh không đọc được: {im.get('filename', '')}]")
@@ -437,6 +466,8 @@ def pptx(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images
             if b["type"] == "image" and (data := images.get(b["id"])) is not None:
                 try:
                     s.shapes.add_picture(io.BytesIO(data), Inches(0.8), top, height=Inches(3.5))
+                    if stock.is_ai(b):
+                        text(s, Inches(0.8), Emu(top + Inches(3.5)), Inches(3), Inches(0.25), stock.LABEL, 10)
                     top = Emu(top + Inches(3.7))
                 except Exception:   # ảnh hỏng ⇒ bỏ ảnh đó, slide vẫn xuất; log để biết ảnh nào hỏng
                     log.warning("compose: không chèn được ảnh vào slide", exc_info=True)

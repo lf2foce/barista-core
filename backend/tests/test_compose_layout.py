@@ -145,7 +145,7 @@ def test_one_list_kind_decides_templates_and_formats() -> None:
     from barista.modules import compose
     from barista.modules.compose import kinds, layout
 
-    assert kinds.OFFERED == ("flyer", "brochure", "slides", "post") and not kinds.KINDS["document"].offered
+    assert kinds.OFFERED == ("flyer", "brochure", "slides", "post", "memo", "teaser") and not kinds.KINDS["document"].offered
     for k in kinds.KINDS.values():
         assert k.shape and k.formats and set(k.templates) <= set(layout.TEMPLATES) and set(k.formats) <= set(kinds.FORMATS)
     assert kinds.template_for("flyer") == "flyer" and kinds.template_for("flyer", "editorial") == "flyer"          # mẫu không hợp loại ⇒ mặc định của loại

@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from barista.api import zone
-from barista.modules.compose import check, layout, render, vn
+from barista.modules.compose import check, layout, render, stock, vn
 
 IMG_MAX_PX = 1600
 IMG_SHRINK_ABOVE = 400 * 1024
@@ -54,6 +54,16 @@ def thumb(data: bytes, px: int = 480) -> str:
 def data_url(img: tuple[bytes, str]) -> str:
     raw, ctype = shrink(*img)
     return f"data:{ctype};base64,{base64.b64encode(raw).decode()}"
+
+
+# Chú thích bắt buộc của ảnh AI (ADR 0252): in TRÊN ảnh, mọi bộ vẽ (trang thường, tạp chí, nhiều trang) dùng chung chữ + kiểu này
+ILLUS_CSS = (".pw{position:relative}.illus{position:absolute;right:8px;bottom:8px;padding:2px 8px;background:rgba(0,0,0,.62);color:#fff;"
+             "font:500 11px/1.4 sans-serif;letter-spacing:.04em;border-radius:4px}")
+
+
+def badge(b: dict[str, Any]) -> str:
+    """Nhãn "Ảnh minh hoạ" nếu khối ảnh là ảnh AI (``origin = ai``); ảnh thật ⇒ rỗng. Bộ vẽ chỉ cần đặt vào một khung ``position:relative``."""
+    return f'<span class="illus">{esc(stock.LABEL)}</span>' if stock.is_ai(b) else ""
 
 
 CSS = """
@@ -110,6 +120,7 @@ footer.contact{background:var(--brand);color:var(--on);padding:24px 40px}
 footer.contact p{margin:4px 0}
 footer.contact .brandline{font-size:13px;opacity:.85;margin-top:12px}
 footer.plain{padding:16px 40px 28px;color:var(--muted);font-size:13px;text-align:center;border-top:1px solid var(--line)}
+@page{size:A4;margin:14mm 0}
 @media print{body{background:#fff;padding:0}.sheet{box-shadow:none;max-width:none}.cover,th,.tile,footer.contact{-webkit-print-color-adjust:exact;print-color-adjust:exact}.data,figure,blockquote,.tile{break-inside:avoid}h2,h3{break-after:avoid}}
 """
 
@@ -168,16 +179,20 @@ def _block(b: dict[str, Any], images: dict[str, tuple[bytes, str]], *, grid: boo
         if img is None:
             return ""   # không còn quyền đọc ảnh lúc xuất ⇒ bỏ ảnh (chữ báo thiếu ảnh chỉ có ở bản Word)
         cap = f"<figcaption>{esc(im['caption'])}</figcaption>" if im.get("caption") and not grid else ""
-        return f'<figure><img src="{data_url(img)}" alt="{esc(alt)}" loading="lazy">{cap}</figure>'
+        return f'<figure><div class="pw"><img src="{data_url(img)}" alt="{esc(alt)}" loading="lazy">{badge(b)}</div>{cap}</figure>'
     if t == "data":
         return _data(b, source=source, style=style)
     return ""
 
 
 def page(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images: dict[str, tuple[bytes, str]], lay: dict[str, Any] | None = None,
-         *, when: datetime | None = None) -> str:
-    """Trang HTML hoàn chỉnh. ``images``: mã khối ảnh ⇒ (byte, loại). ``lay``: ``layout`` của ấn phẩm (rỗng ⇒ mẫu "Đơn giản")."""
+         *, when: datetime | None = None, only: int = 0) -> str:
+    """Trang HTML hoàn chỉnh. ``images``: mã khối ảnh ⇒ (byte, loại). ``lay``: ``layout`` của ấn phẩm (rỗng ⇒ mẫu "Đơn giản"). ``only``: chỉ trang thứ n (mẫu nhiều trang)."""
     tpl = layout.template_of(lay) or layout.TEMPLATES["plain"]
+    if tpl.get("look") == "paged":
+        from barista.modules.compose import paged  # nhập muộn như editorial
+
+        return paged.page(title, blocks, brand, images, tpl, only=only)
     if tpl.get("look") == "editorial":
         from barista.modules.compose import editorial  # nhập muộn: editorial dùng lại ``esc`` / ``data_url`` của tệp này
 
@@ -187,7 +202,7 @@ def page(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images
     by = {b["id"]: b for b in blocks}
     color = brand["primary_color"]
     css = CSS % {"c": color, "on": layout.on_color(color), "t1": layout.tint(color, 0.9), "t2": layout.tint(color, 0.75),
-                 "font": f'"{brand["font"]}"' if brand.get("font") else "sans-serif"}
+                 "font": f'"{brand["font"]}"' if brand.get("font") else "sans-serif"} + ILLUS_CSS
     logo_src = data_url((brand["logo"], brand.get("logo_type") or "image/png")) if brand.get("logo") else ""
     logo = f'<img class="logo" src="{logo_src}" alt="Logo công ty">' if logo_src else ""
     out: list[str] = []
@@ -198,7 +213,7 @@ def page(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images
         if k == "cover":
             sub = "".join(f"<p>{_text(by[i]['text'])}</p>" for i in s["text"])
             if s["style"] == "hero" and s["hero"] and (hero := images.get(s["hero"])):
-                cover_html = (f'<section class="cover hero" aria-label="Bìa"><img class="bg" src="{data_url(hero)}" alt="">{logo}'
+                cover_html = (f'<section class="cover hero" aria-label="Bìa"><img class="bg" src="{data_url(hero)}" alt="">{badge(by[s["hero"]])}{logo}'
                               f'<div class="veil"><h1>{esc(title)}</h1>{sub}</div></section>')
             else:
                 cover_html = f'<section class="cover" aria-label="Bìa">{logo}<h1>{esc(title)}</h1>{sub}</section>'
