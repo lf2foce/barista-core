@@ -309,7 +309,7 @@ async def approval(ctx: Ctx, inp: ApprovalRef) -> dict[str, Any]:
     blocks.append(ui.b_steps(rows, "Các bước duyệt"))
     if a["error"]:
         blocks.append(ui.b_callout("bad" if a["status"] == "failed" else "warn", "Ghi chú của phiếu", a["error"]))
-    return ui.card(a["summary"], blocks, subtitle=("Chờ bạn duyệt · " if mine else "") + sub, icon="checkmark.seal", actions=actions)
+    return ui.card((a["preview"] or {}).get("title") or a["summary"], blocks, subtitle=("Chờ bạn duyệt · " if mine else "") + sub, icon="checkmark.seal", actions=actions)
 
 
 async def _stale(ctx: Ctx, a: dict[str, Any], decisions: list[dict[str, Any]], changed: list[str]) -> dict[str, Any]:

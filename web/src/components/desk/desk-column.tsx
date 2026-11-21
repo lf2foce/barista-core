@@ -53,9 +53,9 @@ export function DeskColumn() {
           <section key={g.key} aria-label={g.title} className="pb-2">
             <h3 className="t12m flex items-center gap-1.5 px-3 pt-3 pb-1 text-muted-foreground">
               {g.title}
-              {hotCount(g.sections, g.key === "decide" ? chat.toDecide.length : 0) ? (
+              {(g.key === "decide" && chat.toDecide.length) || hotCount(g.sections, 0) ? (
                 <span className="t12m grid h-[18px] min-w-[18px] place-items-center rounded-full bg-foreground/8 px-1.5 text-foreground tnum">
-                  {hotCount(g.sections, g.key === "decide" ? chat.toDecide.length : 0)}
+                  {g.key === "decide" && chat.toDecide.length ? chat.toDecide.length : hotCount(g.sections, 0)}
                 </span>
               ) : null}
             </h3>

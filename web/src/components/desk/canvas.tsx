@@ -338,10 +338,7 @@ function ProposalBody({ card }: { card: ChatCard }) {
   };
   if (!editing) {
     return (
-      <div className="flex flex-col gap-3">
-        <p className="t16">{card.title}</p>
-        <ProposalRow card={card} onEdit={() => setEditing(true)} />
-      </div>
+      <ProposalRow card={card} onEdit={() => setEditing(true)} />
     );
   }
   return (

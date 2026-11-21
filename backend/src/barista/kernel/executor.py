@@ -1304,6 +1304,8 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
                 raise Conflict(f"Căn cứ đã đổi từ lúc bạn xem: {', '.join(changed)} — xem lại rồi làm lại")
             if chain:
                 brief = await _brief_for_approval(conn, p, op, model, payload)
+                if what and not brief["changes"]:   # mô tả của luật duyệt (``sensitive``) là "đổi gì" — thẻ phiếu hiện nó như dòng thay đổi
+                    brief = {**brief, "changes": [{"label": "Nội dung đổi", "before": "", "after": what}]}
                 aid = await approvals.create(conn, p, chain=chain, command=name, input=payload,
                                              summary=brief["title"] + (f" — {what}" if what else ""), preview=brief,
                                              run_as="requester", basis=basis)
