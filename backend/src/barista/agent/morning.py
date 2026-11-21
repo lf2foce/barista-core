@@ -16,7 +16,7 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
-from barista.db import db
+from barista.db import Conn, db
 from barista.kernel import attention, auth, clock, executor, registry
 from barista.kernel.clock import today
 from barista.kernel.forms import field_specs
@@ -202,23 +202,29 @@ async def cards(p: Principal) -> list[dict[str, Any]]:
 
 async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str, Any] | None, key: str) -> dict[str, Any]:
     """Xác nhận ⇒ chạy bằng quyền NGƯỜI bấm (không phải trợ lý), căn cứ đổi so với lúc soạn ⇒ không chạy (0071); Bỏ ⇒ ghi lại, không hỏi lại
-    trong ngày (cùng khoá)."""
-    async with db.tenant_tx(p, read_only=True) as conn:
-        cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s AND status = 'open'", (proposal_id,))
+    trong ngày (cùng khoá).
+
+    MỖI ĐỀ XUẤT CHỈ CHẠY ĐÚNG MỘT LẦN (ADR 0253): đề xuất được CHIẾM nguyên tử bằng khoá dòng ``FOR UPDATE`` TRƯỚC khi chạy lệnh và khoá giữ tới khi
+    đóng thẻ — lượt quyết thứ hai (hai tab, bấm đôi, "Bỏ" cùng lúc "Xác nhận") chờ ở khoá rồi thấy thẻ đã đóng ⇒ nhận "đã được xử lý", không chạy
+    lại, không đóng nhầm thành "bỏ". Khoá nằm trên dòng, không trên một trạng thái trung gian: tiến trình chết giữa chừng ⇒ khoá tự nhả, thẻ còn mở."""
+    async with db.tenant_tx(p) as conn:
+        cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s AND status = 'open' FOR UPDATE", (proposal_id,))
         row = await cur.fetchone()
-    if row is None:
-        return _result("not_found", "Đề xuất không còn (đã xử lý, hết hạn hoặc không phải của bạn)")
-    if decision != "confirm":
-        await _close(p, proposal_id, "dismissed", None)
-        with executor.tracing(_trace(row["user_id"], row["day"], row["key"])):   # tín hiệu "bỏ" cùng vết với lúc soạn (0091)
-            await executor.record_dismissed(p, row["command"], row["input"])
-        return _result("dismissed")
-    inp: dict[str, Any] = data if isinstance(data, dict) and data else row["input"]
-    with executor.tracing(_trace(row["user_id"], row["day"], row["key"])):
-        r = await executor.run(p, row["command"], inp, key=key, expect_basis=row["basis"], edited=inp != row["input"])
-    if r.ok or r.status == "pending_approval":
-        await _close(p, proposal_id, "done", executor.jsonable(r.output))
+        if row is None:
+            return _result("not_found", GONE)
+        with executor.tracing(_trace(row["user_id"], row["day"], row["key"])):   # cùng vết với lúc soạn: "trợ lý soạn → người quyết"
+            if decision != "confirm":
+                await executor.record_dismissed(p, row["command"], row["input"])   # tín hiệu "bỏ" (0091)
+                await _close(conn, proposal_id, "dismissed", None)
+                return _result("dismissed")
+            inp: dict[str, Any] = data if isinstance(data, dict) and data else row["input"]
+            r = await executor.run(p, row["command"], inp, key=key, expect_basis=row["basis"], edited=inp != row["input"])
+        if r.ok or r.status == "pending_approval":
+            await _close(conn, proposal_id, "done", executor.jsonable(r.output))
     return _result(r.status, r.error or "", executor.jsonable(r.output), r.approval_id)
+
+
+GONE = "Đề xuất này đã được xử lý (hoặc hết hạn, hoặc không phải của bạn)"
 
 
 def _result(status: str, error: str = "", output: Any = None, approval_id: str | None = None) -> dict[str, Any]:
@@ -226,10 +232,9 @@ def _result(status: str, error: str = "", output: Any = None, approval_id: str |
     return {"status": status, "error": error, "output": output, "approval_id": approval_id, "replayed": False}
 
 
-async def _close(p: Principal, proposal_id: UUID, status: str, result: Any) -> None:
-    async with db.tenant_tx(p) as conn:
-        await conn.execute("UPDATE core.proposals SET status = %s, result = %s, decided_at = now() WHERE id = %s AND status = 'open'",
-                           (status, Jsonb(result) if result is not None else None, proposal_id))
+async def _close(conn: Conn, proposal_id: UUID, status: str, result: Any) -> None:
+    await conn.execute("UPDATE core.proposals SET status = %s, result = %s, decided_at = now() WHERE id = %s AND status = 'open'",
+                       (status, Jsonb(result) if result is not None else None, proposal_id))
 
 
 async def prepare_tenant(tenant_id: UUID, day: date) -> tuple[int, int]:
