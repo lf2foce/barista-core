@@ -1025,9 +1025,12 @@ async def _failed(p: Principal, name: str, inp: Any, e: BaseException, model: ty
     return r
 
 
-async def record_dismissed(p: Principal, command: str, inp: Any) -> None:
+async def record_dismissed(p: Principal, command: str, inp: Any, *, conn: Conn | None = None) -> None:
     """Người BỎ một đề xuất của trợ lý (0091) — ghi nhật ký cùng vết với lúc trợ lý soạn: tín hiệu "đề xuất → xác nhận / sửa / bỏ" cho trí nhớ
-    doanh nghiệp. Không chạy gì; gọi trong ``tracing`` của lượt / thẻ."""
+    doanh nghiệp. Không chạy gì; gọi trong ``tracing`` của lượt / thẻ. Truyền ``conn`` khi đã ở trong giao dịch để không mượn thêm kết nối pool."""
+    if conn is not None:
+        await _audit(conn, p, command, inp, "dismissed", "")
+        return
     await _audit_alone(p, command, inp, "dismissed", "")
 
 
@@ -1196,13 +1199,16 @@ def localized(p: Principal, r: Result) -> Result:
 async def run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None = None, quiet: bool = False,
               expect_basis: dict[str, str] | None = None, edited: bool = False, files: dict[str, bytes | bytearray] | None = None,
               attended: bool = False, background: bool = False, keep_output: bool = True, historical: bool = False,
-              dry_run: bool = False) -> Result:
+              dry_run: bool = False, claim: Callable[[Conn], Awaitable[Result | None]] | None = None,
+              on_done: Callable[[Conn, Result], Awaitable[None]] | None = None) -> Result:
     """``dry_run``: CHỈ quyền hệ thống (cửa nhà vận hành — 0206): kiểm và chạy handler thật trong điểm lưu rồi HOÀN — không ghi gì (kể cả nhật ký, khoá
     chống lặp, sự kiện); kết quả trạng thái ``dry_run`` mang đầu ra của lần chạy thử.
     ``historical``: CHỈ mã trong tiến trình (lớp nạp dữ liệu hệ cũ — 0185): lệnh, gọi lồng và mọi sự kiện nó phát chạy ở chế độ nạp lịch sử.
     ``background``: CHỈ lõi (vòng quét) — lượt VIỆC NỀN, có hợp đồng thuê riêng cho ``ctx.job_for``, hết khi lệnh xong.
     ``keep_output``: False ⇒ bảng chống lặp chỉ giữ trạng thái (+ mã phiếu duyệt), không giữ kết quả — cho đường nhập hàng loạt, nơi người gọi chỉ đọc trạng thái
-    / lỗi của từng dòng (``imports._run_rows``) và khoá là băm nội dung dòng; lần gọi lặp vẫn nhận ``replayed`` + đúng trạng thái, cùng khoá khác nội dung vẫn ``conflict`` (0177)."""
+    / lỗi của từng dòng (``imports._run_rows``) và khoá là băm nội dung dòng; lần gọi lặp vẫn nhận ``replayed`` + đúng trạng thái, cùng khoá khác nội dung vẫn ``conflict`` (0177).
+    ``claim`` / ``on_done``: CHỈ đường xác nhận thẻ đề xuất (``morning.decide``, ``chat.decide``) — khoá dòng thẻ (``FOR UPDATE``) và đóng thẻ trong CÙNG
+    một giao dịch / MỘT kết nối với lệnh, không giữ kết nối 1 rồi mượn kết nối 2 (tránh tắc bể kết nối khi ≥ max_size lượt xác nhận chạy đồng thời)."""
     door(p, f"run {name}")
     if dry_run and not p.system:
         return Result("denied", error="Chạy thử không ghi chỉ dành cho lệnh vận hành chạy bằng quyền hệ thống")
@@ -1214,7 +1220,7 @@ async def run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None =
     try:
         with timing.span("executor"):
             return localized(p, await _run(p, name, inp, key=key, quiet=quiet, expect_basis=expect_basis, edited=edited, files=files, attended=attended,
-                                           background=lease, keep_output=keep_output, dry_run=dry_run))
+                                           background=lease, keep_output=keep_output, dry_run=dry_run, claim=claim, on_done=on_done))
     finally:
         _COMMAND.reset(command)
         if token is not None:
@@ -1226,7 +1232,8 @@ async def run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None =
 async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None = None, quiet: bool = False,
                expect_basis: dict[str, str] | None = None, edited: bool = False, files: dict[str, bytes | bytearray] | None = None,
                attended: bool = False, background: principal.Lease | None = None, keep_output: bool = True,
-               prepared: Any = _UNPREPARED, dry_run: bool = False) -> Result:
+               prepared: Any = _UNPREPARED, dry_run: bool = False, claim: Callable[[Conn], Awaitable[Result | None]] | None = None,
+               on_done: Callable[[Conn, Result], Awaitable[None]] | None = None) -> Result:
     """Chạy một LỆNH (ghi) trong giao dịch riêng. ``key``: khoá chống lặp (cùng khoá + cùng dữ liệu ⇒ trả kết quả cũ).
     ``quiet``: cho vòng quét định kỳ — kết quả là dict toàn số 0 (không có gì xảy ra) thì KHÔNG ghi nhật ký thao tác.
     ``attended``: trợ lý đang làm trong lượt CÓ NGƯỜI — MẶC ĐỊNH False, chỉ lượt chat (``agent/chat.py: ToolRun`` với ``defer=True``) bật; mọi
@@ -1256,6 +1263,8 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
     given_key = key   # khoá như người gọi gửi — lần chạy lại sau bước chuẩn bị nhận đúng khoá này (bên dưới ``key`` thành khoá theo người gọi)
     try:
         async with db.tenant_tx(p, consistent=op.consistent) as conn:
+            if claim is not None and (short := await claim(conn)) is not None:
+                return short
             # lệnh ghi: khoá chia sẻ trạng thái gói + đọc gói thật (đổi gói khoá độc quyền ⇒ không lọt lệnh của gói vừa tắt)
             await packs.require_for_write(conn, p.tenant_id, op)
             if p.via == "agent":
@@ -1281,8 +1290,10 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
                     if prev["command"] != name or prev["input_hash"] != _input_hash(payload):
                         return Result("conflict", error="Khoá chống lặp đã dùng cho dữ liệu khác")
                     out = prev["output"] or {}
-                    return Result(prev["status"], out, approval_id=out.get("approval_id") if isinstance(out, dict) else None,
-                                  replayed=True)
+                    replayed_res = Result(prev["status"], out, approval_id=out.get("approval_id") if isinstance(out, dict) else None, replayed=True)
+                    if on_done is not None and replayed_res.status in ("ok", "pending_approval"):
+                        await on_done(conn, replayed_res)
+                    return replayed_res
             ctx = core_ctx(conn, p, module=op.module, files=files or {}, background=background,
                            prepared=None if prepared is _UNPREPARED else prepared)
             status, out, note = "ok", None, ""
@@ -1344,9 +1355,12 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
                 await conn.execute(
                     "INSERT INTO core.idempotency (key, command, input_hash, status, output) VALUES (%s, %s, %s, %s, %s)",
                     (key, name, _input_hash(payload), status, Jsonb(_replayable(name, out) if keep_output else _status_only(out))))
+            res = Result(status, out, approval_id=str(ctx.pending_approval) if ctx.pending_approval else None)
+            if on_done is not None and res.status in ("ok", "pending_approval"):
+                await on_done(conn, res)
         _WRITES[p.tenant_id] = writes(p.tenant_id) + 1   # đã commit (ra khỏi giao dịch) — xem ``writes``
         await run_after(ctx)
-        return Result(status, out, approval_id=str(ctx.pending_approval) if ctx.pending_approval else None)
+        return res
     except _Prepare:
         pass   # giao dịch đã hoàn (chưa ghi gì) — chuẩn bị bên dưới, NGOÀI giao dịch, rồi chạy lại với kết quả
     except Exception as e:   # mọi lỗi của lệnh ⇒ Result đã phân loại (map_error) + nhật ký; không ném tiếp ra ngoài
@@ -1371,7 +1385,7 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
             await _audit_alone(p, name, payload, r.status, r.error)
         return r
     return await _run(p, name, inp, key=given_key, quiet=quiet, expect_basis=expect_basis, edited=edited, files=files, attended=attended,
-                      background=background, keep_output=keep_output, prepared=value, dry_run=dry_run)
+                      background=background, keep_output=keep_output, prepared=value, dry_run=dry_run, claim=claim, on_done=on_done)
 
 
 async def propose(p: Principal, name: str, inp: dict[str, Any], *, reason: str = "") -> Result:

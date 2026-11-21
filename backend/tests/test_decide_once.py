@@ -118,3 +118,36 @@ async def test_chat_command_written_but_card_not_saved_runs_once_when_pressed_ag
     await chat.decide(sale, card["id"], "confirm", card["input"], "press-again", emit=again, model=model)
     assert await owner_val("SELECT count(*) FROM crm.customers WHERE phone = %s", (phone,)) == 1
     assert again.of("decided") and again.of("decided")[0]["status"] == "ok"
+
+
+async def test_many_simultaneous_proposal_confirms_never_deadlock_the_pool(who: Who) -> None:
+    """Rà Codex 21/11: 12 lượt xác nhận đồng thời vượt quá ``max_size=10`` của bể ``db.app`` — mỗi lượt chỉ dùng ĐÚNG MỘT kết nối
+    (khoá thẻ + chạy lệnh + đóng thẻ trong cùng giao dịch) nên không bao giờ tự khoá chéo tới PoolTimeout."""
+    sale = await who("sale1")
+    cards = [await _file_card(sale, f"Việc song song pool #{i}") for i in range(12)]
+    results = await asyncio.wait_for(
+        asyncio.gather(*(morning.decide(sale, cid, "confirm", None, f"pool-{i}") for i, cid in enumerate(cards))),
+        timeout=20,
+    )
+    assert all(r["status"] == "ok" for r in results), [r["status"] for r in results]
+    done = await owner_val("SELECT count(*) FROM core.proposals WHERE id = ANY(%s) AND status = 'done'", (cards,))
+    assert done == 12
+
+
+async def test_many_simultaneous_chat_confirms_never_deadlock_the_pool(who: Who) -> None:
+    """Cùng ca cạn bể kết nối cho ``chat.decide``: 12 luồng chat xác nhận đồng thời trên bể 10 kết nối."""
+    sale = await who("sale1")
+    items: list[tuple[dict[str, Any], Scripted]] = []
+    for i in range(12):
+        phone = fresh_phone()
+        model = Scripted([[call("crm.create_lead", name=f"Khách pool {i}", phone=phone, offering_code="HSR")], "Xong."])
+        first = Log()
+        await chat.chat_turn(sale, f"Thêm khách {i}", emit=first, model=model)
+        items.append((first.proposals()[0], model))
+    logs = [Log() for _ in items]
+    await asyncio.wait_for(
+        asyncio.gather(*(chat.decide(sale, card["id"], "confirm", card["input"], f"chat-pool-{i}", emit=log, model=model)
+                         for i, ((card, model), log) in enumerate(zip(items, logs, strict=True)))),
+        timeout=30,
+    )
+    assert all(log.of("decided") and log.of("decided")[0]["status"] == "ok" for log in logs)

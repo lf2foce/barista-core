@@ -211,25 +211,37 @@ async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str,
     """Xác nhận ⇒ chạy bằng quyền NGƯỜI bấm (không phải trợ lý), căn cứ đổi so với lúc soạn ⇒ không chạy (0071); Bỏ ⇒ ghi lại, không hỏi lại
     trong ngày (cùng khoá).
 
-    MỖI ĐỀ XUẤT CHỈ CHẠY ĐÚNG MỘT LẦN (ADR 0253): đề xuất được CHIẾM nguyên tử bằng khoá dòng ``FOR UPDATE`` TRƯỚC khi chạy lệnh và khoá giữ tới khi
-    đóng thẻ — lượt quyết thứ hai (hai tab, bấm đôi, "Bỏ" cùng lúc "Xác nhận") chờ ở khoá rồi thấy thẻ đã đóng ⇒ nhận "đã được xử lý", không chạy
-    lại, không đóng nhầm thành "bỏ". Khoá nằm trên dòng, không trên một trạng thái trung gian: tiến trình chết giữa chừng ⇒ khoá tự nhả, thẻ còn mở."""
-    async with db.tenant_tx(p) as conn:
-        cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s AND status = 'open' FOR UPDATE", (proposal_id,))
-        row = await cur.fetchone()
-        if row is None:
-            return _result("not_found", GONE)
-        with executor.tracing(_trace(row["user_id"], row["day"], row["key"])):   # cùng vết với lúc soạn: "trợ lý soạn → người quyết"
-            if decision != "confirm":
-                await executor.record_dismissed(p, row["command"], row["input"])   # tín hiệu "bỏ" (0091)
+    MỖI ĐỀ XUẤT CHỈ CHẠY ĐÚNG MỘT LẦN (ADR 0253) và DÙNG ĐÚNG MỘT KẾT NỐI POOL (rà Codex 21/11): khoá dòng ``FOR UPDATE`` và đóng thẻ nằm trong
+    CÙNG giao dịch với lệnh (qua ``executor.run(..., claim=, on_done=)``) — không giữ kết nối 1 rồi mượn kết nối 2, nên 10+ lượt xác nhận đồng thời
+    không bao giờ tắc bể kết nối. Khoá thực thi cố định ``proposal:<id>`` vẫn giữ an toàn nếu lệnh từng commit riêng trước đó."""
+    if decision != "confirm":
+        async with db.tenant_tx(p) as conn:
+            cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s AND status = 'open' FOR UPDATE", (proposal_id,))
+            row = await cur.fetchone()
+            if row is None:
+                return _result("not_found", GONE)
+            with executor.tracing(_trace(row["user_id"], row["day"], row["key"])):   # cùng vết với lúc soạn: "trợ lý soạn → người quyết"
+                await executor.record_dismissed(p, row["command"], row["input"], conn=conn)   # tín hiệu "bỏ" (0091) — dùng chung kết nối
                 await _close(conn, proposal_id, "dismissed", None)
-                return _result("dismissed")
-            inp: dict[str, Any] = data if isinstance(data, dict) and data else row["input"]
-            # khoá thực thi CỐ ĐỊNH theo mã đề xuất (không theo ``key`` của lượt bấm): lệnh đã ghi mà thẻ chưa kịp đóng (chết giữa hai giao dịch) ⇒ lần bấm lại
-            # nhận đúng kết quả đã có (``replayed``), đóng thẻ — không chạy lệnh lần hai
-            r = await executor.run(p, row["command"], inp, key=f"proposal:{proposal_id}", expect_basis=row["basis"], edited=inp != row["input"])
-        if r.ok or r.status == "pending_approval":
-            await _close(conn, proposal_id, "done", executor.jsonable(r.output))
+        return _result("dismissed")
+
+    async with db.tenant_tx(p, read_only=True) as conn:
+        cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s AND status = 'open'", (proposal_id,))
+        row = await cur.fetchone()
+    if row is None:
+        return _result("not_found", GONE)
+    inp: dict[str, Any] = data if isinstance(data, dict) and data else row["input"]
+
+    async def _claim(conn: Conn) -> executor.Result | None:
+        cur = await conn.execute("SELECT 1 FROM core.proposals WHERE id = %s AND status = 'open' FOR UPDATE", (proposal_id,))
+        return None if await cur.fetchone() is not None else executor.Result("not_found", error=GONE)
+
+    async def _on_done(conn: Conn, r: executor.Result) -> None:
+        await _close(conn, proposal_id, "done", executor.jsonable(r.output))
+
+    with executor.tracing(_trace(row["user_id"], row["day"], row["key"])):
+        r = await executor.run(p, row["command"], inp, key=f"proposal:{proposal_id}", expect_basis=row["basis"],
+                               edited=inp != row["input"], claim=_claim, on_done=_on_done)
     return _result(r.status, r.error or "", executor.jsonable(r.output), r.approval_id)
 
 
