@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Bộ công cụ gói cho đối tác / bên ngoài (0130 lát 4, ADR 0242): sinh khuôn gói và tự kiểm gói ở repo RIÊNG của họ. Chỉ thư viện chuẩn (Python ≥ 3.11).
+"""Bộ công cụ gói cho đối tác / bên ngoài (0130 lát 4, ADR 0242): sinh khuôn gói, chạy thử trên DB dev không xoá dữ liệu và tự kiểm gói ở repo RIÊNG của họ. Chỉ thư viện chuẩn (Python ≥ 3.11).
 
-  bash scripts/pack.sh new <khoá> <thư mục> [--title "Tên gói"]      # sinh gói mới đúng hợp đồng (chạy được ngay, có test)
-  bash scripts/pack.sh check <thư mục gói> [--core-ref HEAD] [--worktree] [--with <thư mục gói khác>] [--keep]
+  bash scripts/pack.sh new <khoá> <thư mục> [--title "Tên gói"] [--connector]
+  bash scripts/pack.sh dev <thư mục gói> [--with <gói khác>] [--port 8300] [--web-port 3100] [--no-serve]
+  bash scripts/pack.sh check <thư mục gói> [--core-ref HEAD] [--worktree] [--with <gói khác>] [--keep]
 
 ``check`` không sửa gì của người gọi: dựng bản lõi SẠCH (``git archive`` của ``--core-ref`` — mặc định HEAD của repo lõi này), chép gói vào thư mục tạm
 (mặc định chỉ file đã commit nếu gói nằm trong repo git; ``--worktree`` lấy cả thay đổi chưa commit), rồi lần lượt:
@@ -528,14 +529,166 @@ def _summary(r: Report, key: str) -> int:
     return 0
 
 
+DEV_SETUP = r"""
+import asyncio, json, sys
+from barista import seed
+from barista.config import settings
+from barista.db import db
+from barista.kernel import auth, executor, loader, packs, registry, screens
+from barista.kernel.migrate import migrate
+
+key = sys.argv[1]
+
+async def run():
+    loader.load()
+    if key not in registry.PACKS:
+        raise SystemExit(f"Không nạp được gói {key!r} — kiểm tra entry point barista.packs trong pyproject.toml")
+    ran = await migrate(settings.owner_database_url)
+    await db.open(settings.database_url, settings.owner_database_url)
+    try:
+        async with db.owner.connection() as conn:
+            t_row = await (await conn.execute(
+                "SELECT t.id, t.name, u.email FROM core.tenants t "
+                "JOIN core.memberships m ON m.tenant_id = t.id AND m.active "
+                "JOIN core.users u ON u.id = m.user_id "
+                "WHERE m.role = 'admin' "
+                "ORDER BY (u.email = %s) DESC, t.created_at LIMIT 1",
+                (f"admin@{seed.DOMAIN}",),
+            )).fetchone()
+        if t_row is None:
+            tid = await seed.sample_company(seed.TENANT, "sample", (key,))
+            t_name, login_email = seed.TENANT, f"admin@{seed.DOMAIN}"
+            enabled_now = True
+        else:
+            tid, t_name, login_email = t_row["id"], t_row["name"], t_row["email"]
+            async with db.owner.connection() as conn:
+                await conn.execute(
+                    "INSERT INTO core.tenant_entitlements (tenant_id, pack, granted_by, note) "
+                    "VALUES (%s, %s, 'pack-dev', 'bật thử trên máy dev') ON CONFLICT DO NOTHING",
+                    (tid, key),
+                )
+                already = await (await conn.execute(
+                    "SELECT 1 FROM core.tenant_packs WHERE tenant_id = %s AND pack = %s",
+                    (tid, key),
+                )).fetchone()
+            enabled_now = already is None
+            if enabled_now:
+                async with db.owner.connection() as conn:
+                    admin = await auth.load(conn, tid, email=login_email)
+                if admin is None:
+                    raise SystemExit(f"Không nạp được quản trị {login_email}")
+                packs.invalidate(tid)
+                r = await executor.run(admin, "admin.set_pack", {"pack": key, "enabled": True})
+                if r.status != "ok":
+                    raise SystemExit(f"Không bật được gói {key}: {r.status} {r.error}")
+        mods = {m for m, p in registry.MODULE_PACK.items() if p == key}
+        pack_screens = [
+            {"key": s.key, "title": s.title, "query": s.query, "workspace": ws.title}
+            for ws in screens.assemble()
+            for s in ws.screens
+            if s.query.split(".")[0] in mods
+        ]
+        print(json.dumps({
+            "pack": key,
+            "title": registry.PACKS[key].title,
+            "tenant": t_name,
+            "login": login_email,
+            "migrations": ran,
+            "newly_enabled": enabled_now,
+            "screens": pack_screens,
+        }, ensure_ascii=False))
+    finally:
+        await db.close()
+
+asyncio.run(run())
+"""
+
+
+def _pack_key(pack: Path) -> str:
+    py = pack / "pyproject.toml"
+    if not py.is_file():
+        die(f"{pack} không phải thư mục gói (thiếu pyproject.toml)")
+    meta = tomllib.loads(py.read_text(encoding="utf-8"))
+    eps = meta.get("project", {}).get("entry-points", {}).get("barista.packs", {})
+    if not isinstance(eps, dict) or len(eps) != 1:
+        die(f"{py}: phải khai đúng MỘT điểm vào [project.entry-points.\"barista.packs\"]")
+    return next(iter(eps))
+
+
+def dev(pack: Path, extra: list[Path], port: int, web_port: int, no_serve: bool,
+        env_extra: dict[str, str] | None = None, vpy_override: Path | None = None) -> int:
+    """Chạy thử một gói trên DB dev hiện có — KHÔNG chạy `uv sync` xoá gói, KHÔNG `seed --reset` xoá dữ liệu dev."""
+    pack = pack.resolve()
+    key = _pack_key(pack)
+    for other in extra:
+        _pack_key(other.resolve())
+    for tool in ("uv",):
+        if shutil.which(tool) is None:
+            die(f"thiếu {tool}")
+    core_be = CORE / "backend"
+    vpy = vpy_override or (core_be / ".venv" / "bin" / "python")
+    env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
+    if env_extra:
+        env.update(env_extra)
+
+    step(f"1. Chuẩn bị môi trường lõi & cài gói {key}")
+    if vpy_override is None and not vpy.is_file():
+        code, out = run(["uv", "sync", "--frozen", "-q"], cwd=core_be, env=env)
+        if code:
+            die(f"uv sync --frozen của lõi lỗi:\n{out[-2000:]}")
+    if not (core_be / ".env").is_file() and not env.get("BARISTA_DATABASE_URL"):
+        code, out = run(["bash", str(core_be / "scripts" / "dev-db.sh")], cwd=CORE, env=env)
+        if code:
+            die(f"dev-db.sh lỗi:\n{out[-2000:]}")
+    for p in [*extra, pack]:
+        code, out = run(["uv", "pip", "install", "-q", "--python", str(vpy), "--no-deps", "-e", str(p.resolve())], cwd=CORE, env=env)
+        if code:
+            die(f"không cài được gói {p}:\n{out[-2000:]}")
+    print(f"  OK: đã cài editable {pack.name} vào {vpy}")
+
+    step("2. Chạy migration & bật gói trên DB dev (giữ nguyên dữ liệu hiện có)")
+    code, out = run([str(vpy), "-c", DEV_SETUP, key], cwd=core_be, env=env)
+    if code:
+        die(f"chuẩn bị DB cho gói {key} lỗi:\n{out[-2000:]}")
+    info = json.loads(out.strip().splitlines()[-1])
+    mig_note = f"{len(info['migrations'])} migration mới" if info["migrations"] else "không có migration mới"
+    print(f"  Công ty thử : {info['tenant']} (đăng nhập dev: {info['login']})")
+    print(f"  Gói         : {info['title']} ({info['pack']}) — {'vừa bật' if info['newly_enabled'] else 'đã bật sẵn'} · {mig_note}")
+    if info["screens"]:
+        for sc in info["screens"]:
+            print(f"  Màn         : {sc['workspace']} › {sc['title']} ({sc['key']})")
+    print(f"\n  Web : http://localhost:{web_port}   (chưa chạy web ⇒ cd web && pnpm dev)")
+    print(f"  API : http://127.0.0.1:{port}/docs")
+    print(f"  Kiểm: bash scripts/pack.sh check {pack} --worktree")
+    print(f"  Gỡ  : uv pip uninstall --python backend/.venv/bin/python barista-pack-{key.replace('_', '-')}")
+
+    if no_serve:
+        return 0
+
+    step(f"3. Khởi động API dev ở cổng {port} (tự nạp lại khi sửa {pack / 'src'})")
+    env["BARISTA_DEV_AUTH"] = "1"
+    uv_bin = core_be / ".venv" / "bin" / "uvicorn"
+    cmd = [str(uv_bin), "barista.main:app", "--host", "127.0.0.1", "--port", str(port), "--reload", "--reload-dir", str(pack / "src")]
+    try:
+        return subprocess.run(cmd, cwd=core_be, env=env).returncode
+    except KeyboardInterrupt:
+        return 0
+
+
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="pack.sh", description="Khuôn gói + tự kiểm gói của đối tác (ADR 0242)")
+    ap = argparse.ArgumentParser(prog="pack.sh", description="Khuôn gói + chạy thử + tự kiểm gói của đối tác (ADR 0242)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("new", help="sinh gói mới từ khuôn")
     a.add_argument("key")
     a.add_argument("dest", type=Path)
     a.add_argument("--title", default="")
     a.add_argument("--connector", action="store_true", help="gói KẾT NỐI ra hệ ngoài (khung kết nối chung của lõi, ADR 0244): bộ nối + lệnh nhận + form kết nối")
+    d = sub.add_parser("dev", help="cài gói vào môi trường dev, chạy migration, bật cho công ty mẫu (giữ dữ liệu) và chạy API")
+    d.add_argument("pack", type=Path)
+    d.add_argument("--with", dest="extra", action="append", type=Path, default=[], help="gói khác cần cài kèm (lặp được)")
+    d.add_argument("--port", type=int, default=8300, help="cổng API dev (mặc định 8300)")
+    d.add_argument("--web-port", type=int, default=3100, help="cổng web để in địa chỉ mở màn (mặc định 3100)")
+    d.add_argument("--no-serve", action="store_true", help="chỉ cài gói + migration + bật gói và in URL, không giữ tiến trình uvicorn")
     b = sub.add_parser("check", help="tự kiểm một gói trên lõi sạch")
     b.add_argument("pack", type=Path)
     b.add_argument("--core-ref", default="HEAD")
@@ -546,6 +699,8 @@ def main(argv: list[str]) -> int:
     if args.cmd == "new":
         new(args.key, args.dest, args.title.strip() or args.key.replace("_", " ").capitalize(), "connector" if args.connector else "plain")
         return 0
+    if args.cmd == "dev":
+        return dev(args.pack, args.extra, args.port, args.web_port, args.no_serve)
     return check(args.pack, args.core_ref, args.worktree, args.extra, args.keep)
 
 

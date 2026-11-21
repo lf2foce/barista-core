@@ -184,3 +184,66 @@ def test_from_barista_import_api_still_enforces_permissions(made: Path, code: st
 
 def test_from_barista_import_api_mixed_with_internal_is_refused(made: Path) -> None:
     assert _perm_report(made, "from barista import api, kernel\nX = api.ai", '["ai"]').fails
+
+
+def test_pack_skill_exists_and_names_the_three_step_loop() -> None:
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    for needle in ("pack.sh new", "pack.sh dev", "pack.sh check", "12-them-mot-goi.md", "21-goi-cua-doi-tac.md"):
+        assert needle in skill, needle
+
+
+async def test_pack_dev_installs_migrates_enables_and_preserves_existing_db_data(made: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """``pack.sh dev --no-serve``: cài gói vào môi trường riêng, chạy migration + bật cho công ty mẫu mà KHÔNG xoá dữ liệu đang có, và chạy lại được."""
+    import os
+    import sys
+    import uuid
+    import venv
+
+    from psycopg import AsyncConnection, sql
+
+    from tests import conftest as core
+
+    dbname = f"barista_erp_packdev_{uuid.uuid4().hex[:8]}"
+    app_url = f"{core.APP_URL.rpartition('/')[0]}/{dbname}"
+    owner_url = f"{core.OWNER_URL.rpartition('/')[0]}/{dbname}"
+    await core.ensure_db(owner_url)
+    try:
+        iso = tmp_path / "venv"
+        venv.EnvBuilder(symlinks=True).create(iso)
+        vpy = iso / "bin" / "python"
+        assert vpy.is_file() and sys.executable
+        base_site = Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+        iso_site = iso / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+        (iso_site / "barista_base.pth").write_text(f"{base_site}\n{ROOT / 'backend' / 'src'}\n", encoding="utf-8")
+        env_extra = {
+            "BARISTA_DATABASE_URL": app_url,
+            "BARISTA_OWNER_DATABASE_URL": owner_url,
+            "BARISTA_FILES_DIR": str(tmp_path / "files"),
+            "BARISTA_FILES_SIGN_SECRET": "dev-test-secret-0123456789abcdef",
+        }
+
+        # Dựng sẵn DB dev mẫu (không gói) rồi gắn dấu dữ liệu để kiểm pack.sh dev không reset DB
+        code, out = packkit.run([str(vpy), "-m", "barista.seed"], cwd=ROOT / "backend", env={**dict(os.environ), **env_extra})
+        assert code == 0, out
+        async with await AsyncConnection.connect(owner_url, autocommit=True) as conn:
+            tid = (await (await conn.execute("UPDATE core.tenants SET name = 'Công ty giữ dữ liệu' RETURNING id")).fetchone() or (None,))[0]
+            assert tid is not None
+
+        rc1 = packkit.dev(made, [], 8399, 3199, True, env_extra=env_extra, vpy_override=vpy)
+        out1 = capsys.readouterr().out
+        assert rc1 == 0, out1
+        assert "Công ty giữ dữ liệu" in out1 and "vừa bật" in out1 and "http://localhost:3199" in out1 and "http://127.0.0.1:8399/docs" in out1
+        assert "kho_lanh" in out1
+
+        async with await AsyncConnection.connect(owner_url, autocommit=True) as conn:
+            assert (await (await conn.execute("SELECT name FROM core.tenants WHERE id = %s", (tid,))).fetchone()) == ("Công ty giữ dữ liệu",)
+            assert (await (await conn.execute("SELECT 1 FROM core.tenant_packs WHERE tenant_id = %s AND pack = 'kho_lanh'", (tid,))).fetchone()) == (1,)
+            assert (await (await conn.execute("SELECT to_regnamespace('kho_lanh') IS NOT NULL")).fetchone()) == (True,)
+
+        # Chạy lại lần 2: idempotent, không chạy lại migration, vẫn giữ nguyên dữ liệu
+        rc2 = packkit.dev(made, [], 8399, 3199, True, env_extra=env_extra, vpy_override=vpy)
+        out2 = capsys.readouterr().out
+        assert rc2 == 0 and "đã bật sẵn" in out2 and "không có migration mới" in out2
+    finally:
+        async with await AsyncConnection.connect(core.ADMIN_URL, autocommit=True) as admin:
+            await admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(dbname)))

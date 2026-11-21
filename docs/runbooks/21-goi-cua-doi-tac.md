@@ -40,13 +40,25 @@ bash scripts/pack.sh new kho_lanh ../goi-cua-toi/kho_lanh --title "Kho lạnh"
 
 ## 3. Thử trên máy
 
+Chạy một lệnh từ repo lõi (cài gói editable vào `backend/.venv`, chạy migration mới trên DB dev **không xoá dữ liệu hiện có**, bật gói cho công ty mẫu, in màn + URL và khởi động API có tự nạp lại khi sửa mã gói):
+
 ```bash
-uv pip install --python backend/.venv/bin/python --no-deps -e ../goi-cua-toi/kho_lanh   # --python bắt buộc: cài vào môi trường của LÕI
-cd backend && .venv/bin/python -m pytest ../../goi-cua-toi/kho_lanh/tests               # test của gói
+bash scripts/pack.sh dev ../goi-cua-toi/kho_lanh
+# Chỉ cài + chạy migration + bật gói (không mở uvicorn):
+bash scripts/pack.sh dev ../goi-cua-toi/kho_lanh --no-serve
+# Kèm gói khác mà gói này cần:
+bash scripts/pack.sh dev ../goi-cua-toi/kho_lanh --with ../goi-khac/abc
 ```
 
-Chạy lõi trên máy (runbook 01) thì gói tự nạp. Bật gói cho công ty thử ở Gói & ứng dụng. Gỡ gói: `uv pip uninstall --python backend/.venv/bin/python
-barista-pack-kho-lanh`. Lõi chạy tiếp như cũ, dữ liệu của gói vẫn nằm trong DB.
+Mở web ở cửa sổ khác (`cd web && pnpm dev` → `http://localhost:3100`), đăng nhập dev bằng tài khoản lệnh vừa in ra và bấm vào màn của gói.
+
+Lưu ý tránh mất gói / mất dữ liệu dev:
+- **Không** chạy lại `uv sync` sau khi đã cài gói (nó gỡ gói khỏi `backend/.venv`; nếu lỡ chạy thì chạy lại `pack.sh dev`).
+- **Không** chạy `python -m barista.seed --reset` nếu muốn giữ dữ liệu dev hiện tại (`pack.sh dev` chỉ chạy migration mới và giữ nguyên DB).
+- Chạy nhanh bộ test của gói: `cd backend && .venv/bin/python -m pytest ../../goi-cua-toi/kho_lanh/tests`.
+- Gỡ gói khỏi môi trường lõi: `uv pip uninstall --python backend/.venv/bin/python barista-pack-kho-lanh` (lõi chạy tiếp như cũ, dữ liệu của gói vẫn nằm trong DB).
+
+Hướng dẫn rút gọn 3 bước `new → dev → check` cho agent: [`SKILL.md`](../../SKILL.md).
 
 ## 4. Tự kiểm trước khi gửi
 
