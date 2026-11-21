@@ -151,6 +151,11 @@ async def test_a_row_the_database_refuses_is_dropped_at_once_and_does_not_block_
     await metering.record(ghost, surface="work", category=cat_bad, modules=["test"], usage=_usage(), model="fake")
     assert metering.pending() == before                                  # bị từ chối ⇒ không xếp hàng
     monkeypatch.setattr(settings, "ai_usage_wait_s", 0.3)
+
+    async def _idle() -> None:   # vòng thử lại nền (đợi 1 s rồi xả) đứng ngoài: máy tải thì nó xả giữa chừng và ``pending()`` rơi dưới 2 — test tự điều khiển lúc xả
+        return
+
+    monkeypatch.setattr(metering, "_retry_forever", _idle)
     release = asyncio.Event()
     tasks = await _fill(sale1, db.app.max_size, release)                 # pool kín ⇒ cả hai dòng vào hàng chờ, dòng hỏng đứng TRƯỚC
     try:
