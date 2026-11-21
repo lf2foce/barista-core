@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, RotateCcw, Sparkles, XCircle } from "lucide-react";
+import { Check, RotateCcw, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { undoOutcome } from "@/lib/autonomy";
@@ -8,6 +8,7 @@ import { newKey } from "@/lib/idempotency";
 import type { ChatCard } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { actionClass } from "@/components/primitives";
+import { BriefView, SettledLine } from "./brief";
 import { useDesk } from "./desk-context";
 import { useChat } from "./chat-context";
 
@@ -17,21 +18,23 @@ const DISMISSED = "Đã bỏ đề xuất";
  * Đề xuất MỘT CHẠM (0144): nút Xác nhận nằm ngay trong câu trả lời, kèm vì sao việc này chờ người (`why` server viết từ `decide`). Xác nhận chạy lệnh
  * bằng quyền NGƯỜI qua `proposals/decide` rồi trợ lý làm tiếp; "Sửa" mở thẻ đầy đủ trên khung làm việc để chỉnh ô trước khi xác nhận.
  */
-export function ProposalRow({ card }: { card: ChatCard }) {
+export function ProposalRow({ card, onEdit }: { card: ChatCard; onEdit?: () => void }) {
   const desk = useDesk();
   const chat = useChat();
   const [busy, setBusy] = useState<"confirm" | "dismiss" | null>(null);
   const [error, setError] = useState("");
-  const done = desk.confirmed[card.id];
+  const done = desk.settled(card);
   const edited = desk.proposalEdits[card.id] !== undefined;
 
   async function decide(d: "confirm" | "dismiss") {
     setBusy(d);
     setError("");
     try {
-      const o = await chat.decide(card, d, d === "confirm" ? desk.proposalEdits[card.id] ?? card.input ?? {} : {}, newKey());
+      const input = d === "confirm" ? desk.proposalEdits[card.id] ?? card.input ?? {} : {};
+      // MỘT đường quyết cho mọi nơi: thẻ buổi sáng quyết qua morning/{id}/decide, thẻ trong lượt chat qua proposals/decide
+      const o = card.source === "morning" ? await chat.decideMorning(card, d, input, newKey()) : await chat.decide(card, d, input, newKey());
       if (o.done) {
-        desk.setConfirmed(card.id, d === "dismiss" ? DISMISSED : o.message || "Đã xong");
+        desk.setConfirmed(card.id, d === "dismiss" ? DISMISSED : o.message || "Đã xong", o.approvalId);
         void desk.refreshInbox();
       } else setError(o.message || o.status);
     } finally {
@@ -39,30 +42,26 @@ export function ProposalRow({ card }: { card: ChatCard }) {
     }
   }
 
-  const why = (card.why ?? []).slice(0, 2);
+  const brief = card.brief;
   return (
     <div className={cn("flex flex-col gap-2 rounded-[14px] border px-3 py-2.5", done ? "border-border bg-surface" : "border-primary/40 bg-primary/[0.04]")}>
       <div className="flex items-start gap-2.5">
         <Sparkles className="mt-0.5 size-4 shrink-0" style={{ color: "#af52de" }} aria-hidden />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="t14m">{card.title}</span>
-          {card.subtitle && card.subtitle !== card.title ? <span className="t12 line-clamp-2 text-muted-foreground">{card.subtitle}</span> : null}
-          {why.length && !done ? <span className="t12 text-muted-foreground">Vì sao chờ bạn: {why.join(" · ")}</span> : null}
+          {brief ? <BriefView brief={brief} /> : card.subtitle && card.subtitle !== card.title ? <span className="t12 line-clamp-2 text-muted-foreground">{card.subtitle}</span> : null}
         </div>
       </div>
       {error ? <p className="t12 text-bad" role="alert">{error}</p> : null}
       {done ? (
-        <p className={cn("t12m flex items-center gap-1.5", done === DISMISSED ? "text-muted-foreground" : "text-ok")}>
-          {done === DISMISSED ? <XCircle className="size-3.5" aria-hidden /> : <Check className="size-3.5" aria-hidden />}
-          {done}
-        </p>
+        <SettledLine settled={done} />
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" disabled={busy !== null} onClick={() => void decide("confirm")} className={cn(actionClass("primary"), "h-8 px-3")}>
             <Check className="size-3.5" aria-hidden />
             {busy === "confirm" ? "Đang làm…" : edited ? "Xác nhận bản đã sửa" : "Xác nhận"}
           </button>
-          <button type="button" disabled={busy !== null} onClick={() => desk.openCard(card, true)} className={cn(actionClass("default"), "h-8 px-3")}>
+          <button type="button" disabled={busy !== null} onClick={() => (onEdit ? onEdit() : desk.openCard(card, true))} className={cn(actionClass("default"), "h-8 px-3")}>
             Xem, sửa
           </button>
           <button type="button" disabled={busy !== null} onClick={() => void decide("dismiss")} className="t12m h-8 rounded-md px-2 text-muted-foreground hover:bg-accent disabled:opacity-50">

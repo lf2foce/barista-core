@@ -149,7 +149,7 @@ struct FormSheet: View {
                     .padding(2)
                 }
             } else if spec != nil {
-                Text("Không cần điền gì thêm — bấm “\(action.title)” để xác nhận.").font(.t14).foregroundStyle(.secondary)
+                Text(spec?.effect ?? "Làm “\(action.title)” ngay bây giờ.").font(.t14).foregroundStyle(.secondary)
             }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle.fill").font(.t14).foregroundStyle(.red)
@@ -471,7 +471,7 @@ struct FormSheet: View {
         do {
             let s: FormSpec
             if let prefetched {
-                s = FormSpec(command: action.command, title: action.title, description: "", importable: false, fields: prefetched)
+                s = FormSpec(command: action.command, title: action.title, description: "", importable: false, fields: prefetched, confirm: nil, effect: nil)
             } else {
                 s = try await api.form(action.command)
             }
@@ -519,8 +519,9 @@ struct FormSheet: View {
             more = got.mapValues { $0.count >= optionsLimit }
             chips = chip
             spec = s
-            // nút "instant" (vd chọn đáp án) không còn gì để điền ⇒ chạy luôn, không hiện hộp xác nhận rỗng. Nút khác vẫn hỏi xác nhận.
-            if action.style == "instant", visible.isEmpty, submitter == nil, !embedded { await submit() }
+            // không còn gì để điền: nút "instant" hoặc lệnh ĐẢO ĐƯỢC (server nói `confirm: "none"` — ADR 0253) ⇒ chạy luôn, không hộp xác nhận;
+            // lệnh phá huỷ / không đảo được ⇒ hộp nói hệ quả (`effect`).
+            if action.style == "instant" || s.confirm == "none", visible.isEmpty, submitter == nil, !embedded { await submit() }
         } catch {
             self.error = error.localizedDescription
         }

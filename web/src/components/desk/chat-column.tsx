@@ -371,7 +371,7 @@ function Bubble({ message }: { message: ChatMessage }) {
         (card) => desk.proposalEdits[card.id] ?? card.input ?? {},
         newKey,
         (card, o) => {
-          desk.setConfirmed(card.id, o.message);
+          desk.setConfirmed(card.id, o.message, o.approvalId);
           chat.addSystem(`✓ ${o.message}`);
         },
       );
@@ -498,7 +498,7 @@ function StepList({ steps, cards }: { steps: ChatMessage["steps"]; cards: ChatCa
 function PreviewRow({ card }: { card: ChatCard }) {
   const desk = useDesk();
   const proposal = card.kind === "proposal";
-  const done = desk.confirmed[card.id];
+  const done = desk.settled(card)?.label;
   const op = card.query ?? card.command ?? "";
   const sub = done
     ? done
@@ -527,7 +527,7 @@ function AsideRow({ card }: { card: ChatCard }) {
   const desk = useDesk();
   const chat = useChat();
   const [busy, setBusy] = useState<"confirm" | "dismiss" | null>(null);
-  const done = desk.confirmed[card.id];
+  const done = desk.settled(card)?.label;
   const decide = async (d: "confirm" | "dismiss") => {
     setBusy(d);
     try {

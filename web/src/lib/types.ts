@@ -59,6 +59,8 @@ export type ActionSpec = {
   basis?: string;
   /** Câu hỏi lại của nút không có ô nào để điền (server soạn — vd "Phát hành = cấp số và khoá nội dung…"); trống ⇒ câu chung. */
   confirm?: string;
+  /** LUẬT XÁC NHẬN (ADR 0253, server nói): nút không còn ô nào và lệnh ĐẢO ĐƯỢC ⇒ chạy ngay khi chạm, báo kết quả (kèm Hoàn tác nếu có). Hộp xác nhận chỉ cho `confirm` (hệ quả). */
+  instant?: boolean;
 };
 
 export type OpenSpec = { query: string; bind: Record<string, string>; title: string };
@@ -387,6 +389,7 @@ export type Block = (
   | { type: "kpis"; items: Kpi[] }
   | { type: "steps"; title: string; steps: StepItem[] }
   | { type: "stages"; title: string; stages: Stage[] }
+  | ({ type: "brief" } & Brief)
   | { type: "callout"; tone: string; title: string; text: string; facts: string[]; draft: string; actions: ActionSpec[] }
   | { type: "list"; title: string; items: ListItem[]; attach?: ListAttach }
   | { type: "tiles"; title: string; items: Tile[] }
@@ -459,6 +462,9 @@ export type FormSpec = {
   intent?: string[];
   /** Truy vấn "Soạn giúp" (vd `core.draft_input`): nhận {command, text, values, file_name, file_b64}, trả `DraftResult` — không chạy lệnh. */
   draft?: string;
+  /** Luật xác nhận của lệnh (ADR 0253): "none" = đảo được · "consequence" = hộp nói hệ quả bằng `effect`. */
+  confirm?: "none" | "consequence";
+  effect?: string;
 };
 /** Bản soạn của "Soạn giúp" (ADR 0250): giá trị đã kiểm ở server (gồm ô người đã điền), ô nào máy đoán, ghi chú chỗ đoán / còn thiếu. */
 export type DraftResult = { values: Input; guessed: string[]; notes: string[] };
@@ -611,9 +617,26 @@ export type PlanImportView = {
 // ── trợ lý ──
 
 export type Step = { n: number; tool: string; title: string; status: string; error?: string; summary?: string; card_id?: string };
+/** BẢN CHẠY THỬ CHUẨN (ADR 0253): một hợp đồng cho thẻ đề xuất, thẻ buổi sáng, phiếu duyệt — hồ sơ · cũ → mới · vì sao · đảo được không. */
+export type Brief = {
+  title: string;
+  subject: { label: string; open: { query: string; input: Input } | null } | null;
+  changes: { label: string; before: string; after: string }[];
+  reason: string;
+  /** ok: true = đảo được · false = không đảo được · null = chưa khai; `how` = cách đảo / hệ quả. */
+  reversible: { ok: boolean | null; how: string };
+};
 export type ChatCard = {
   id: string;
   kind: string; // page · proposal
+  /** Bản chạy thử chuẩn của đề xuất (server dựng lúc chạy thử). */
+  brief?: Brief | null;
+  /** TRẠNG THÁI do server nói: proposed · executed · sent (đã gửi duyệt — kèm `approval_id`) · dismissed · expired. */
+  state?: string;
+  state_label?: string;
+  approval_id?: string;
+  /** Thẻ buổi sáng: vì sao nên làm (code tính ở server — web vẽ dưới tiêu đề). */
+  reason?: string;
   title: string;
   subtitle?: string;
   query?: string;
@@ -664,6 +687,8 @@ export type StreamEvent = {
   // proposals/decide (0049)
   replayed?: boolean;
   resuming?: boolean;
+  /** decided: phiếu duyệt sinh ra (đề xuất thành "Đã gửi duyệt") — mở đúng phiếu này. */
+  approval_id?: string;
 };
 export type ThreadSummary = { id: string; title: string; updated_at: string };
 export type Attention = { tone: string; title: string; detail: string; query: string; ask?: string };

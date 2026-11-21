@@ -1,12 +1,15 @@
 "use client";
 
+import { settledOf, type Settled } from "@/lib/brief";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, auth, listenSignals, sessionGone } from "@/lib/api";
-import { droppedScreenKeys } from "@/lib/form";
+import { undoOfOutput } from "@/lib/autonomy";
+import { droppedScreenKeys, fixedInput, menuChanged } from "@/lib/form";
+import { newKey } from "@/lib/idempotency";
 import { leaveSession, takePrimedDesk } from "@/lib/session";
 import type { OpenRecord } from "@/lib/documents";
 import { decodeInbox, noticeIdsForSubject, talkAvailable, talkItemFor, type Section, type TalkInbox, type TalkItem } from "@/lib/talk";
-import type { ActionSpec, ChatCard, DeskPage, Input, Json, Manifest, Notice, Row, ScreenSpec, SessionInfo } from "@/lib/types";
+import type { ActionSpec, ChatCard, DeskPage, Input, Json, Manifest, Notice, Row, ScreenSpec, SessionInfo, UndoSpec } from "@/lib/types";
 import { useCallHub } from "@/components/call/call-provider";
 
 // Trạng thái dùng chung của một người × một công ty (Desk.swift): manifest, khung làm việc (thẻ + màn), hộp thông báo, hộp thoại.
@@ -16,7 +19,7 @@ export type CanvasItem = ({ id: string; kind: "card"; card: ChatCard } | { id: s
 export type FormRequest = { id: number; action: ActionSpec; row: Row | null; initial?: Input; onDone?: (message: string, output?: Json) => void };
 export type PageRequest = { id: number; title: string; query: string; input: Input };
 export type ImportRequest = { id: number; action: ActionSpec; onDone?: () => void };
-export type ToastState = { id: number; text: string; isError: boolean };
+export type ToastState = { id: number; text: string; isError: boolean; undo?: UndoSpec };
 
 /** Mục đang chọn ở cột "Tin nhắn" (kiểu app chat: cột luôn là danh sách, bên phải hiện thứ đang chọn): không chọn ⇒ bên phải là
  * khung làm việc; "notices" ⇒ hộp thông báo; "thread" ⇒ cuộc trò chuyện cỡ lớn (+ ngăn kiểm tra tuỳ chọn). */
@@ -92,7 +95,7 @@ type DeskValue = {
   closeImport: (id: number) => void;
   // thông báo
   toast: ToastState | null;
-  show: (text: string, isError?: boolean) => void;
+  show: (text: string, isError?: boolean, undo?: UndoSpec) => void;
   inboxCount: number;
   /** Tăng mỗi khi một lệnh chạy xong ở bất kỳ đâu (``refreshInbox``) — bàn việc tải lại theo số này. */
   changes: number;
@@ -118,7 +121,9 @@ type DeskValue = {
   recordFilesRev: number;
   bumpRecordFiles: () => void;
   confirmed: Record<string, string>;
-  setConfirmed: (id: string, message: string) => void;
+  setConfirmed: (id: string, message: string, approvalId?: string) => void;
+  /** Thẻ chờ duyệt đã quyết chưa — SERVER nói (`state`), chữ vừa bấm chỉ lấp khoảng trước khi tải lại (ADR 0253). */
+  settled: (card: ChatCard) => Settled | null;
   proposalEdits: Record<string, Input>;
   setProposalEdit: (id: string, input: Input) => void;
   paletteOpen: boolean;
@@ -175,6 +180,7 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
     setOpenRecordState((cur) => (r ? r : owner && cur && cur.subjectId !== owner ? cur : null)), []);
   const bumpRecordFiles = useCallback(() => setRecordFilesRev((n) => n + 1), []);
   const [confirmed, setConfirmedMap] = useState<Record<string, string>>({});
+  const [confirmedApproval, setConfirmedApproval] = useState<Record<string, string>>({});
   const [proposalEdits, setProposalEdits] = useState<Record<string, Input>>({});
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [section, setSection] = useState<Section>({ kind: "assistant" });
@@ -189,11 +195,11 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
   const lastNotice = useRef(0);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const show = useCallback((text: string, isError = false) => {
+  const show = useCallback((text: string, isError = false, undo?: UndoSpec) => {
     const id = seq++;
-    setToast({ id, text, isError });
+    setToast({ id, text, isError, ...(undo ? { undo } : {}) });
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast((t) => (t?.id === id ? null : t)), 3500);
+    toastTimer.current = setTimeout(() => setToast((t) => (t?.id === id ? null : t)), undo ? 8000 : 3500);   // có nút Hoàn tác ⇒ ở lâu hơn một chút
   }, []);
 
   const openItem = useCallback((item: CanvasItem, showCanvas = false) => {
@@ -465,6 +471,23 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
   }, [manifest, talkOn, refreshTalk]);
 
   const openForm = useCallback<DeskValue["openForm"]>((action, opts = {}) => {
+    // LUẬT XÁC NHẬN MỘT CHỖ (ADR 0253): lệnh ĐẢO ĐƯỢC và nút không còn ô nào ⇒ chạy ngay khi chạm, báo kết quả (kèm Hoàn tác nếu có) — không hộp xác nhận rỗng
+    if (action.instant && !action.import_only) {
+      void (async () => {
+        try {
+          const r = await api.command(action.command, { ...fixedInput(action, opts.row ?? null), ...(opts.initial ?? {}) }, newKey(), action.route, action.basis);
+          if (r.status === "ok") {
+            show(r.replayed ? "Đã gửi trước đó — không chạy lại" : `Đã xong: ${action.title}`, false, undoOfOutput(r.output) ?? undefined);
+            opts.onDone?.(`Đã xong: ${action.title}`, r.output);
+            if (menuChanged(r.output)) void reloadManifest();
+          } else if (r.status === "pending_approval") show("Đã gửi duyệt");
+          else show(r.error || r.status, true);
+        } catch (e) {
+          show(e instanceof Error ? e.message : "Không gửi được", true);
+        }
+      })();
+      return;
+    }
     // lệnh nhập cả bảng (vd nhập kế hoạch từ Excel) không có form: nút mở thẳng màn Nhập từ Excel, dù nút nằm trên thẻ / màn / hộp thoại nào
     if (action.import_only) {
       const done = opts.onDone;
@@ -472,7 +495,7 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     setForms((f) => [...f, { id: seq++, action, row: opts.row ?? null, initial: opts.initial, onDone: opts.onDone }]);
-  }, []);
+  }, [show, reloadManifest]);
   const closeForm = useCallback((id: number) => setForms((f) => f.filter((x) => x.id !== id)), []);
   const openPage = useCallback((query: string, input: Input, title = "") => setPages((p) => [...p, { id: seq++, title, query, input }]), []);
   const closePage = useCallback((id: number) => setPages((p) => p.filter((x) => x.id !== id)), []);
@@ -509,7 +532,12 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
     forms, openForm, closeForm, pages, openPage, closePage, imports, openImport, closeImport,
     toast, show, inboxCount, changes, deskPage, deskFailed, refreshDesk, refreshInbox, notices, unread, refreshNotices, openNotice, markAllNoticesRead,
     askPrompt, ask, shareTarget, setShareTarget, openRecord, setOpenRecord, recordFilesRev, bumpRecordFiles,
-    confirmed, setConfirmed: (id, message) => setConfirmedMap((c) => ({ ...c, [id]: message })),
+    confirmed,
+    setConfirmed: (id, message, approvalId) => {
+      setConfirmedMap((c) => ({ ...c, [id]: message }));
+      if (approvalId) setConfirmedApproval((c) => ({ ...c, [id]: approvalId }));
+    },
+    settled: (card) => settledOf(card, confirmed[card.id] === undefined ? undefined : { message: confirmed[card.id], approvalId: confirmedApproval[card.id] }),
     proposalEdits, setProposalEdit: (id, input) => setProposalEdits((p) => ({ ...p, [id]: input })),
     paletteOpen, setPaletteOpen, logout, switchTenant,
   };

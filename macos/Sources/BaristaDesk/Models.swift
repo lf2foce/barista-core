@@ -349,6 +349,9 @@ struct FormSpec: Decodable {
     let command, title, description: String
     let importable: Bool
     let fields: [FieldSpec]
+    /// LUẬT XÁC NHẬN MỘT CHỖ (ADR 0253): "none" = đảo được; "consequence" = hộp nói hệ quả bằng `effect`. Server thêm — app cũ bỏ qua.
+    let confirm: String?
+    let effect: String?
 }
 
 struct CommandResult: Decodable {

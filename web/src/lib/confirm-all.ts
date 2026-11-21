@@ -5,7 +5,7 @@ import type { ChatCard, Input } from "./types";
 // lượt từng thẻ (khoá chống lặp mới mỗi thẻ). Lỗi đầu tiên ⇒ DỪNG, mở thẻ đó cho người sửa. Thẻ cuối được quyết ⇒ server chạy tiếp.
 
 export function waitingProposals(cards: ChatCard[], decided: Record<string, unknown>): ChatCard[] {
-  return cards.filter((c) => c.kind === "proposal" && c.resumable === true && !c.aside && decided[c.id] === undefined);
+  return cards.filter((c) => c.kind === "proposal" && c.resumable === true && !c.aside && decided[c.id] === undefined && (c.state ?? "proposed") === "proposed");
 }
 
 export type ConfirmAllResult = { confirmed: { card: ChatCard; outcome: DecideOutcome }[]; failed: { card: ChatCard; outcome: DecideOutcome } | null };

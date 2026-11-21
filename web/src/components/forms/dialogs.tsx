@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Pill, ErrorLine } from "@/components/primitives";
 import { PageContent } from "@/components/pages/page-content";
 import { usePage } from "@/hooks/use-page";
+import { undoOfOutput } from "@/lib/autonomy";
 import { saveBlob } from "@/lib/download";
 import { menuChanged, resultView } from "@/lib/form";
 import type { ImportReport } from "@/lib/types";
@@ -72,7 +73,7 @@ function FormDialog({ req }: { req: FormRequest }) {
           onOpenSimilar={(id, title) => openPage("kb.document", { document_id: id }, title)}
           onDone={(m, output, spec) => {
             closeForm(req.id);
-            show(m);
+            show(m, false, undoOfOutput(output) ?? undefined);   // lệnh có Hoàn tác ⇒ báo kèm nút Hoàn tác
             req.onDone?.(m, output);
             if (menuChanged(output)) void reloadManifest();   // xoá app / đưa dashboard vào menu… ⇒ menu đổi ngay, tab của màn đã mất tự đóng
             // lệnh có thẻ kết quả (vd soạn bản tư vấn căn ⇒ giấy tờ vừa soạn) ⇒ mở luôn, nổi trên cùng (form có thể mở từ một hộp chi tiết)

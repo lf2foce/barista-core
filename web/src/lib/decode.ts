@@ -1,4 +1,5 @@
 import { CHART_KINDS } from "./chart";
+import { decodeBrief } from "./brief";
 import { decodeWord } from "./word";
 import type {
   ComposerData,
@@ -66,6 +67,7 @@ export function decodeAction(raw: unknown): ActionSpec {
     ...(typeof o.route === "string" && ROUTE.test(o.route) ? { route: o.route } : {}),
     ...(typeof o.basis === "string" && o.basis ? { basis: o.basis } : {}),
     ...(typeof o.confirm === "string" && o.confirm ? { confirm: o.confirm } : {}),
+    ...(o.instant === true ? { instant: true } : {}),
   };
 }
 
@@ -561,6 +563,10 @@ function decodeBlockBody(raw: unknown): Block {
             };
           }),
         };
+      case "brief": {   // bản chạy thử chuẩn (ADR 0253) — phiếu duyệt vẽ cùng khối với thẻ đề xuất
+        const b = decodeBrief(o);
+        return b ? { type: "brief", ...b } : { type: "text", title: "", markdown: "" };
+      }
       case "callout":
         return {
           type: "callout",

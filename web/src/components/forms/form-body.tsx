@@ -224,10 +224,12 @@ export function FormBody({
     first?.focus({ preventScroll: true });
   }, [spec, listsPending]);
 
-  // nút "instant" (vd chọn đáp án) không còn gì để điền ⇒ chạy luôn, không hiện hộp xác nhận rỗng. Nút khác vẫn hỏi xác nhận.
+  // không còn gì để điền: nút "instant" (vd chọn đáp án) hoặc lệnh ĐẢO ĐƯỢC (server nói `confirm: "none"`, nút không tự nêu câu hỏi) ⇒ chạy luôn, không
+  // hiện hộp xác nhận rỗng. Lệnh không đảo được vẫn hỏi, nói rõ hệ quả (ADR 0253).
   const autoRan = useRef(false);
   useEffect(() => {
-    if (autoRan.current || !spec || visible.length || action.style !== "instant" || submitter || embedded) return;
+    if (autoRan.current || !spec || visible.length || submitter || embedded) return;
+    if (action.style !== "instant" && !(spec.confirm === "none" && !action.confirm)) return;
     autoRan.current = true;
     void submit();
   });
@@ -515,7 +517,8 @@ export function FormBody({
           })}
         </div>
       ) : spec ? (
-        <p className="t14 text-muted-foreground">{action.confirm || `Không cần điền gì thêm — bấm “${action.title}” để xác nhận.`}</p>
+        // luật xác nhận một chỗ (ADR 0253): hộp này chỉ còn cho việc không đảo được — nói HỆ QUẢ (nút tự nêu `confirm` thắng; `effect` do lệnh khai)
+        <p className="t14 text-muted-foreground">{action.confirm || spec.effect || `Làm “${action.title}” ngay bây giờ.`}</p>
       ) : null}
       {error ? <ErrorLine>{error}</ErrorLine> : null}
       {step === "intent" ? (

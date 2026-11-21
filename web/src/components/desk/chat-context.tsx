@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { api, chatStream, decideStream } from "@/lib/api";
 import { applyEvent, continueOf, decodeCard, newTurn, opensOnCanvas, type ChatMessage, type LiveTurn } from "@/lib/chat";
-import { decidedInTurn, decideStep, NO_ANSWER, startDecide, type DecideOutcome } from "@/lib/decide";
+import { decideStep, NO_ANSWER, startDecide, type DecideOutcome } from "@/lib/decide";
 import { parseISO } from "@/lib/format";
 import { IMAGE_ONLY_TEXT, type ChatImage } from "@/lib/images";
 import type { ChatDocument } from "@/lib/api";
@@ -56,7 +56,7 @@ const mid = () => crypto.randomUUID();
 
 export function ChatProvider({ children }: { children: React.ReactNode }) {
   const desk = useDesk();
-  const { openCard, manifest, setShareTarget, show, setConfirmed } = desk;
+  const { openCard, manifest, setShareTarget, show } = desk;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -94,7 +94,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     void api.suggestions().then(setSuggestions).catch(() => null);
     void api.threads().then(setThreads).catch(() => null);
     void api.attention().then(setAttention).catch(() => null);
-    void api.morning().then(setMorning).catch(() => null);
+    void api.morning().then((cs) => setMorning(cs.map(decodeCard))).catch(() => null);
   }, [manifest]);
 
   const decideMorning = useCallback<ChatValue["decideMorning"]>(async (card, decision, input, key) => {
@@ -194,8 +194,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (builderRef.current) { builderRef.current = null; setBuilder(null); saved.current = null; }   // mở cuộc trò chuyện cũ ⇒ thoát trình tạo app
       try {
         const t = await api.thread(id);
-        // đề xuất đã quyết trong lượt cũ ⇒ thẻ hiện kết quả, không còn form chờ / nút "Xác nhận cả N"
-        for (const turn of t.turns) for (const [cid, msg] of Object.entries(decidedInTurn(turn))) setConfirmed(cid, msg);
         threadRef.current = t.id;
         setThreadId(t.id);
         setMessages(
@@ -217,7 +215,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         show(e instanceof Error ? e.message : "Không mở được cuộc trò chuyện", true);
       }
     },
-    [show, setConfirmed],
+    [show],
   );
 
   const openBuilder = useCallback<ChatValue["openBuilder"]>(

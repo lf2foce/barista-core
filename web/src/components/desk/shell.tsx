@@ -2,6 +2,9 @@
 
 import { Layers } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { api } from "@/lib/api";
+import { undoOutcome } from "@/lib/autonomy";
+import { newKey } from "@/lib/idempotency";
 import { shortcutFor } from "@/lib/shortcuts";
 import { railSections } from "@/lib/talk";
 import { cn } from "@/lib/utils";
@@ -126,14 +129,32 @@ function Shell() {
 }
 
 function Toast() {
-  const { toast } = useDesk();
+  const { toast, show, refreshInbox } = useDesk();
   if (!toast) return null;
+  const undo = toast.undo;
+  // Hoàn tác: chạy `undo.command` với `undo.input` NGUYÊN VĂN bằng quyền người bấm (việc đã được sửa sau đó ⇒ server từ chối, không đè)
+  const run = async () => {
+    if (!undo) return;
+    try {
+      const r = await api.command(undo.command, undo.input, newKey());
+      const st = undoOutcome(r.status, r.error);
+      show(st.message, st.phase === "failed");
+      if (st.phase === "undone") void refreshInbox();
+    } catch (e) {
+      show(e instanceof Error ? e.message : "Không hoàn tác được", true);
+    }
+  };
   return (
     <div
       role="status"
-      className={cn("t14m fixed bottom-5 left-1/2 z-[60] -translate-x-1/2 rounded-full px-4 py-2 shadow-lg", toast.isError ? "bg-bad text-white" : "border border-border bg-popover text-popover-foreground")}
+      className={cn("t14m fixed bottom-5 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-full px-4 py-2 shadow-lg", toast.isError ? "bg-bad text-white" : "border border-border bg-popover text-popover-foreground")}
     >
       {toast.text}
+      {undo ? (
+        <button type="button" onClick={() => void run()} className="t14m rounded-md text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring">
+          Hoàn tác
+        </button>
+      ) : null}
     </div>
   );
 }

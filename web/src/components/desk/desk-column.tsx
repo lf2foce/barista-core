@@ -98,7 +98,7 @@ function MorningCards() {
             <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/12 text-primary"><Sparkles className="size-3.5" aria-hidden /></span>
             <span className="flex min-w-0 flex-1 flex-col gap-0.5 pt-[5px]">
               <span className="text-[14px]">{c.title}</span>
-              {desk.confirmed[c.id] ? <span className="t12 text-muted-foreground">{desk.confirmed[c.id]}</span> : null}
+              {desk.settled(c) ? <span className="t12 text-muted-foreground">{desk.settled(c)?.label}</span> : c.reason || c.brief?.reason ? <span className="t12 line-clamp-2 text-muted-foreground">{c.reason || c.brief?.reason}</span> : null}
             </span>
             <ChevronRight className="mt-2 size-3 shrink-0 text-muted-foreground/70" aria-hidden />
           </button>
