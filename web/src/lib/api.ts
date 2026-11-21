@@ -304,6 +304,18 @@ export const api = {
     return { status: body.status, output: body.output ?? null, error: body.error ?? "", approval_id: body.approval_id ?? null, replayed: !!body.replayed };
   },
 
+  /**
+   * Gắn MỘT tệp vào hồ sơ (ADR 0249) — multipart tới đường server mô tả trong khối "Tệp" (``attach.path``). Server kiểm quyền (thấy hồ sơ), cỡ + loại
+   * theo nội dung; cùng nội dung đã có trên hồ sơ ⇒ không thêm bản thứ hai.
+   */
+  recordFileUpload: async (path: string, file: File, params: { subject_kind: string; subject_id: string; label?: string }, key: string): Promise<CommandResult> => {
+    const res = await raw(path, { method: "POST", body: recordFileForm(file, params), headers: { "idempotency-key": key } });
+    if (res.status === 413) throw new ApiError(await detailOf(res, "Tệp quá lớn"), 413);
+    const body = await jsonOf<Partial<CommandResult> & { detail?: string }>(res);
+    if (body.status === undefined) throw new ApiError(body.detail ?? `Không gắn được tệp (${res.status})`, res.status);
+    return { status: body.status, output: body.output ?? null, error: body.error ?? "", approval_id: body.approval_id ?? null, replayed: !!body.replayed };
+  },
+
   // trợ lý
   suggestions: async (): Promise<string[]> => jsonOf<string[]>(await raw("/v1/assistant/suggestions")),
   attention: async (): Promise<Attention[]> => jsonOf<Attention[]>(await raw("/v1/assistant/attention")),
@@ -327,7 +339,7 @@ export async function* chatStream(
   threadId: string | null,
   signal?: AbortSignal,
   images: { media_type: string; data: string }[] = [],
-  opts?: { mode?: string; app_id?: string | null; turn_key?: string; subject?: { kind: string; id: string; title: string } | null },
+  opts?: { mode?: string; app_id?: string | null; turn_key?: string; subject?: { kind: string; id: string; title: string } | null; documents?: ChatDocument[] },
 ): AsyncGenerator<StreamEvent> {
   const body: Record<string, Json> = { message };
   if (threadId) body.thread_id = threadId;
@@ -339,6 +351,8 @@ export async function* chatStream(
   if (opts?.turn_key) body.turn_key = opts.turn_key;   // mã lượt ⇒ bấm "Dừng" được (stopTurn)
   // ảnh (0050): model đọc trong lượt này, server không lưu byte ảnh
   if (images.length) body.images = images.map((i) => ({ media_type: i.media_type, data: i.data }));
+  // tài liệu chỉ dùng trong cuộc trò chuyện này (ADR 0249): không vào kho tri thức, không gắn hồ sơ
+  if (opts?.documents?.length) body.documents = opts.documents.map((d) => ({ filename: d.filename, data: d.data }));
   const res = await post("/v1/assistant/chat/stream", body, {}, signal);
   if (!res.ok || !res.body) throw new ApiError(await detailOf(res, `Trợ lý không trả lời (${res.status})`), res.status);
   yield* ndjson(res.body);
@@ -373,6 +387,19 @@ export async function* composeStream(body: ComposeTurnBody, signal?: AbortSignal
   const res = await post("/v1/compose/stream", body, {}, signal);
   if (!res.ok || !res.body) throw new ApiError(await detailOf(res, `Không soạn được (${res.status})`), res.status);
   yield* ndjson(res.body);
+}
+
+/** Tài liệu gửi kèm MỘT câu hỏi (base64) — chữ đọc trong cuộc trò chuyện, thân tệp không lưu (ADR 0249). */
+export type ChatDocument = { filename: string; data: string; size: number };
+
+/** Thân gắn tệp vào hồ sơ: trường chữ trước, tệp sau cùng (server đọc theo khúc). */
+export function recordFileForm(file: Blob & { name?: string }, params: { subject_kind: string; subject_id: string; label?: string }): FormData {
+  const f = new FormData();
+  f.set("subject_kind", params.subject_kind);
+  f.set("subject_id", params.subject_id);
+  if (params.label) f.set("label", params.label);
+  f.set("file", file, file.name || "tep");
+  return f;
 }
 
 /** Thân gửi tệp vào trao đổi: trường chữ trước, tệp sau cùng (server đọc theo khúc). */

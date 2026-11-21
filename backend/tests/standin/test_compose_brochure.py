@@ -47,7 +47,7 @@ async def _brochure(p: Any, kind: str = "demo_orders", **kw: Any) -> dict[str, A
 async def test_a_pack_recipe_builds_a_layout_draft_from_queries_with_no_model(who: Who) -> None:
     await helpers.order(who, owner="sale1", amount=2_000_000_000)
     sale = await who("sale1")
-    assert [o["value"] for o in await q(sale, "compose.brochure_options")] == ["demo_orders", "demo_lead"]            # loại do gói góp, người soạn chọn
+    assert [o["value"] for o in await q(sale, "compose.brochure_options")] == ["demo_orders", "demo_lead", "demo_order"]   # công thức do gói góp, người soạn chọn
     out = await _brochure(sale)
     comp = await _composer(sale, out["session_id"])
     assert comp["status"] == "ready" and comp["kind"] == "brochure" and comp["layout"]["template"] == "editorial" and comp["version"] == 1
@@ -56,8 +56,8 @@ async def test_a_pack_recipe_builds_a_layout_draft_from_queries_with_no_model(wh
     data = next(b for b in comp["blocks"] if b["type"] == "data")
     assert data["source"]["query"] == "orderdesk.list" and data["page"]["rows"]                                       # ảnh chụp truy vấn, kèm nguồn
     assert comp["stats"]["flagged"] == 0 and comp["layout"]["sections"][0]["kind"] == "cover"
-    assert {t["key"] for t in comp["layout"]["templates"]} == {"plain", "brochure", "proposal", "editorial", "flyer"} and "col1" in {s["key"] for s in comp["layout"]["slots"]}
-    assert "Đã dựng bản 1 từ dữ liệu" in comp["turns"][-1]["text"]
+    assert {t["key"] for t in comp["layout"]["templates"]} == {"brochure", "proposal", "editorial"} and "col1" in {s["key"] for s in comp["layout"]["slots"]}
+    assert "Đã dựng bản 1 từ hồ sơ" in comp["turns"][-1]["text"]
     # bản của riêng người soạn
     other = await who("sale2")
     assert (await executor.query(other, "compose.view", {"session_id": str(out["session_id"])})).status == "not_found"
@@ -102,18 +102,17 @@ async def test_exports_open_html_word_and_the_fallback_without_crashing(who: Who
     out = await _brochure(sale)
     sid = str(out["session_id"])
     from docx import Document
-    from pptx import Presentation
 
     got: dict[str, bytes] = {}
-    for fmt in ("html", "docx", "pptx"):
+    for fmt in ("html", "docx"):
         e = await ok(sale, "compose.export", session_id=sid, format=fmt)
         got[fmt] = base64.b64decode((await q(sale, "compose.download", export_id=e["export_id"]))["data_b64"])
+    assert (await executor.run(sale, "compose.export", {"session_id": sid, "format": "pptx"})).status == "invalid"     # tờ giới thiệu không ra PowerPoint (loại quyết)
     html = got["html"].decode()
     assert html.startswith("<!DOCTYPE html>") and 'aria-label="Bìa"' in html and "data:image/png;base64," in html and "<script" not in html
     assert "Nguồn:" not in html and "theo quyền xem" not in html and "Thông tin cập nhật lúc" in html
     doc = Document(io.BytesIO(got["docx"]))
     assert len(doc.tables) >= 2 and len(doc.inline_shapes) >= 1                                                       # bìa + ảnh nhúng theo bố cục
-    assert len(Presentation(io.BytesIO(got["pptx"])).slides) >= 2                                                     # PowerPoint: xếp theo mục, chỗ đứng bị bỏ qua
     if convert.binary():                                                                                              # PDF cần LibreOffice (máy dev có thể chưa cài)
         e = await ok(sale, "compose.export", session_id=sid, format="pdf")
         assert base64.b64decode((await q(sale, "compose.download", export_id=e["export_id"]))["data_b64"])[:4] == b"%PDF"
@@ -138,8 +137,9 @@ async def test_layout_changes_are_versioned_and_slots_move_blocks(who: Who) -> N
     assert comp["layout"]["template"] == "editorial" and next(b for b in comp["blocks"] if b["id"] == para["id"])["slot"] == ""
     assert (await executor.run(sale, "compose.set_layout", {"session_id": sid, "template": "không có"})).status == "invalid"
     assert (await executor.run(sale, "compose.set_slot", {"session_id": sid, "block": para["id"], "slot": "xyz"})).status == "invalid"
-    await ok(sale, "compose.set_layout", session_id=sid, template="")                                                  # bỏ trang mẫu ⇒ bố cục cũ
-    assert (await _composer(sale, sid))["layout"] == {**(await _composer(sale, sid))["layout"], "template": "", "sections": []}
+    for wrong in ("flyer", "plain", ""):                                                                               # chỉ mẫu HỢP loại (ADR 0249): tờ giới thiệu không lấy mẫu tờ rơi
+        assert (await executor.run(sale, "compose.set_layout", {"session_id": sid, "template": wrong})).status == "invalid"
+    assert {t["key"] for t in (await _composer(sale, sid))["layout"]["templates"]} == {"editorial", "brochure", "proposal"}
 
 
 async def _get(path: str) -> Any:
@@ -263,18 +263,15 @@ async def test_images_inside_pdfs_follow_the_composers_rights_and_no_image_means
     assert len(ph) == 1 and ph[0]["slot"] == "cover" and ph[0]["text"] == "Cần ảnh thử" and "DEMO" in ph[0]["caption"]   # chỗ giữ có ở màn soạn
     sid = str(mine["session_id"])
     from docx import Document
-    from pptx import Presentation
 
-    for fmt in ("html", "docx", "pptx"):
+    for fmt in ("html", "docx"):
         e = await ok(sale, "compose.export", session_id=sid, format=fmt)
         raw = base64.b64decode((await q(sale, "compose.download", export_id=e["export_id"]))["data_b64"])
         if fmt == "html":
             assert "Cần ảnh" not in raw.decode()                         # KHÔNG bao giờ ra tệp / trang gửi khách
-        elif fmt == "docx":
+        else:
             assert "Cần ảnh" not in "\n".join(p.text for p in Document(io.BytesIO(raw)).paragraphs) + "\n".join(
                 c.text for t in Document(io.BytesIO(raw)).tables for r in t.rows for c in r.cells)
-        else:
-            assert all("Cần ảnh" not in sh.text_frame.text for sl in Presentation(io.BytesIO(raw)).slides for sh in sl.shapes if sh.has_text_frame)   # pyright: ignore[reportAttributeAccessIssue]
     r = await executor.run(sale, "compose.share", {"session_id": sid, "recipient": "x"})                          # chia sẻ không bị chặn vì chỗ giữ, và trang không mang chữ đó
     assert r.status == "ok"
 

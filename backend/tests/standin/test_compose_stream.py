@@ -46,7 +46,7 @@ async def test_chat_turns_follow_up_streams_through_the_same_door_and_persists(w
     sale = await who("sale1")
     compose.MODEL = _fetching_model("Như bảng dưới.")
     try:
-        first = await _events(sale, {"kind": "document", "brief": "Báo cáo đơn dịch vụ cho giám đốc"})
+        first = await _events(sale, {"kind": "post", "brief": "Báo cáo đơn dịch vụ cho giám đốc"})
         sid = first[0]["session_id"]
         steps = [e for e in first if e["type"] == "step"]
         assert [s["status"] for s in steps] == ["running", "ok"] and steps[0]["title"]          # nhãn truy vấn đang chạy, rồi xong
@@ -91,7 +91,7 @@ async def test_the_same_failed_fetch_is_not_run_twice_and_the_step_says_why(who:
 
     compose.MODEL = FunctionModel(reply, model_name="repeat-fetch")
     try:
-        events = await _events(sale, {"kind": "document", "brief": "Báo cáo đơn theo tháng"})
+        events = await _events(sale, {"kind": "post", "brief": "Báo cáo đơn theo tháng"})
     finally:
         compose.MODEL = None
     steps = [e for e in events if e["type"] == "step" and e["tool"] == "orderdesk.ds_orders"]
@@ -119,7 +119,7 @@ async def test_a_runaway_guard_delivers_the_partial_draft_instead_of_failing(who
 
     compose.MODEL = FunctionModel(reply, model_name="runaway")
     try:
-        events = await _events(sale, {"kind": "document", "brief": "Báo cáo đơn theo tháng"})
+        events = await _events(sale, {"kind": "post", "brief": "Báo cáo đơn theo tháng"})
     finally:
         compose.MODEL = None
     sid = events[0]["session_id"]
@@ -148,7 +148,7 @@ async def test_timeout_after_some_data_delivers_the_partial_draft(who: Who, monk
 
     compose.MODEL = FunctionModel(reply, model_name="slow-after-data")
     try:
-        events = await _events(sale, {"kind": "document", "brief": "Báo cáo đơn dịch vụ"})
+        events = await _events(sale, {"kind": "post", "brief": "Báo cáo đơn dịch vụ"})
     finally:
         compose.MODEL = None
     assert events[-1]["status"] == "ready" and events[-1]["turn"]["partial"] is True
@@ -170,7 +170,7 @@ async def test_stop_cancels_the_running_turn_keeps_what_was_fetched_and_releases
         raise AssertionError("không tới đây")
 
     monkeypatch.setattr(compose, "MODEL", FunctionModel(reply, model_name="hang"))
-    run = asyncio.create_task(_events(sale, {"kind": "document", "brief": "Báo cáo đơn dịch vụ"}))
+    run = asyncio.create_task(_events(sale, {"kind": "post", "brief": "Báo cáo đơn dịch vụ"}))
     for _ in range(200):   # chờ tới khi lượt chạy thật sự (đã đăng ký việc), rồi cho bảng đầu tiên lấy xong
         if compose._tasks:
             break

@@ -10,7 +10,7 @@ from pydantic_ai import BinaryContent, ModelMessage, UserPromptPart
 from pydantic_ai.models.function import AgentInfo
 
 from barista.agent import chat
-from barista.http_api import IMAGE_BYTES, parse_images
+from barista.http_api import IMAGE_BYTES, parse_documents, parse_images
 from tests.conftest import Who, owner_val
 from tests.test_assistant import Scripted
 
@@ -53,4 +53,52 @@ def test_image_limits() -> None:
     for raw in bad:
         with pytest.raises(HTTPException) as e:
             parse_images(raw)
+        assert e.value.status_code == 422
+
+
+async def test_a_document_dropped_in_chat_stays_in_the_conversation_and_makes_no_knowledge(who: Who) -> None:
+    """ADR 0249: thả tài liệu vào chat trợ lý, chọn "chỉ dùng trong cuộc trò chuyện này" ⇒ model đọc chữ, KHÔNG thành tài liệu kho tri thức, không
+    thành tệp trong sổ tệp; lượt ghi tên + cỡ."""
+    sale1 = await who("sale1")
+    seen: list[Any] = []
+    docx = _docx("Báo giá căn mẫu: 3.200.000.000 đồng, cọc 10%.")
+
+    class Capture(Scripted):
+        def _next(self, messages: list[ModelMessage], info: AgentInfo) -> Any:
+            for part in getattr(messages[-1], "parts", []):
+                if isinstance(part, UserPromptPart) and isinstance(part.content, list):
+                    seen.extend(part.content)
+            return super()._next(messages, info)
+
+    kb_before = await owner_val("SELECT count(*) FROM kb.documents")
+    files_before = await owner_val("SELECT count(*) FROM core.files")
+    out = await chat.chat_turn(sale1, "Tóm tắt báo giá này", emit=_noop, documents=[("bao-gia.docx", docx)],
+                               model=Capture(["Báo giá 3,2 tỷ, cọc 10%."]))
+    assert any(isinstance(c, str) and "3.200.000.000" in c and "bao-gia.docx" in c for c in seen)                   # model đọc được chữ
+    assert await owner_val("SELECT count(*) FROM kb.documents") == kb_before                                           # không vào kho tri thức
+    assert await owner_val("SELECT count(*) FROM core.files") == files_before                                          # thân tệp không lưu
+    turn = (await chat.load_thread(sale1, out["thread_id"]))["turns"][0]                                              # type: ignore[index]
+    assert turn["attachments"] == [{"kind": "document", "filename": "bao-gia.docx", "bytes": len(docx)}]
+
+
+def _docx(text: str) -> bytes:
+    import io
+
+    from docx import Document
+
+    d = Document()
+    d.add_paragraph(text)
+    buf = io.BytesIO()
+    d.save(buf)
+    return buf.getvalue()
+
+
+def test_document_limits() -> None:
+    pdf = b"%PDF-1.4 x"
+    assert parse_documents([{"filename": "a.pdf", "data": base64.b64encode(pdf).decode()}]) == [("a.pdf", pdf)] and parse_documents(None) == []
+    for raw in ([{"filename": "a.pdf", "data": base64.b64encode(pdf).decode()}] * 4,              # quá 3 tài liệu
+                [{"filename": "a.exe", "data": base64.b64encode(pdf).decode()}],                 # loại không đọc được
+                [{"filename": "a.pdf", "data": "không phải base64!!"}]):
+        with pytest.raises(HTTPException) as e:
+            parse_documents(raw)
         assert e.value.status_code == 422

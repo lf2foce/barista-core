@@ -6,6 +6,8 @@ import { applyEvent, continueOf, decodeCard, newTurn, opensOnCanvas, type ChatMe
 import { decidedInTurn, decideStep, NO_ANSWER, startDecide, type DecideOutcome } from "@/lib/decide";
 import { parseISO } from "@/lib/format";
 import { IMAGE_ONLY_TEXT, type ChatImage } from "@/lib/images";
+import type { ChatDocument } from "@/lib/api";
+import { DOCUMENT_ONLY_TEXT } from "@/lib/documents";
 import { morningOutcome, type MorningOutcome } from "@/lib/morning";
 import type { Attention, ChatCard, Input, Step, StreamEvent, ThreadSummary } from "@/lib/types";
 import type { Section } from "@/lib/talk";
@@ -21,7 +23,8 @@ type ChatValue = {
   /** Đề xuất trợ lý soạn sẵn sáng nay (0074 A). */
   morning: ChatCard[];
   decideMorning: (card: ChatCard, decision: "confirm" | "dismiss", input: Input, key: string) => Promise<MorningOutcome>;
-  send: (text: string, images?: ChatImage[]) => void;
+  /** ``documents``: tài liệu người thả vào chat và chọn "chỉ dùng trong cuộc trò chuyện này" (ADR 0249) — đi kèm câu hỏi, không vào kho / hồ sơ. */
+  send: (text: string, images?: ChatImage[], documents?: ChatDocument[]) => void;
   newThread: () => void;
   openThread: (id: string) => Promise<void>;
   /** Xác nhận / Bỏ một đề xuất của lượt đang dừng (0049). Trả kết quả của chính lệnh cho form ngay ở dòng đầu; phần trợ lý chạy tiếp
@@ -159,19 +162,19 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   );
 
   const send = useCallback(
-    (raw: string, images: ChatImage[] = []) => {
-      // chỉ gửi ảnh, không gõ gì ⇒ câu mặc định
-      const text = raw.trim() || (images.length ? IMAGE_ONLY_TEXT : "");
+    (raw: string, images: ChatImage[] = [], documents: ChatDocument[] = []) => {
+      // chỉ gửi ảnh / tài liệu, không gõ gì ⇒ câu mặc định
+      const text = raw.trim() || (images.length ? IMAGE_ONLY_TEXT : documents.length ? DOCUMENT_ONLY_TEXT : "");
       if (!text || busy.current) return;
       busy.current = true;
-      setMessages((m) => [...m, { id: mid(), role: "user", text, cards: [], steps: [], at: new Date(), images: images.map((i) => i.preview) }]);
+      setMessages((m) => [...m, { id: mid(), role: "user", text, cards: [], steps: [], at: new Date(), images: images.map((i) => i.preview), documents: documents.map((d) => d.filename) }]);
       const b = builderRef.current;
       turnKey.current = crypto.randomUUID();
       setCanStop(true);
       // hỏi từ khối trao đổi (shareTarget) ⇒ gửi kèm loại + mã đối tượng: trợ lý đọc đúng luồng đó bằng quyền người hỏi (0115)
       const st = desk.shareTarget;
       const subject = !b && st ? { kind: st.subjectKind, id: st.subjectId, title: st.title } : null;
-      runTurn(chatStream(text, threadRef.current, undefined, images, { ...(b ? { mode: "builder", app_id: b.appId } : {}), turn_key: turnKey.current, subject }));
+      runTurn(chatStream(text, threadRef.current, undefined, images, { ...(b ? { mode: "builder", app_id: b.appId } : {}), turn_key: turnKey.current, subject, documents }));
     },
     [runTurn, desk.shareTarget],
   );
@@ -204,6 +207,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             steps: (x.steps ?? []) as Step[],
             at: (x.at && parseISO(x.at)) || new Date(),
             attachments: Array.isArray(x.attachments) ? x.attachments.filter((a) => (a as { kind?: unknown })?.kind === "image").length : 0,
+            documents: Array.isArray(x.attachments)
+              ? x.attachments.flatMap((a) => { const d = a as { kind?: unknown; filename?: unknown }; return d?.kind === "document" && typeof d.filename === "string" ? [d.filename] : []; })
+              : [],
             cont: continueOf(x.limit),
           })),
         );

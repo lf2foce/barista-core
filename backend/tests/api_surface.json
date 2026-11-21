@@ -1,5 +1,5 @@
 {
- "version": "1.71.0",
+ "version": "1.72.0",
  "names": [
   "Action",
   "Ask",
@@ -91,6 +91,7 @@
   "phone_display",
   "phone_search",
   "ratelimit",
+  "record_files",
   "reflow",
   "regulations",
   "shown",
@@ -173,10 +174,19 @@
    "shown"
   ],
   "files": [
+   "ACCEPTED",
+   "MEDIA",
+   "adopt",
+   "clean_name",
+   "copy",
    "digest",
+   "grant",
+   "kind_label",
    "put",
    "read",
-   "release"
+   "release",
+   "size_text",
+   "sniff"
   ],
   "findings": [
    "CONFIDENCE",
@@ -225,6 +235,9 @@
   ],
   "ratelimit": [
    "allow"
+  ],
+  "record_files": [
+   "block"
   ],
   "regulations": [
    "HOLIDAY_RULES",

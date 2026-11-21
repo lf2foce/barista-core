@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { caretAfter, dependentsOf, filterOptions, fold, groupMoney, isShort, markMode, optionsArgs, optionsParams, pairFields, withRecents } from "../form-ui";
+import { applyDraft, canDraft, caretAfter, decodeDraft, dependentsOf, filterOptions, fold, groupMoney, intentFields, intentMode, isShort, markMode, optionsArgs, optionsParams, pairFields, withRecents } from "../form-ui";
 import { vnLong } from "../dates";
 import type { FieldSpec, Option } from "../types";
 
@@ -81,5 +81,36 @@ describe("tiền và ngày", () => {
   });
   it("ngày không nhập nhằng", () => {
     expect(vnLong({ y: 2026, m: 12, d: 1 })).toBe("1 tháng 12, 2026");
+  });
+});
+
+describe("form theo ý định + soạn giúp (ADR 0250)", () => {
+  const spec = { intent: ["title", "due_on", "owner_email"], draft: "core.draft_input" };
+  it("chỉ mở bước ý định khi server khai, form đứng riêng, và phần soạn sẵn không vượt ô ý định / ô cố định", () => {
+    expect(intentMode(spec, {}, {}, true)).toBe(true);
+    expect(intentMode(spec, { title: "A", plan_id: "x" }, { plan_id: "x" }, true)).toBe(true);
+    expect(intentMode(spec, { tasks: [] }, {}, true)).toBe(false);                    // mở lại một bản đã soạn đủ ⇒ form đủ ô
+    expect(intentMode(spec, {}, {}, false)).toBe(false);                              // trong thẻ đề xuất / gửi thay ⇒ form như cũ
+    expect(intentMode({ intent: ["title"] }, {}, {}, true)).toBe(false);              // không có truy vấn soạn ⇒ form như cũ
+    expect(intentMode(null, {}, {}, true)).toBe(false);
+  });
+  it("ô ý định theo thứ tự server khai, bỏ ô đang ẩn / cố định; cần mô tả, file hoặc một ô đã điền", () => {
+    const visible = [f("title"), f("goal"), f("owner_email"), f("due_on", { kind: "date" })];
+    const ask = intentFields(spec.intent, visible);
+    expect(ask.map((x) => x.key)).toEqual(["title", "due_on", "owner_email"]);
+    expect(intentFields(spec.intent, [f("goal"), f("title")]).map((x) => x.key)).toEqual(["title"]);
+    expect(canDraft("  ", false, {}, ask)).toBe(false);
+    expect(canDraft("ra mắt", false, {}, ask)).toBe(true);
+    expect(canDraft("", true, {}, ask)).toBe(true);
+    expect(canDraft("", false, { title: "Kế hoạch" }, ask)).toBe(true);
+    expect(canDraft("", false, { goal: "x" }, ask)).toBe(false);                     // ô ngoài bước ý định không tính
+  });
+  it("giải mã bền với dữ liệu lạ; áp bản soạn chỉ vào ô đang hiện, ô máy đoán có giá trị mới thành chip", () => {
+    expect(decodeDraft(null)).toEqual({ values: {}, guessed: [], notes: [] });
+    expect(decodeDraft({ values: [1], guessed: ["a", 2], notes: "x" })).toEqual({ values: {}, guessed: ["a"], notes: [] });
+    const visible = [f("title"), f("goal"), f("tasks", { kind: "rows" })];
+    const got = applyDraft({ title: "Người gõ" }, { values: { title: "Người gõ", goal: "G", tasks: [{ title: "Việc 1" }], secret: "x" }, guessed: ["goal", "tasks", "secret", "empty"], notes: [] }, visible);
+    expect(got.values).toEqual({ title: "Người gõ", goal: "G", tasks: [{ title: "Việc 1" }] });
+    expect(got.guessed).toEqual(["goal", "tasks"]);
   });
 });

@@ -52,7 +52,7 @@ async def _start(p: Any, outputs: list[dict[str, Any]]) -> tuple[dict[str, Any],
     model, calls = _model(outputs, {"query": "deals.list", "title": "Giao dịch của tôi", "input": {}})
     compose.MODEL = model
     try:
-        out = await ok(p, "compose.start", kind="document", brief="Báo cáo giao dịch tháng này cho giám đốc")
+        out = await ok(p, "compose.start", kind="post", brief="Báo cáo giao dịch tháng này cho giám đốc")
     finally:
         compose.MODEL = None
     assert out["status"] == "drafting"   # lệnh chỉ ghi "đang soạn"; lượt model chạy SAU commit (executor chờ xong mới trả lời)
@@ -79,7 +79,7 @@ async def test_a_bad_query_input_gets_the_schema_back_and_a_retried_step_is_not_
 
     compose.MODEL = FunctionModel(reply, model_name="compose-fake")
     try:
-        out = await ok(sale, "compose.start", kind="document", brief="Báo cáo khách đang theo")
+        out = await ok(sale, "compose.start", kind="post", brief="Báo cáo khách đang theo")
     finally:
         compose.MODEL = None
     bad = seen[1]
@@ -103,20 +103,31 @@ async def test_agent_modes(who: Who) -> None:
     assert (await executor.query(agent, "compose.download", {"export_id": sid})).status != "ok"
 
 
-async def test_brand_is_admin_data_and_menu_entry_is_experimental(who: Who) -> None:
+async def test_brand_is_company_settings_and_the_piece_reads_it_from_there(who: Who) -> None:
+    """ADR 0249 lát 2: nhận diện thương hiệu là CÀI ĐẶT CÔNG TY (Quản trị › Nhận diện thương hiệu, ``admin.brand``) — phân hệ Ấn phẩm không còn bộ riêng; ấn phẩm
+    vẽ (xem trước + tệp xuất) bằng đúng bộ đó, kể cả logo (tệp logo do module Quản trị giữ)."""
     from barista import workspaces
+    from barista.kernel import registry
 
     admin, sale = await who("admin"), await who("sale1")
-    assert (await executor.run(sale, "compose.set_brand", {"primary_color": "AA0000"})).status == "denied"
+    assert "compose.set_brand" not in registry.OPS and "compose.brand_view" not in registry.OPS
+    assert (await executor.run(sale, "admin.set_brand", {"primary_color": "AA0000"})).status == "denied"
     png = base64.b64encode(bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
                                          "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082")).decode()
-    await ok(admin, "compose.set_brand", primary_color="#aa0000", font="Calibri", footer="Công ty mẫu", logo_b64=png, logo_filename="logo.png")
-    detail = await q(admin, "compose.brand_view")
-    assert detail["sections"][0]["fields"][0]["value"] == "#AA0000"
+    await ok(admin, "admin.set_brand", primary_color="#aa0000", font="Calibri", footer="Công ty mẫu", logo_b64=png, logo_filename="logo.png")
+    row = (await q(admin, "admin.brand_view"))["rows"][0]
+    assert (row["primary_color"], row["font"], row["footer"], row["logo"]) == ("AA0000", "Calibri", "Công ty mẫu", "logo.png")
+    out, _ = await _start(sale, [_draft("Như bảng dưới.")])
+    comp = (await q(sale, "compose.view", session_id=str(out["session_id"])))["blocks"][0]
+    assert comp["brand"]["color"] == "AA0000" and comp["brand"]["font"] == "Calibri" and comp["brand"]["logo"].startswith("data:image/png;base64,")
+    exp = await ok(sale, "compose.export", session_id=str(out["session_id"]), format="html")
+    page = base64.b64decode((await q(sale, "compose.download", export_id=str(exp["export_id"])))["data_b64"]).decode()
+    assert "#AA0000" in page.upper() and "Công ty mẫu" in page and "data:image/png;base64," in page
+    await ok(admin, "admin.set_brand", primary_color="1F4E79", font="Arial", footer="")   # không gửi logo ⇒ giữ logo cũ
+    assert (await q(admin, "admin.brand_view"))["rows"][0]["logo"] == "logo.png"
     ws = next(w for w in workspaces.workspaces() if w.key == "compose")
     spec = workspaces.screen_spec(sale, ws.screens[0])
-    # vào màn là ô trò chuyện (thẻ composer, không form "Soạn mới"); lịch sử các bản soạn nằm trong thẻ
-    assert spec is not None and spec["badge"] == "Thử nghiệm" and spec["query"] == "compose.studio" and not spec["actions"]
+    assert ws.title == "Ấn phẩm" and spec is not None and spec["badge"] == "Thử nghiệm" and spec["query"] == "compose.studio" and not spec["actions"]
 
 
 async def test_revise_one_block_keeps_the_others(who: Who) -> None:
@@ -172,16 +183,16 @@ async def test_company_cap_refuses_extra_concurrent_drafts(who: Who, monkeypatch
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, _draft("Như bảng dưới."), tool_call_id="o")])
 
     monkeypatch.setattr(compose, "MODEL", FunctionModel(wait, model_name="wait"))
-    runs = [asyncio.create_task(executor.run(p, "compose.start", {"kind": "document", "brief": f"Bản {i}"})) for i, p in enumerate((sale, other))]
+    runs = [asyncio.create_task(executor.run(p, "compose.start", {"kind": "post", "brief": f"Bản {i}"})) for i, p in enumerate((sale, other))]
     for _ in range(100):
         if len(compose._running.get(sale.tenant_id, {})) >= compose.CAP:
             break
         await asyncio.sleep(0.05)
-    third = await executor.run(sale, "compose.start", {"kind": "document", "brief": "Bản thứ ba"})
+    third = await executor.run(sale, "compose.start", {"kind": "post", "brief": "Bản thứ ba"})
     assert third.status == "invalid" and "đang soạn" in third.error
     gate.set()
     assert [r.status for r in await asyncio.gather(*runs)] == ["ok", "ok"]
-    assert (await executor.run(sale, "compose.start", {"kind": "document", "brief": "Sau khi xong"})).status == "ok"
+    assert (await executor.run(sale, "compose.start", {"kind": "post", "brief": "Sau khi xong"})).status == "ok"
 
 
 async def test_new_marketing_kinds_are_stored_and_a_flyer_gets_its_one_page_layout(who: Who) -> None:
@@ -197,4 +208,5 @@ async def test_new_marketing_kinds_are_stored_and_a_flyer_gets_its_one_page_layo
         comp = (await q(sale, "compose.view", session_id=out["session_id"]))["blocks"][0]
         assert comp["status"] == "ready", comp["error"]
         assert comp["kind"] == kind and [k["key"] for k in comp["kinds"]] == ["flyer", "brochure", "slides", "post"]
-        assert comp["layout"]["template"] == ("flyer" if kind == "flyer" else "")
+        assert comp["layout"]["template"] == ("flyer" if kind == "flyer" else "plain")   # loại quyết mẫu (kinds.py)
+        assert [t["key"] for t in comp["layout"]["templates"]] == [comp["layout"]["template"]]   # chỉ mẫu hợp loại được mời chọn

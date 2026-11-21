@@ -116,6 +116,15 @@ def _model_specs(model: type[BaseModel]) -> list[dict[str, Any]]:
     return out
 
 
+# Truy vấn "Soạn giúp" của form theo ý định (ADR 0250) — một cửa cho mọi lệnh khai ``intent=``
+DRAFT_QUERY = "core.draft_input"
+
+
 def form_spec(op: Op, terms: Mapping[str, str] | None = None, fields: Mapping[str, tuple[Any, ...]] | None = None) -> dict[str, Any]:
-    return vocab.apply({"command": op.name, "title": op.title, "description": op.form_help, "importable": op.importable,
-                        "fields": _with_extra(op, _model_specs(op.input), fields)}, terms)
+    spec: dict[str, Any] = {"command": op.name, "title": op.title, "description": op.form_help, "importable": op.importable,
+                            "fields": _with_extra(op, _model_specs(op.input), fields)}
+    if op.intent:
+        # chỉ THÊM trường (bất biến 7): app chưa biết ⇒ vẽ đủ ô như cũ. ``intent`` = ô hỏi trước; ``draft`` = truy vấn soạn phần còn lại
+        spec["intent"] = list(op.intent)
+        spec["draft"] = DRAFT_QUERY
+    return vocab.apply(spec, terms)

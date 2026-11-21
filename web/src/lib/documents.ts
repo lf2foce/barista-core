@@ -61,3 +61,36 @@ export function decodeShelves(raw: unknown): UploadShelf[] {
 export function withoutDocumentIds(text: string): string {
   return text.replace(/ \(mã tài liệu [0-9a-f-]{36}\)/g, "");
 }
+
+
+// ── Thả tài liệu vào chat TRỢ LÝ (ADR 0249): không tự vào kho tri thức ──
+// Mặc định máy đoán (người xác nhận — 0225): đang mở một hồ sơ nhận tệp ⇒ gắn vào hồ sơ đó; không thì chỉ dùng trong cuộc trò chuyện này.
+// "Đăng lên kho tri thức" chỉ khi người chọn rõ.
+
+export type OpenRecord = { subjectKind: string; subjectId: string; title: string; path: string };
+export type DropChoice = "record" | "conversation" | "knowledge";
+
+export function defaultDropChoice(record: OpenRecord | null): DropChoice {
+  return record ? "record" : "conversation";
+}
+
+export function dropChoices(record: OpenRecord | null): { value: DropChoice; label: string; detail: string }[] {
+  return [
+    ...(record ? [{ value: "record" as const, label: `Gắn vào “${record.title}”`, detail: "Tệp của hồ sơ — ai thấy hồ sơ thì thấy tệp" }] : []),
+    { value: "conversation", label: "Chỉ dùng trong cuộc trò chuyện này", detail: "Trợ lý đọc để trả lời bạn — không lưu tệp, không ai khác thấy" },
+    { value: "knowledge", label: "Đăng lên kho tri thức", detail: "Chọn kệ — ai đọc được kệ sẽ thấy, trợ lý trích được" },
+  ];
+}
+
+export const CHAT_DOC_MAX = 3;
+export const CHAT_DOC_BYTES = 10 * 1024 * 1024;
+export const DOCUMENT_ONLY_TEXT = "Đọc giúp tôi tài liệu này và tóm tắt những điểm chính.";
+
+/** Tệp ⇒ tài liệu gửi kèm câu hỏi (base64 thuần, không tiền tố data:). Quá cỡ ⇒ lỗi có chữ cho người. */
+export async function toChatDocument(file: File): Promise<{ filename: string; data: string; size: number }> {
+  if (file.size > CHAT_DOC_BYTES) throw new Error(`${file.name}: tối đa 10 MB mỗi tài liệu`);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return { filename: file.name, data: btoa(bin), size: file.size };
+}

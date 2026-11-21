@@ -47,6 +47,20 @@ def validate_pin(full: str, pin: Pin | None, model: type[BaseModel]) -> None:
         raise ValueError(f"{full}: pin chỉ ghim ô khai agent=False — lệnh chưa có ô nào như vậy")
 
 
+def validate_intent(full: str, kind: str, internal: bool, intent: tuple[str, ...], model: type[BaseModel]) -> None:
+    """Ô ý định (ADR 0250) phải là ô THẬT, người thấy được của đầu vào lệnh người gọi trực tiếp — không ô ẩn / ô trợ lý không thấy (``agent=False``)."""
+    if kind != "command" or internal:
+        raise ValueError(f"{full}: intent= chỉ cho lệnh người gọi trực tiếp (không truy vấn / lệnh nội bộ)")
+    if len(set(intent)) != len(intent):
+        raise ValueError(f"{full}: intent= có ô trùng")
+    hidden = agent_only_fields(model)
+    for k in intent:
+        f = model.model_fields.get(k)
+        ui = (f.json_schema_extra or {}).get("ui", {}) if f is not None and isinstance(f.json_schema_extra, dict) else {}
+        if f is None or k in hidden or (isinstance(ui, dict) and ui.get("hidden")):
+            raise ValueError(f"{full}: intent= {k!r} không phải ô người thấy được của đầu vào")
+
+
 Kind = Literal["command", "query"]
 AGENT_MODES = ("deny", "propose", "allow")  # thứ tự từ chặt tới lỏng
 Basis = Callable[[Any, Any], Awaitable[dict[str, str]]]
@@ -167,6 +181,9 @@ class Op:
     # bấm, bằng quyền người đặt luật (nạp lại mỗi lần), khoá chống lặp theo (luật, sự kiện / bản ghi + ngày). Chỉ lệnh ghi rủi ro thấp khai
     # ``risk="low"`` tường minh, không nội bộ, trợ lý không bị cấm — chặn lúc khai.
     auto: bool = False
+    # FORM THEO Ý ĐỊNH (ADR 0250, 1.72): các ô form mở ra HỎI TRƯỚC (ý định của người — vd việc gì, mốc nào, ai chịu trách nhiệm) + một ô "Mô tả / thả file";
+    # phần còn lại do "Soạn giúp" (``core.draft_input``) điền thành chip máy đoán, hoặc người bấm "Điền tay toàn bộ". Rỗng = form đủ ô như cũ.
+    intent: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -374,6 +391,18 @@ class Tracked:
 
 
 TRACKED: dict[tuple[str, str], Tracked] = {}
+# TỆP CỦA HỒ SƠ (ADR 0249, api 1.72): loại đối tượng ⇒ khai của module sở hữu (``Module.record_files``) — đối tượng nào nhận tệp gắn vào, gợi ý vai của tệp.
+# Lõi giữ bảng ``core.record_files``, lệnh gắn / gỡ, khối "Tệp" (kernel/record_files.py) — không biết module nào.
+
+
+@dataclass(frozen=True)
+class RecordFiles:
+    kind: str
+    module: str
+    labels: tuple[str, ...] = ()    # gợi ý vai của tệp trên hồ sơ ("Hợp đồng", "CCCD"…) — người chọn, không bắt gõ
+
+
+RECORD_FILES: dict[str, RecordFiles] = {}
 # Loại CHỨNG TỪ để trích trường có nguồn (0070) — gói khai bằng ``Module.doc_type``; ``kb.extract`` đọc khuôn ở đây, không biết gói nào.
 DOC_TYPES: dict[str, DocType] = {}
 # Vòng quét định kỳ (sweeps.py): lệnh nội bộ khai ``sweep=`` = câu SQL trả cột ``tenant_id`` của các công ty đang có việc tới hạn cho lệnh đó.
@@ -670,6 +699,7 @@ def validate() -> None:
     trong ``needs`` bắt ở ``tests/test_meta.py`` (bản cài đủ gói của repo: ``needs`` ⊆ gói đã nạp)."""
     bad = []
     bad += [f"module {m}: gói {p} lạ" for m, p in MODULE_PACK.items() if p not in PACKS]
+    bad += [f"tệp của hồ sơ: {k} chưa khai m.subject (Module.record_files chỉ cho đối tượng đã khai)" for k in RECORD_FILES if k not in SUBJECTS]
     bad += [f"gói {p.key}: requires gói {r} lạ" for p in PACKS.values() for r in p.requires if r not in PACKS]
     bad += [f"gói {p.key}: gói năng lực không được bắt buộc gói ngành {r}" for p in PACKS.values() if p.kind != "industry"
             for r in p.requires if pack_kind(r) == "industry"]
@@ -805,7 +835,7 @@ class Module:
                   import_rows: Callable[..., Awaitable[list[dict[str, Any]]]] | None = None,
                   pin: Pin | None = None, consistent: bool = False, import_key: ImportKey | None = None,
                   import_table: ImportTable | None = None, extra: str = "",
-                  info: tuple[str, ...] = (), auto: bool = False) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+                  info: tuple[str, ...] = (), auto: bool = False, intent: tuple[str, ...] = ()) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
         full = f"{self.key}.{name}"
         if extra and not (kind == "command" and extra in extra_fields.SUBJECTS and extra_fields.SUBJECTS[extra].module == self.key):
             raise ValueError(f"{full}: extra={extra!r} chỉ cho lệnh của module đã khai đối tượng đó (Module.extensible)")
@@ -855,12 +885,14 @@ class Module:
             validate_pin(full, pin, _input_model(fn))
             if import_table is not None:
                 validate_import_table(full, import_table, _input_model(fn))
+            if intent:
+                validate_intent(full, kind, internal, intent, _input_model(fn))
             if extra and "extra" not in _input_model(fn).model_fields:
                 raise ValueError(f"{full}: lệnh khai extra= cần ô extra: dict[str, Any] trong đầu vào (fields.extra_values())")
             OPS[full] = Op(full, kind, self.key, resource, action, fn, _input_model(fn), title,
                            description or (fn.__doc__ or "").strip(), internal, importable, min_scope, agent, shows, needs, category, public,
                            basis, callers, why, family, description, aside, sensitive, apps, prepare, promotable, target, undone_by, risk,
-                           import_rows, pin, consistent, import_key, import_table, extra, info, auto)
+                           import_rows, pin, consistent, import_key, import_table, extra, info, auto, intent)
             if sweep:
                 SWEEPS[full] = sweep
             return fn
@@ -875,8 +907,11 @@ class Module:
                 undone_by: tuple[str, ...] = (), risk: str = "", min_scope: str | None = None,
                 import_rows: Callable[..., Awaitable[list[dict[str, Any]]]] | None = None, pin: Pin | None = None,
                 prepare: Callable[..., Awaitable[Any]] | None = None, consistent: bool = False, import_key: ImportKey | None = None,
-                import_table: ImportTable | None = None, extra: str = "", auto: bool = False):
-        """``auto`` (ADR 0246, 1.69): luật tự động hoá của công ty được CHẠY lệnh này (hành động "chạy lệnh") — không người bấm, bằng quyền người
+                import_table: ImportTable | None = None, extra: str = "", auto: bool = False, intent: tuple[str, ...] = ()):
+        """``intent`` (ADR 0250, 1.72): ô Ý ĐỊNH của form — form mở ra chỉ hỏi các ô này + một ô "Mô tả / thả file"; "Soạn giúp" (``core.draft_input``) để trợ lý
+        soạn ĐỦ đầu vào của đúng lệnh này (chip máy đoán, người sửa rồi gửi qua executor như thường). Khai ô người biết mà máy không đoán được (việc gì, mốc
+        nào, ai chịu trách nhiệm) — không khai ô máy suy ra được (danh sách việc, hạn từng việc). Không khai ⇒ form đủ ô như cũ.
+        ``auto`` (ADR 0246, 1.69): luật tự động hoá của công ty được CHẠY lệnh này (hành động "chạy lệnh") — không người bấm, bằng quyền người
         đặt luật nạp lại mỗi lần, khoá chống lặp theo (luật, sự kiện / bản ghi + ngày). Chọn có chủ đích: chỉ việc ghi rủi ro thấp, đảo được
         (``risk="low"`` tường minh); lệnh tiền / quyền / duyệt không bao giờ.
         ``import_table``: nhập CẢ BẢNG làm một lần gọi (1.48) — xem ``ImportTable``.
@@ -907,7 +942,7 @@ class Module:
                               shows=shows, needs=needs, public=public, category=category, sweep=sweep, basis=basis, callers=callers, why=why,
                               family=family, aside=aside, sensitive=sensitive, apps=apps, promotable=promotable, target=target, undone_by=undone_by, risk=risk,
                               import_rows=import_rows, pin=pin, min_scope=min_scope, prepare=prepare, consistent=consistent, import_key=import_key, import_table=import_table, extra=extra,
-                              auto=auto)
+                              auto=auto, intent=intent)
 
     def query(self, name: str, *, resource: str | None, title: str, action: str = "read", description: str = "",
               internal: bool = False, min_scope: str | None = None, agent: str = "allow", needs: tuple[str, ...] = (),
@@ -946,6 +981,20 @@ class Module:
         TRACKED[(kind, field)] = Tracked(kind, field, label, self.key, fmt, tuple((choices or {}).items()),
                                          (needs,) if isinstance(needs, str) else tuple(needs or ()), empty)
         return field
+
+    def record_files(self, kind: str, *, labels: tuple[str, ...] | list[str] = ()) -> str:
+        """Khai đối tượng ``kind`` (của chính module, đã khai ``m.subject``) NHẬN TỆP CỦA HỒ SƠ (ADR 0249, api 1.72): hợp đồng của giao dịch, CCCD của khách,
+        chứng từ của một bộ hồ sơ. Lõi giữ tệp (``core.record_files``, quyền = ai thấy đối tượng), lệnh ``core.attach_file`` / ``core.remove_file`` và khối
+        "Tệp" — thẻ của module đặt ``await record_files.block(ctx, kind, id)`` cạnh khối trao đổi / lịch sử. ``labels``: gợi ý vai của tệp (chọn, không gõ)."""
+        if kind.split(".")[0] != self.key:
+            raise ValueError(f"module {self.key}: chỉ khai tệp của hồ sơ cho đối tượng của chính mình ({self.key}.<loại>), không cho {kind}")
+        if kind in RECORD_FILES:
+            raise ValueError(f"tệp của hồ sơ {kind} khai hai lần")
+        clean = tuple(x.strip() for x in labels if x.strip())
+        if any(len(x) > 80 for x in clean):
+            raise ValueError(f"tệp của hồ sơ {kind}: nhãn vai tệp tối đa 80 ký tự")
+        RECORD_FILES[kind] = RecordFiles(kind, self.key, clean)
+        return kind
 
     def checker(self, name: str, label: str, subject: str, args: str = ""):
         """Khai một BỘ KIỂM mục hồ sơ bằng dữ kiện thật (đợt đã thu, hợp đồng đã ký…): thao tác nội bộ nhận ``{subject_id, args}``,

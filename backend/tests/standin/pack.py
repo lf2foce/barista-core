@@ -318,6 +318,8 @@ async def case_file(ctx: Ctx, inp: Ref) -> dict[str, Any]:
     """Hồ sơ đơn theo chặng (quy trình bám theo đơn quản trị khai): thẻ của ``flow.case`` — mục tiền công ty chỉ hiện số cho người có quyền."""
     d = await _order(ctx, inp.code)
     page: dict[str, Any] = await ctx.call("flow.case", subject_kind=ORDER, subject_id=d["id"])
+    # module CHỦ hồ sơ đặt nút "Soạn ấn phẩm" trên thẻ của mình (ADR 0249) — gói Ấn phẩm tắt / người xem không chạy được ⇒ nút tự ẩn
+    page["actions"] = [*(page.get("actions") or []), ui.act("compose.brochure", "Soạn ấn phẩm", {"kind": "demo_order", "subject": str(d["id"])})]
     return page
 
 
@@ -654,12 +656,30 @@ class BrochureAsk(Input):
 async def plug_brochure(ctx: Ctx, inp: BrochureAsk) -> dict[str, Any] | None:
     if inp.op == "kinds":
         return {"kinds": [bro.kind("demo_orders", "Tờ giới thiệu dịch vụ (thế vai)", "Đơn của bạn + ảnh / pháp lý theo phạm vi DEMO"),
-                          bro.kind("demo_lead", "Tờ riêng cho khách (thế vai)", "Lời chào đúng tên khách bạn được xem")]}
+                          bro.kind("demo_lead", "Tờ riêng cho khách (thế vai)", "Lời chào đúng tên khách bạn được xem", customer=True),
+                          bro.kind("demo_order", "Tờ rơi một đơn (thế vai)", "Một đơn bạn được xem", subject=ORDER, piece="flyer", customer=True)]}
+    if inp.op == "subjects":   # hồ sơ người soạn chọn được cho công thức có hồ sơ — RLS của người soạn (plug chạy bằng quyền họ)
+        if inp.kind != "demo_order":
+            return None
+        rows = await ctx.all("SELECT id, code, title FROM orderdesk.orders WHERE %s = '' OR title ILIKE %s OR code ILIKE %s ORDER BY code",
+                             (inp.subject, f"%{inp.subject}%", f"%{inp.subject}%"))
+        return {"subjects": [{"value": str(r["id"]), "label": f"{r['code']} · {r['title']}"} for r in rows]}
     tail = [{**bro.images("DEMO", limit=1, slot="cover"), "need": "Cần ảnh thử"}, bro.images("DEMO", limit=4, skip=1, slot="grid"), bro.heading("Pháp lý dự án", level=1),
             bro.excerpts("legal", "DEMO", limit=1), bro.paragraph("Cảm ơn quý khách đã quan tâm", slot="footer")]
     if inp.kind == "demo_orders":
         return {"recipe": bro.recipe("Giới thiệu dịch vụ", [bro.paragraph("Dịch vụ đang triển khai", slot="cover"), bro.heading("Đơn gần đây", level=1),
                                                              bro.data("orderdesk.list", "Đơn của bạn", {}), *tail], brief="Giới thiệu dịch vụ từ đơn của tôi")}
+    if inp.kind == "demo_order":
+        o = await ctx.one("SELECT id, code, title FROM orderdesk.orders WHERE id = %s", (UUID(inp.subject),))   # RLS người soạn: không thấy đơn ⇒ dừng
+        if o is None:
+            raise NotFound("Không thấy đơn")
+        hello = []
+        if inp.lead_id:
+            lead = await ctx.call_as("crm.lead_need", ctx.p, lead_id=inp.lead_id)
+            hello = [bro.paragraph(f"Dành riêng cho anh/chị {lead['name']}", slot="cover")]
+        return {"recipe": bro.recipe("Dịch vụ dành cho quý khách", [*hello, bro.heading("Đơn gần đây", level=1), bro.data("orderdesk.list", "Đơn của bạn", {}),
+                                                                    bro.paragraph("Liên hệ ngay để được tư vấn", slot="footer")],
+                                     brief="Tờ rơi một đơn", template="editorial", subject_label=f"{o['code']} · {o['title']}")}
     if inp.kind == "demo_lead":
         lead = await ctx.call_as("crm.lead_need", ctx.p, lead_id=inp.lead_id)   # RLS của người soạn: không thấy khách ⇒ NotFound
         return {"recipe": bro.recipe(f"Tờ dành cho {lead['name']}", [bro.paragraph(f"Dành riêng cho anh/chị {lead['name']}", slot="cover"),

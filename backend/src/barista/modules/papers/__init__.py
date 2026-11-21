@@ -17,7 +17,23 @@ from uuid import UUID
 from psycopg.types.json import Jsonb
 
 from barista.api import Action as A
-from barista.api import Ctx, Input, Invalid, Module, NoInput, NotFound, Open, Screen, SearchIn, SearchTerms, field, today, ui, web
+from barista.api import (
+    Ctx,
+    Input,
+    Invalid,
+    Module,
+    NoInput,
+    NotFound,
+    Open,
+    Screen,
+    SearchIn,
+    SearchTerms,
+    field,
+    files,
+    today,
+    ui,
+    web,
+)
 from barista.kernel import convert
 
 m = Module("papers", "Giấy tờ", pack="base", resources={"papers": "Giấy tờ & công văn", "papers.templates": "Mẫu văn bản (soạn thảo)"},
@@ -173,8 +189,7 @@ async def issue(ctx: Ctx, inp: PaperRef) -> dict[str, Any]:
     symbol = f"{n:02d}/{d['abbr']}-{short}" if d["abbr"] else f"{n:02d}/{short}-VP"
     await ctx.exec("UPDATE papers.documents SET status = 'issued', number = %s, symbol = %s, issued_by = %s, issued_on = core.today()"
                    " WHERE id = %s", (n, symbol, ctx.p.user_id, d["id"]))
-    if d["template_version_id"] is not None:
-        await compose.store_issued(ctx, d["id"])
+    await _store_issued(ctx, d["id"])   # MỌI giấy ban hành (cả công văn tự do — ADR 0249 lát 4): tệp đóng băng lúc cấp số
     return {"paper_id": d["id"], "symbol": symbol}
 
 
@@ -267,8 +282,9 @@ async def export(ctx: Ctx, inp: PaperRef) -> dict[str, Any]:
     if d is None:
         raise NotFound("Không thấy giấy tờ")
     await compose.require_seen(ctx, d)
-    if d["status"] == "issued" and (kept := await compose.issued_file(ctx, d["id"])):   # bản ban hành: đúng tệp đã cất lúc cấp số
+    if d["status"] == "issued" and (kept := await _issued_file(ctx, d["id"])):   # bản ban hành: đúng tệp đã cất lúc cấp số
         return {"filename": kept[0], "docx_b64": base64.b64encode(kept[1]).decode()}
+    # dựng theo dữ liệu hiện tại: bản dự thảo / đã huỷ, và giấy ban hành TRƯỚC ADR 0249 lát 4 (công văn tự do chưa cất tệp lúc cấp số)
     data = render_docx(d, await settings(ctx))
     return {"filename": f"{(d['symbol'] or 'Du-thao').replace('/', '-')}.docx", "docx_b64": base64.b64encode(data).decode()}
 
@@ -532,6 +548,25 @@ async def search_papers(ctx: Ctx, inp: SearchIn) -> list[dict[str, Any]]:
     return [{"title": r["title"], "subtitle": " · ".join(x for x in (r["kind_label"], f"Số {r['number']}/{r['symbol']}" if r["number"] else "") if x),
              "badge": STATUS.get(r["status"], r["status"]), "tone": "muted", "open": {"query": "papers.view", "input": {"paper_id": str(r["id"])}}}
             for r in rows]
+
+
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+async def _store_issued(ctx: Ctx, paper_id: UUID) -> None:
+    """Bản ban hành ⇒ dựng .docx MỘT lần (nội dung + cài đặt công ty lúc cấp số), cất ở kho tệp; tải về / xem bản in sau luôn là đúng tệp này — đổi tên
+    công ty, người ký, mẫu… sau đó không đổi văn bản đã phát hành."""
+    d = await ctx.one("SELECT * FROM papers.documents WHERE id = %s", (paper_id,))
+    assert d is not None
+    name = f"{d['symbol'].replace('/', '-')} {d['kind_label']}.docx"
+    stored = await files.put(ctx, render_docx(d, await settings(ctx)), name, DOCX)
+    await ctx.exec("INSERT INTO papers.files (document_id, rev, file_id, role, filename, created_by) VALUES (%s, %s, %s, 'issued', %s, %s)",
+                   (d["id"], d["rev"], stored.id, name, ctx.p.user_id))
+
+
+async def _issued_file(ctx: Ctx, paper_id: UUID) -> tuple[str, bytes] | None:
+    f = await ctx.one("SELECT file_id, filename FROM papers.files WHERE document_id = %s AND role = 'issued'", (paper_id,))
+    return None if f is None else (f["filename"], await files.read(ctx, f["file_id"]))
 
 
 # ── HTTP của Giấy tờ (``Module.route``): tải .docx / xem như BẢN IN (PDF đổi từ chính file .docx — một mẫu cho xem trước lẫn file gửi đi) ──

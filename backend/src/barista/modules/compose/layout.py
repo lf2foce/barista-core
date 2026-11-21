@@ -1,8 +1,8 @@
-"""BỐ CỤC bản soạn (0224) — trang mẫu là DỮ LIỆU, chỗ đứng của khối là một trường (``slot``) nằm trong khối.
+"""BỐ CỤC ấn phẩm (0224) — trang mẫu là DỮ LIỆU, chỗ đứng của khối là một trường (``slot``) nằm trong khối.
 
-* **Trang mẫu** (``TEMPLATES``): kiểu bìa, số ô nổi bật / số ảnh trên một hàng, lề. Màu, phông, logo, chân trang lấy từ bộ nhận diện công ty
-  (``compose.brand``) — mẫu không mang màu. Bản soạn chọn mẫu bằng ``layout = {"template": "<khoá>"}``; ``{}`` = bố cục cũ (xuất như trước khi có
-  bố cục — bản cũ không đổi diện mạo).
+* **Trang mẫu** (``TEMPLATES``): kiểu bìa, số ô nổi bật / số ảnh trên một hàng, lề. Màu, phông, logo, chân trang lấy từ nhận diện thương hiệu của CÔNG TY
+  (cài đặt công ty — ``admin.brand``, ADR 0249) — mẫu không mang màu. Ấn phẩm chọn mẫu bằng ``layout = {"template": "<khoá>"}``; ``{}`` = bố cục cũ (xuất như
+  trước khi có bố cục — bản cũ không đổi diện mạo). Mẫu nào hợp loại ấn phẩm nào: ``kinds.py`` (MỘT danh sách — loại quyết mẫu + định dạng).
 * **Chỗ đứng** (``slot``): trường TUỲ CHỌN của khối (chỉ THÊM — khối cũ không có ⇒ chảy như thường): ``cover`` (bìa: ảnh đầu tiên = ảnh lớn, đoạn chữ =
   dòng phụ) · ``col1`` / ``col2`` / ``col3`` (các khối liên tiếp xếp thành hàng nhiều cột) · ``tiles`` (khối SỐ LIỆU chỉ có ô số ⇒ ô nổi bật) · ``grid``
   (ảnh liên tiếp ⇒ lưới ảnh) · ``footer`` (chân liên hệ cuối tờ).
@@ -23,7 +23,7 @@ COLS = ("col1", "col2", "col3")
 # trống = giao diện thường). ``cover`` none (không bìa riêng) · band (dải màu thương hiệu) · hero (ảnh lớn có dải chữ); ``tile_cols`` số ô nổi bật một hàng;
 # ``grid_cols`` số ảnh một hàng; ``margin_cm`` lề giấy khi xuất Word / PDF.
 TEMPLATES: dict[str, dict[str, Any]] = {
-    "plain": {"label": "Văn bản", "about": "Tiêu đề + nội dung chảy, không bìa riêng", "cover": "none", "tile_cols": 3, "grid_cols": 2, "margin_cm": 2.2},
+    "plain": {"label": "Đơn giản", "about": "Tiêu đề + nội dung chảy, không bìa riêng", "cover": "none", "tile_cols": 3, "grid_cols": 2, "margin_cm": 2.2},
     "brochure": {"label": "Tờ giới thiệu", "about": "Bìa ảnh lớn, ô số nổi bật, lưới ảnh, chân liên hệ", "cover": "hero", "tile_cols": 4,
                  "grid_cols": 3, "margin_cm": 1.6},
     "proposal": {"label": "Đề xuất", "about": "Bìa dải màu, nội dung hai cột, bảng giá", "cover": "band", "tile_cols": 3, "grid_cols": 2, "margin_cm": 2.0,
@@ -36,7 +36,6 @@ TEMPLATES: dict[str, dict[str, Any]] = {
 TEMPLATES["flyer"] = {"label": "Tờ rơi", "about": "Một trang: bìa ảnh lớn, ba lợi ích một hàng, ô ưu đãi nổi bật, chân liên hệ", "cover": "hero", "tile_cols": 3,
                       "grid_cols": 2, "margin_cm": 1.2, "style": vn.STYLE_VN, "customer": True, "labels": {"tiles": "Ưu đãi", "footer": "Liên hệ"}}
 TEMPLATES["brochure"]["customer"] = True
-DEFAULT_FOR_KIND = {"brochure": "editorial", "flyer": "flyer"}   # bản soạn MỚI loại "Tờ giới thiệu" mặc định dùng mẫu này; loại khác: không bố cục (như cũ)
 
 
 def clean(layout: Any) -> dict[str, Any]:
@@ -157,10 +156,6 @@ def footer_lines(b: dict[str, Any]) -> list[str]:
         out += [str(x.get("text", "")) for x in d.get("texts") or []]
         return [x for x in out if x]
     return []
-
-
-def choices() -> list[dict[str, str]]:
-    return [{"key": k, "label": t["label"], "about": t["about"]} for k, t in TEMPLATES.items()]
 
 
 def tint(hex6: str, amount: float) -> str:

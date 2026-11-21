@@ -17,7 +17,7 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
-from barista.kernel import files, ui
+from barista.kernel import ui
 from barista.kernel.clock import today, zone
 from barista.kernel.errors import Invalid, NotFound
 from barista.kernel.executor import Ctx
@@ -26,7 +26,7 @@ from barista.kernel.fields import field as ffield
 from barista.kernel.screens import Action as A
 from barista.kernel.screens import Open, Screen
 from barista.kernel.text import fold
-from barista.modules.papers import STATUS, PaperRef, _insert, m, render_docx, settings
+from barista.modules.papers import STATUS, PaperRef, _insert, m, settings
 from barista.modules.papers.template import (
     CONTROL,
     KINDS,
@@ -589,22 +589,6 @@ async def check_issue(ctx: Ctx, paper_id: UUID) -> None:
     if mk != rev["mark"]:
         changed = ", ".join(c["label"] for c in _changes(old, rows)) or "pháp nhân ký của hồ sơ"
         raise Invalid(f"Hồ sơ đã đổi sau bản soạn ({changed}) — bấm “Cập nhật số từ hồ sơ”, xem lại rồi ban hành")
-
-
-async def store_issued(ctx: Ctx, paper_id: UUID) -> None:
-    """Bản ban hành ⇒ dựng .docx một lần, cất ở kho tệp; tải về sau luôn là đúng tệp này (không dựng lại theo dữ liệu mới)."""
-    d = await ctx.one("SELECT * FROM papers.documents WHERE id = %s", (paper_id,))
-    assert d is not None
-    name = f"{d['symbol'].replace('/', '-')} {d['kind_label']}.docx"
-    stored = await files.put(ctx, render_docx(d, await settings(ctx)), name,
-                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-    await ctx.exec("INSERT INTO papers.files (document_id, rev, file_id, role, filename, created_by) VALUES (%s, %s, %s, 'issued', %s, %s)",
-                   (d["id"], d["rev"], stored.id, name, ctx.p.user_id))
-
-
-async def issued_file(ctx: Ctx, paper_id: UUID) -> tuple[str, bytes] | None:
-    f = await ctx.one("SELECT file_id, filename FROM papers.files WHERE document_id = %s AND role = 'issued'", (paper_id,))
-    return None if f is None else (f["filename"], await files.read(ctx, f["file_id"]))
 
 
 # ── Ai thấy bản soạn: bản soạn chép số liệu hồ sơ ⇒ chỉ người ĐỌC ĐƯỢC hồ sơ nguồn (quyền của chính họ, hỏi gói qua điểm cắm) mới thấy ──

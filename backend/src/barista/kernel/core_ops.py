@@ -694,7 +694,7 @@ m.dataset(
 )
 
 
-# Nhật ký nhập file (0168 §2) + hạn giữ khoá chống lặp (0177 §2) + hạng trợ lý AI (0193) + kỹ năng trợ lý (0198) — đăng ký thao tác vào module ``core``;
+# Nhật ký nhập file (0168 §2) + hạn giữ khoá chống lặp (0177 §2) + hạng trợ lý AI (0193) + kỹ năng trợ lý (0198) + soạn giúp form (0250) — đăng ký thao tác vào module ``core``;
 # nạp sau cùng vì chúng dùng ``m`` ở trên
 from barista.kernel import (  # noqa: E402, F401
     ai_hints,
@@ -703,7 +703,9 @@ from barista.kernel import (  # noqa: E402, F401
     ai_tools,
     docread_policy,
     embed_policy,
+    form_draft,
     history,
     idempotency_log,
     import_log,
+    record_files,
 )

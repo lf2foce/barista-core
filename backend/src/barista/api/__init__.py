@@ -36,6 +36,7 @@ from barista.api import (
     metrics,
     notify,
     ratelimit,
+    record_files,
     regulations,
     tenancy,
     web,
@@ -99,7 +100,7 @@ type Ctx = _Ctx
 # gọi model NGOÀI giao dịch.
 type Prep = _Prep
 
-__version__ = "1.71.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
+__version__ = "1.72.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
 #                         1.7: gộp ba nhánh cùng mang 1.6 — regulations.declare / compare / known_codes (0154) · Module.inbound (webhook VÀO từ nhà cung cấp) · Pack(records=…) cấu hình mặc định qua lệnh của module sở hữu (0153)
 #                              · Module.consumes nhận thêm họ outreach / doc_read / paper_draft — dịch vụ lõi mở cho gói ngoài (0155)
 #                         1.8: NeedsConfirmation — lệnh tự biết việc trợ lý định làm chạm lịch / dữ liệu của NGƯỜI KHÁC ⇒ cả lệnh thành thẻ đề xuất (0158)
@@ -219,6 +220,16 @@ __version__ = "1.71.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                         1.70: (bổ sung ADR 0245) họ ``ledger_read`` trả ``snapshot = {token, journals, mapping}`` và nhận ``snapshot=`` — sổ hoặc bảng Ánh xạ tài khoản đổi giữa
 #                              các lần đọc của một báo cáo (token chung cho dòng + số dư cùng pháp nhân) ⇒ Conflict (gói không ghép hai trạng thái); gói lưu snapshot cùng báo cáo đã duyệt để biết ánh xạ đổi sau duyệt.
 #                         1.71: ``Module.query(creates="<module>.<lệnh>")`` — truy vấn chọn khai lệnh tạo thêm một mục; form gửi ``options_create`` cho người có quyền lệnh đó, ô chọn rỗng hiện "Tạo mới" — chỉ thêm, không migration
+#                         1.72 (ADR 0249 lát 1 — chung số với phiên lát 2; phần TỆP CỦA HỒ SƠ): ``Module.record_files(loại, labels=)`` khai đối tượng CỦA CHÍNH module nhận
+#                              tệp gắn vào; ``record_files.block(ctx, loại, id)`` khối "Tệp" cho thẻ; lệnh ``core.attach_file`` / ``core.remove_file``, truy vấn ``core.files_of``.
+#                              ``files.grant`` (đổi tên từ ``grant_copy``, chưa công bố) + ``files.adopt`` — một tệp nhiều chỗ dùng, không chép; ``files.copy`` (bản độc lập);
+#                              ``files.sniff`` / ``clean_name`` / ``ACCEPTED`` / ``MEDIA`` / ``kind_label`` / ``size_text`` — loại tệp nhận được một nơi quyết. Migration base/105, 106 — chỉ thêm, không bảo trì.
+#                         1.72: (ADR 0250) ``Module.command(intent=(ô, …))`` — form theo ý định: form hỏi trước các ô này + "Mô tả / thả file", "Soạn giúp" (``core.draft_input``) soạn phần còn lại thành chip máy đoán — chỉ thêm, không migration (1.72 chung với ADR 0249)
+#                         1.72 (chung với lát 1 của ADR 0249 — phần lát 2, ấn phẩm gắn hồ sơ): ``brochure.kind(…, subject=, piece=, customer=)`` — công thức nói về
+#                              MỘT hồ sơ (loại ``<module>.<loại>``), làm ra loại ấn phẩm nào, có nhận khách không; điểm cắm ``compose.brochure`` thêm câu hỏi
+#                              ``op="subjects"`` ⇒ ``{"subjects": [{value, label}]}`` (hồ sơ người soạn chọn được); ``brochure.recipe(…, subject_label=)``, ``template``
+#                              trống = mẫu mặc định của loại. Bỏ hai bộ ``brochure.SLOTS`` / ``TEMPLATES`` (không xuất ra bề mặt, đã lệch — danh sách ở phân hệ Ấn phẩm).
+#                              Migration base/107 (bảng ``admin.brand``) + compose/073 — chỉ thêm, không bảo trì.
 
 __all__ = [
     "VN",
@@ -311,6 +322,7 @@ __all__ = [
     "phone_display",
     "phone_search",
     "ratelimit",
+    "record_files",
     "reflow",
     "regulations",
     "shown",

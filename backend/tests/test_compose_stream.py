@@ -46,7 +46,7 @@ async def test_compose_stream_emits_progress_then_blocks_then_done(who: Who) -> 
     sale = await who("sale1")
     compose.MODEL = _model()
     try:
-        events = await _events(sale, {"kind": "document", "brief": "Báo cáo giao dịch tháng này cho giám đốc"})
+        events = await _events(sale, {"kind": "post", "brief": "Báo cáo giao dịch tháng này cho giám đốc"})
     finally:
         compose.MODEL = None
     types = [e["type"] for e in events]
@@ -63,7 +63,7 @@ async def test_compose_stream_rejects_empty_brief_without_creating_a_draft(who: 
     base = settings.public_api_url.rstrip("/")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=base) as c:
         r = await c.post("/v1/compose/stream", headers={"X-Dev-User": sale.email, "X-Tenant-Id": str(sale.tenant_id)},
-                         json={"kind": "document", "brief": "   "})
+                         json={"kind": "post", "brief": "   "})
     assert r.status_code == 422
 
 
@@ -80,7 +80,7 @@ async def test_unconfigured_model_says_so_in_plain_words_and_retry_reuses_the_tu
 
     sale = await who("sale1")
     monkeypatch.setattr(llm, "build_model", no_key)
-    failed = await _events(sale, {"kind": "document", "brief": "Báo cáo giao dịch"})
+    failed = await _events(sale, {"kind": "post", "brief": "Báo cáo giao dịch"})
     sid = failed[0]["session_id"]
     assert failed[-1]["status"] == "failed" and failed[-1]["error"] == compose.NO_MODEL
     monkeypatch.undo()
@@ -107,7 +107,7 @@ async def test_retry_is_refused_on_a_draft_that_is_not_failed(who: Who) -> None:
     sale = await who("sale1")
     compose.MODEL = _model()
     try:
-        sid = (await _events(sale, {"kind": "document", "brief": "Báo cáo giao dịch"}))[0]["session_id"]
+        sid = (await _events(sale, {"kind": "post", "brief": "Báo cáo giao dịch"}))[0]["session_id"]
         again = await _events(sale, {"session_id": sid, "instruction": "x", "retry": True})
     finally:
         compose.MODEL = None
@@ -121,7 +121,7 @@ async def test_another_user_cannot_run_a_turn_on_my_draft_through_the_stream(who
     sale, other = await who("sale1"), await who("sale2")
     compose.MODEL = _model()
     try:
-        sid = (await _events(sale, {"kind": "document", "brief": "Báo cáo giao dịch"}))[0]["session_id"]
+        sid = (await _events(sale, {"kind": "post", "brief": "Báo cáo giao dịch"}))[0]["session_id"]
         stolen = await _events(other, {"session_id": sid, "instruction": "Đổi hết thành quảng cáo"})
     finally:
         compose.MODEL = None
@@ -135,7 +135,7 @@ async def test_a_number_the_model_invents_in_a_streamed_revise_is_flagged(who: W
     sale = await who("sale1")
     compose.MODEL = _model()
     try:
-        sid = (await _events(sale, {"kind": "document", "brief": "Báo cáo giao dịch"}))[0]["session_id"]
+        sid = (await _events(sale, {"kind": "post", "brief": "Báo cáo giao dịch"}))[0]["session_id"]
         compose.MODEL = _model("Doanh số đạt 4.512 triệu đồng với 37 giao dịch.")   # số bịa, không có khối số liệu nào
         events = await _events(sale, {"session_id": sid, "instruction": "Thêm doanh số"})
     finally:
@@ -155,7 +155,7 @@ async def test_two_requests_at_once_on_one_draft_run_one_turn_and_refuse_the_oth
 
     sale = await who("sale1")
     compose.MODEL = _model()
-    sid = str((await _events(sale, {"kind": "document", "brief": "Báo cáo giao dịch"}))[0]["session_id"])
+    sid = str((await _events(sale, {"kind": "post", "brief": "Báo cáo giao dịch"}))[0]["session_id"])
     monkeypatch.setattr(compose, "MODEL", _model("Bản sửa."))
     async with db.owner.connection() as holder, holder.transaction():   # kết nối riêng + giao dịch mở: khoá giữ tới hết khối này
         await holder.execute("SELECT 1 FROM compose.sessions WHERE id = %s FOR UPDATE", (sid,))   # lượt đầu đang ở giữa lệnh của nó
@@ -176,7 +176,7 @@ async def test_turns_keep_only_the_most_recent_on_write(who: Who, monkeypatch: A
     sale = await who("sale1")
     compose.MODEL = _model()
     try:
-        sid = str((await _events(sale, {"kind": "document", "brief": "Báo cáo giao dịch"}))[0]["session_id"])
+        sid = str((await _events(sale, {"kind": "post", "brief": "Báo cáo giao dịch"}))[0]["session_id"])
         monkeypatch.setattr(compose, "KEEP_TURNS", 5)
         await owner_val("""UPDATE compose.sessions SET turns = (SELECT jsonb_agg(jsonb_build_object('role', 'user', 'text', 'cũ ' || g, 'at', ''))
                                                                   FROM generate_series(1, 20) g) WHERE id = %s RETURNING 1""", (sid,))
@@ -206,7 +206,7 @@ async def test_a_failed_save_does_not_leave_the_draft_stuck_drafting(who: Who, m
     monkeypatch.setattr(executor, "run", flaky)
     compose.MODEL = _model()
     try:
-        events = await _events(sale, {"kind": "document", "brief": "Báo cáo giao dịch"})
+        events = await _events(sale, {"kind": "post", "brief": "Báo cáo giao dịch"})
     finally:
         compose.MODEL = None
     assert events[-1]["type"] == "done" and events[-1]["status"] == "failed"
@@ -229,7 +229,7 @@ async def test_stop_before_anything_was_fetched_says_stopped_and_retry_runs_the_
         raise AssertionError("không tới đây")
 
     monkeypatch.setattr(compose, "MODEL", FunctionModel(hang, model_name="hang"))
-    run = asyncio.create_task(_events(sale, {"kind": "document", "brief": "Báo cáo giao dịch"}))
+    run = asyncio.create_task(_events(sale, {"kind": "post", "brief": "Báo cáo giao dịch"}))
     for _ in range(200):
         if compose._tasks:
             break
@@ -256,7 +256,7 @@ async def test_stop_reports_a_turn_running_in_another_process_instead_of_pretend
     sale = await who("sale1")
     compose.MODEL = _model()
     try:
-        sid = str((await _events(sale, {"kind": "document", "brief": "Báo cáo giao dịch"}))[0]["session_id"])
+        sid = str((await _events(sale, {"kind": "post", "brief": "Báo cáo giao dịch"}))[0]["session_id"])
     finally:
         compose.MODEL = None
     await owner_val("UPDATE compose.sessions SET status = 'drafting', updated_at = now() WHERE id = %s RETURNING 1", (sid,))

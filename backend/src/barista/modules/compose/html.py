@@ -176,7 +176,7 @@ def _block(b: dict[str, Any], images: dict[str, tuple[bytes, str]], *, grid: boo
 
 def page(title: str, blocks: list[dict[str, Any]], brand: dict[str, Any], images: dict[str, tuple[bytes, str]], lay: dict[str, Any] | None = None,
          *, when: datetime | None = None) -> str:
-    """Trang HTML hoàn chỉnh. ``images``: mã khối ảnh ⇒ (byte, loại). ``lay``: ``layout`` của bản soạn (rỗng ⇒ mẫu "Văn bản")."""
+    """Trang HTML hoàn chỉnh. ``images``: mã khối ảnh ⇒ (byte, loại). ``lay``: ``layout`` của ấn phẩm (rỗng ⇒ mẫu "Đơn giản")."""
     tpl = layout.template_of(lay) or layout.TEMPLATES["plain"]
     if tpl.get("look") == "editorial":
         from barista.modules.compose import editorial  # nhập muộn: editorial dùng lại ``esc`` / ``data_url`` của tệp này

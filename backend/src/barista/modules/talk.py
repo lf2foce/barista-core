@@ -17,12 +17,10 @@ import asyncio
 import base64
 import binascii
 import hashlib
-import io
 import json
 import logging
 import re
 import unicodedata
-import zipfile
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any, Literal
@@ -82,12 +80,8 @@ RECALLED = "Tin đã được thu hồi"
 REACTIONS = ("👍", "✅", "👀", "🙏")
 FILE_MAX = 20 * 1024 * 1024
 IMAGES = ("image/png", "image/jpeg", "image/gif", "image/webp")
-OOXML = {"docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "word/"),
-         "xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xl/"),
-         "pptx": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "ppt/")}
-OLE = {"doc": "application/msword", "xls": "application/vnd.ms-excel", "ppt": "application/vnd.ms-powerpoint"}
-FILE_KINDS = "ảnh (PNG, JPEG, GIF, WebP, HEIC), PDF, Word, Excel, PowerPoint, TXT, CSV"
-MEDIA = (*IMAGES, "image/heic")   # tab "Ảnh" của tab Tệp (0128); xem trước trong tin vẫn chỉ IMAGES
+FILE_KINDS = filestore.ACCEPTED   # loại tệp nhận được: MỘT nơi quyết (kernel/files.py ``sniff``)
+MEDIA = filestore.MEDIA   # tab "Ảnh" của tab Tệp (0128); xem trước trong tin vẫn chỉ IMAGES
 # Link trong chữ tin (0128 §1): rút bằng code lúc gửi / sửa; KHÔNG tải trang đích (không SSRF). Migration 040 rút link tin cũ bằng đúng luật này.
 LINK_RE = re.compile(r"https?://[^\s<>\"'`]+")
 LINK_TRAIL = ".,;:!?)]}"
@@ -167,12 +161,15 @@ async def _block(ctx: Ctx, kind: str, sid: UUID, subj: dict[str, Any], *, before
         if mb:
             last_read, muted, following = int(mb["last_read_id"] or 0), bool(mb["muted"]), bool(mb["following"])
         ids = [x["id"] for x in msgs]
+        keeps = kind in registry.RECORD_FILES and ctx.p.can("talk", "write")
         # tệp của tin đã thu hồi: RLS (p_recalled) chỉ còn cho người gửi / talk.audit — và ở đây cũng không vẽ (xem qua "lịch sử")
         for f in await ctx.all("""SELECT id, message_id, filename, content_type, size_bytes FROM talk.attachments
                                   WHERE message_id = ANY(%s) ORDER BY created_at""", (ids,)):
             files.setdefault(f["message_id"], []).append(
                 {"id": str(f["id"]), "filename": f["filename"], "content_type": f["content_type"], "size_bytes": f["size_bytes"],
-                 "is_image": f["content_type"] in IMAGES})
+                 "is_image": f["content_type"] in IMAGES,
+                 # ADR 0249 — chỉ THÊM trường: hồ sơ của luồng nhận tệp ⇒ nút "Lưu vào hồ sơ" (cùng tệp, không chép)
+                 **({"keep": ui.act("talk.keep_on_record", "Lưu vào hồ sơ", {"attachment_id": str(f["id"])})} if keeps else {})})
         for r in await ctx.all("""SELECT r.message_id, r.emoji, count(*) AS n, bool_or(r.user_id = core.me()) AS mine,
                                          array_agg(u.name ORDER BY r.created_at) AS names
                                   FROM talk.reactions r JOIN core.users u ON u.id = r.user_id
@@ -444,54 +441,7 @@ async def _save_links(ctx: Ctx, mid: int, body: str, *, replace: bool = False) -
 
 # ── Tệp đính kèm (0115): thân tệp ở kho đối tượng (kernel/files.py — 0122), quyền theo LUỒNG; thu hồi tin KHÔNG release tệp ──
 
-def sniff(filename: str, data: bytes | bytearray) -> str:
-    """Loại tệp theo NỘI DUNG (không tin loại máy khách khai): chỉ nhận danh sách cố định; không HTML / SVG / tệp chạy được. Trả kiểu MIME."""
-    visible = "".join(ch for ch in filename if unicodedata.category(ch) != "Cf")
-    ext = visible.rsplit(".", 1)[-1].lower().strip() if "." in visible else ""
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data[:6] in (b"GIF87a", b"GIF89a"):
-        return "image/gif"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    if data[4:8] == b"ftyp" and data[8:12] in (b"heic", b"heix", b"mif1", b"heif"):
-        return "image/heic"
-    if data.startswith(b"%PDF-"):
-        return "application/pdf"
-    if data.startswith(b"PK\x03\x04") and ext in OOXML:
-        try:
-            names = zipfile.ZipFile(io.BytesIO(memoryview(data))).namelist()
-        except zipfile.BadZipFile:
-            names = []
-        if "[Content_Types].xml" in names and any(n.startswith(OOXML[ext][1]) for n in names):
-            return OOXML[ext][0]
-    if data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") and ext in OLE:
-        return OLE[ext]
-    if ext in ("txt", "csv") and b"\x00" not in data:
-        try:
-            data.decode("utf-8")
-            return "text/csv; charset=utf-8" if ext == "csv" else "text/plain; charset=utf-8"
-        except UnicodeDecodeError:
-            pass
-    raise Invalid(f"Không nhận loại tệp này — chỉ nhận {FILE_KINDS}")
-
-
-EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/heic": "heic", "application/pdf": "pdf",
-       **{v[0]: k for k, v in OOXML.items()}, **{v: k for k, v in OLE.items()},
-       "text/csv; charset=utf-8": "csv", "text/plain; charset=utf-8": "txt"}
-
-
-def clean_name(filename: str, content_type: str) -> str:
-    """Tên tệp an toàn, GẮN với loại server nhận diện (review 07/11): bỏ thư mục, ký tự điều khiển và ký tự định dạng vô hình (đảo chiều chữ
-    U+202E, U+2066…, khoảng trắng không độ rộng — Unicode "Cf") vốn làm "ảnh.png" hiện / lưu thành ".html"; đuôi tệp luôn là đuôi của loại
-    đã nhận diện (PNG mang tên ".html" ⇒ ".png")."""
-    base = filename.replace("\\", "/").rsplit("/", 1)[-1]
-    base = "".join(ch for ch in base if ch >= " " and ch != "\x7f" and unicodedata.category(ch) != "Cf").strip(" .")
-    stem = base.rsplit(".", 1)[0].strip(" .") if "." in base else base
-    ext = EXT[content_type]
-    return f"{(stem or 'tep')[:190]}.{ext}"
+sniff, clean_name = filestore.sniff, filestore.clean_name
 
 
 def ascii_name(name: str) -> str:
@@ -549,6 +499,18 @@ async def file(ctx: Ctx, inp: FileRef) -> dict[str, Any]:
     data = await filestore.read(ctx, f["file_id"])
     return {"filename": f["filename"], "content_type": f["content_type"], "inline": f["content_type"] in IMAGES or f["content_type"] == "application/pdf",
             "data_b64": base64.b64encode(data).decode()}
+
+
+@m.command("keep_on_record", resource="talk", title="Lưu tệp trong trao đổi vào hồ sơ", agent="deny")
+async def keep_on_record(ctx: Ctx, inp: FileRef) -> dict[str, Any]:
+    """Tệp gửi trong trao đổi của một hồ sơ ⇒ thành TỆP CỦA HỒ SƠ đó (ADR 0249) — CÙNG tệp, không chép: Trao đổi cấp quyền lấy tệp cho lõi sau khi
+    người bấm đọc được tin (RLS), lõi giữ thêm một chỗ dùng. Từ đó ai thấy hồ sơ mở được tệp, kể cả khi tin bị thu hồi."""
+    f = await ctx.one("""SELECT a.file_id, t.subject_kind, t.subject_id FROM talk.attachments a JOIN talk.messages msg ON msg.id = a.message_id
+                         JOIN talk.threads t ON t.id = msg.thread_id WHERE a.id = %s""", (inp.attachment_id,))
+    if f is None:
+        raise NotFound("Không thấy tệp (hoặc anh/chị không còn xem được trao đổi này)")
+    grant = await filestore.grant(ctx, f["file_id"], "core")
+    return await ctx.call("core.attach_file", subject_kind=f["subject_kind"], subject_id=f["subject_id"], file_id=f["file_id"], grant=grant)
 
 
 # ── Sửa / thu hồi / cảm xúc / ghim (0115) ──
@@ -919,17 +881,7 @@ async def search_messages(ctx: Ctx, inp: registry.SearchIn) -> list[dict[str, An
 
 FILE_TABS = {"media": "Ảnh", "file": "Tài liệu", "link": "Link", "team": "Tài liệu của đội"}
 FILES_PAGE = 200
-DOC_LABELS = {"application/pdf": "PDF", "application/msword": "Word", OOXML["docx"][0]: "Word", "application/vnd.ms-excel": "Excel",
-              OOXML["xlsx"][0]: "Excel", "application/vnd.ms-powerpoint": "PowerPoint", OOXML["pptx"][0]: "PowerPoint",
-              "text/csv; charset=utf-8": "CSV", "text/plain; charset=utf-8": "TXT"}
-
-
-def _kind_label(content_type: str) -> str:
-    return "Ảnh" if content_type in MEDIA else DOC_LABELS.get(content_type, "Tệp")
-
-
-def _size(n: int) -> str:
-    return f"{n / 1048576:.1f} MB".replace(".", ",") if n >= 1048576 else f"{max(1, n // 1024)} KB"
+_kind_label, _size = filestore.kind_label, filestore.size_text
 
 
 def _at(r: dict[str, Any]) -> str:

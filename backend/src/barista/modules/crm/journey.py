@@ -6,7 +6,22 @@ from uuid import UUID
 
 from psycopg import errors as pg
 
-from barista.api import Conflict, Ctx, Input, NotFound, SubjectRef, extra_fields, field, history, phone_display, today, ui, zone
+from barista.api import (
+    Conflict,
+    Ctx,
+    Event,
+    Input,
+    NotFound,
+    SubjectRef,
+    extra_fields,
+    field,
+    history,
+    phone_display,
+    record_files,
+    today,
+    ui,
+    zone,
+)
 from barista.api.lead_labels import SOURCES
 from barista.modules.crm import ACTIVITY, APPT_KIND, APPT_STATUS, OUTCOMES, STAGES, appointment_times, interest_text, m, reveal
 from barista.modules.crm.identity import _party_of_lead
@@ -218,6 +233,8 @@ async def journey(ctx: Ctx, inp: JourneyIn) -> dict[str, Any]:
     blocks += [b for p in parts for b in p.get("blocks", ())]   # khối riêng của gói cắm vào (vd cuộc gọi tổng đài — 0149)
     if talk := await ctx.call_as_optional("talk.block", ctx.p, subject_kind="crm.lead", subject_id=lead["id"]):   # gói Trao đổi (0046)
         blocks.append(talk)
+    if kept := await record_files.block(ctx, "crm.lead", lead["id"]):   # tệp của hồ sơ khách (ADR 0249)
+        blocks.append(kept)
     if changes := await history.block(ctx, "crm.lead", lead["id"]):   # lịch sử thay đổi theo trường (ADR 0246)
         blocks.append(changes)
     actions = []
@@ -233,6 +250,8 @@ async def journey(ctx: Ctx, inp: JourneyIn) -> dict[str, Any]:
         actions.append(ui.act("crm.add_contact", "Thêm liên hệ", {"lead_id": str(lead["id"])}))
         actions.append(ui.act("crm.record_consent", "Ghi sự đồng ý", {"lead_id": str(lead["id"])}))
         actions += [a for p in parts for a in p.get("actions", ())]
+        # ấn phẩm riêng cho khách này (ADR 0249): lệnh của phân hệ Ấn phẩm — gói đó tắt / người xem không chạy được ⇒ nút tự ẩn (``visible_actions``)
+        actions.append(ui.act("compose.brochure", "Soạn ấn phẩm cho khách", {"lead_id": str(lead["id"])}))
         actions.append(ui.act("crm.set_stage", "Mất khách", {"lead_id": str(lead["id"]), "stage": "lost"}, "destructive"))
     who = " · ".join(x for x in (phone_display(lead["phone"]), lead["offering_code"] or "chưa chọn [[offering|l]]", STAGES[lead["stage"]], lead["owner"]) if x)
     return ui.card(lead["customer"], blocks, subtitle=who, icon="person.crop.circle", actions=actions,
@@ -280,3 +299,18 @@ async def record_consent(ctx: Ctx, inp: ContactConsent) -> dict[str, Any]:
     c = await _party_of_lead(ctx, inp.lead_id)
     await ctx.call_system("parties.record_contact_consent", party_id=c["party_id"], purpose=inp.purpose, granted=inp.granted, source=inp.source, note=inp.note)
     return {"lead_id": inp.lead_id, "summary": f"{c['name']}: {CONSENT_LABEL[inp.purpose].lower()} — {'đồng ý' if inp.granted else 'không đồng ý'}"}
+
+
+@m.on("compose.piece_opened", needs=("compose",))
+async def piece_opened(ctx: Ctx, event: Event) -> None:
+    """Khách mở LẦN ĐẦU link ấn phẩm gửi riêng cho họ (sự kiện của phân hệ Ấn phẩm — ADR 0249) ⇒ báo người phụ trách khách: "khách đã mở". Lượt mở sau không báo
+    (số lượt xem ở mục Chia sẻ của ấn phẩm). Không ghi vào dòng chăm sóc: khách tự mở không phải sale chăm (không làm sai hạn gọi / số chăm sóc)."""
+    p = event.payload
+    if p.get("customer_kind") != "crm.lead" or not p.get("customer_id") or not p.get("first"):
+        return
+    lead = await ctx.one("SELECT l.id, l.owner_id, c.name FROM crm.leads l JOIN crm.customers c ON c.id = l.customer_id WHERE l.id = %s", (p["customer_id"],))
+    if lead is None or lead["owner_id"] is None:
+        return
+    await ctx.notify([lead["owner_id"]], kind="piece_opened", title=f"{lead['name']} đã mở “{str(p.get('title') or 'ấn phẩm')[:120]}”",
+                     body="Khách vừa mở link ấn phẩm anh/chị gửi — lúc này gọi lại là đúng lúc.",
+                     open={"query": "crm.journey", "input": {"lead_id": str(lead["id"])}}, key=f"piece_opened:{p.get('share_id')}")

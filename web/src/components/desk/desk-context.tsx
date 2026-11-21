@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { api, auth, listenSignals, sessionGone } from "@/lib/api";
 import { droppedScreenKeys } from "@/lib/form";
 import { leaveSession } from "@/lib/session";
+import type { OpenRecord } from "@/lib/documents";
 import { decodeInbox, noticeIdsForSubject, talkAvailable, talkItemFor, type Section, type TalkInbox, type TalkItem } from "@/lib/talk";
 import type { ActionSpec, ChatCard, DeskPage, Input, Json, Manifest, Notice, Row, ScreenSpec, SessionInfo } from "@/lib/types";
 import { useCallHub } from "@/components/call/call-provider";
@@ -110,6 +111,12 @@ type DeskValue = {
   ask: (prompt: string) => void;
   shareTarget: { subjectKind: string; subjectId: string; title: string } | null;
   setShareTarget: (t: DeskValue["shareTarget"]) => void;
+  /** Hồ sơ nhận tệp đang mở trên khung (ADR 0249) — khối "Tệp" của thẻ báo lên khi hiện, gỡ khi đóng; tài liệu thả vào chat mặc định gắn vào đây. */
+  openRecord: OpenRecord | null;
+  setOpenRecord: (r: OpenRecord | null, owner?: string) => void;
+  /** Tăng mỗi lần một tệp vừa gắn vào hồ sơ từ ngoài thẻ (thả vào chat) — thẻ đang mở tải lại. */
+  recordFilesRev: number;
+  bumpRecordFiles: () => void;
   confirmed: Record<string, string>;
   setConfirmed: (id: string, message: string) => void;
   proposalEdits: Record<string, Input>;
@@ -161,6 +168,12 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
   const [unread, setUnread] = useState(0);
   const [askPrompt, setAskPrompt] = useState<{ text: string; n: number } | null>(null);
   const [shareTarget, setShareTarget] = useState<DeskValue["shareTarget"]>(null);
+  const [openRecord, setOpenRecordState] = useState<OpenRecord | null>(null);
+  const [recordFilesRev, setRecordFilesRev] = useState(0);
+  // khối gỡ chỉ được gỡ CHÍNH hồ sơ nó báo (thẻ khác vừa mở đã thay thì giữ)
+  const setOpenRecord = useCallback((r: OpenRecord | null, owner?: string) =>
+    setOpenRecordState((cur) => (r ? r : owner && cur && cur.subjectId !== owner ? cur : null)), []);
+  const bumpRecordFiles = useCallback(() => setRecordFilesRev((n) => n + 1), []);
   const [confirmed, setConfirmedMap] = useState<Record<string, string>>({});
   const [proposalEdits, setProposalEdits] = useState<Record<string, Input>>({});
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -489,7 +502,7 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
     narrowShowsCanvas, setNarrowShowsCanvas,
     forms, openForm, closeForm, pages, openPage, closePage, imports, openImport, closeImport,
     toast, show, inboxCount, changes, deskPage, deskFailed, refreshDesk, refreshInbox, notices, unread, refreshNotices, openNotice, markAllNoticesRead,
-    askPrompt, ask, shareTarget, setShareTarget,
+    askPrompt, ask, shareTarget, setShareTarget, openRecord, setOpenRecord, recordFilesRev, bumpRecordFiles,
     confirmed, setConfirmed: (id, message) => setConfirmedMap((c) => ({ ...c, [id]: message })),
     proposalEdits, setProposalEdit: (id, input) => setProposalEdits((p) => ({ ...p, [id]: input })),
     paletteOpen, setPaletteOpen, logout, switchTenant,

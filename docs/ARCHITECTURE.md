@@ -34,7 +34,7 @@ tài liệu riêng của khách (`barista-docs/clients/`).
 | `training` | Đào tạo nội bộ (0061) | khoá học từ tài liệu, câu hỏi, bài giao, điểm | — |
 | `books` | Sổ sách & nghĩa vụ (0063) | thiết lập + dữ kiện khách, kỳ tháng, nghĩa vụ + hạn nộp theo bộ quy định có phiên bản (`regulations/`, 0067), nhật ký nộp (chỉ thêm), yêu cầu chứng từ qua link (0064) | vòng quét `open_due` |
 | `apps` | App tự ghép (nền) | app và dashboard là DỮ LIỆU: trang, khối, tập dữ liệu có chiều / chỉ số; mở bằng quyền người xem (0098, 0100, 0175, 0220) | — |
-| `compose` | Soạn với AI (gói tuỳ chọn, mặc định tắt) | tài liệu soạn từ dữ liệu người soạn được thấy; trang mẫu, tờ giới thiệu, link chia sẻ có đếm lượt xem (0118, 0224) | — |
+| `compose` | Ấn phẩm (gói tuỳ chọn, mặc định tắt) | tờ rơi / tờ giới thiệu / slide / bài đăng gắn một hồ sơ (+ khách), số từ dữ liệu người soạn được thấy; loại quyết mẫu + định dạng; link chia sẻ đếm lượt xem, lượt mở báo về khách (0224, 0231, 0249) | — |
 | `connect` | Ứng dụng kết nối (nền) | app từ xa (OAuth, quyền ≤ một vai), đăng nhập ứng dụng first-party, cửa nhà vận hành (0140, 0205–0207) — hệ ngoài GỌI VÀO Barista | — |
 | `connectors` | Kết nối ngoài (nền) | khung kết nối chung — Barista GỌI RA hệ ngoài: kết nối của công ty, khoá mã hoá, lịch kéo có con trỏ, thử lại từng mục, cửa webhook chung, nhật ký đồng bộ; gói kết nối viết bộ nối + lệnh nhận (0244, runbook 22) | gọi lệnh nhận `<gói>.connector_<bộ nối>` của gói |
 | `findings` | Báo cáo chạy song song | gom phát hiện của các module qua điểm cắm `<module>.findings_report` (0230) | — |

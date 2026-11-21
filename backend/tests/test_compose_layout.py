@@ -136,12 +136,23 @@ def test_data_texts_travel_verbatim_and_feed_the_number_check() -> None:
     assert compose.check.unmatched("Năm 2026", compose.check.values_of(snap), set(), date(2026, 11, 14)) == []
 
 
-def test_marketing_kinds_offer_flyer_and_post_but_keep_old_documents() -> None:
-    """0231: Soạn với AI là ấn phẩm marketing — người chọn tờ rơi / tờ giới thiệu / slide / bài đăng; loại "Văn bản" chỉ còn cho bản cũ + điểm cắm của gói;
-    tờ rơi mới có bố cục riêng (một trang, ưu đãi nổi bật)."""
-    from barista.modules import compose
-    from barista.modules.compose import layout
+def test_one_list_kind_decides_templates_and_formats() -> None:
+    """0231 / ADR 0249 lát 2: MỘT danh sách loại ấn phẩm (``kinds.py``) quyết trang mẫu + định dạng; mọi mẫu nhắc tới đều có thật; AI không chọn mẫu; mẫu không hợp
+    loại (kể cả mẫu gói nêu) về mặc định của loại; ``document`` không còn mời chọn / không còn nhận ở lệnh soạn mới; bộ SLOTS / TEMPLATES lệch của lõi đã bỏ."""
+    import typing
 
-    assert compose.OFFERED == ("flyer", "brochure", "slides", "post") and "document" not in compose.OFFERED and "document" in compose.KINDS
-    assert set(compose.SHAPE) == set(compose.KINDS)                                   # loại nào cũng có lời dặn hình dạng
-    assert layout.DEFAULT_FOR_KIND["flyer"] == "flyer" and layout.TEMPLATES["flyer"]["customer"]
+    from barista.kernel import brochure as kernel_brochure
+    from barista.modules import compose
+    from barista.modules.compose import kinds, layout
+
+    assert kinds.OFFERED == ("flyer", "brochure", "slides", "post") and not kinds.KINDS["document"].offered
+    for k in kinds.KINDS.values():
+        assert k.shape and k.formats and set(k.templates) <= set(layout.TEMPLATES) and set(k.formats) <= set(kinds.FORMATS)
+    assert kinds.template_for("flyer") == "flyer" and kinds.template_for("flyer", "editorial") == "flyer"          # mẫu không hợp loại ⇒ mặc định của loại
+    assert kinds.template_for("brochure") == "editorial" and kinds.template_for("brochure", "proposal") == "proposal"
+    assert kinds.template_for("slides", "brochure") == "" and [t["key"] for t in kinds.templates("flyer")] == ["flyer"]
+    assert kinds.of("lạ") is kinds.KINDS["document"] and layout.TEMPLATES["flyer"]["customer"]
+    assert "template" not in compose.Draft.model_fields                                                            # AI không chọn mẫu: loại chọn
+    assert set(typing.get_args(compose.Start.model_fields["kind"].annotation)) == set(kinds.OFFERED)               # "Văn bản" không còn soạn mới
+    assert not hasattr(kernel_brochure, "SLOTS") and not hasattr(kernel_brochure, "TEMPLATES")
+    assert layout.TEMPLATES["plain"]["label"] != "Văn bản"

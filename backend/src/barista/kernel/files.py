@@ -1,7 +1,7 @@
 """TỆP (quyết định 0122): thân tệp nằm ở KHO ĐỐI TƯỢNG, DB chỉ giữ tham chiếu; quyền kiểm ở DB mỗi lần mở.
 
-* **Một giao diện, nhiều nơi chứa.** Module chỉ gọi ``put`` / ``open`` / ``read`` / ``digest`` / ``signed_url`` / ``release`` / ``grant_copy`` /
-  ``copy`` — không biết SDK, không biết khoá đối tượng. Nơi chứa chọn bằng cấu hình ``BARISTA_FILES_STORE``: ``local`` = thư mục
+* **Một giao diện, nhiều nơi chứa.** Module chỉ gọi ``put`` / ``open`` / ``read`` / ``digest`` / ``signed_url`` / ``release`` / ``grant`` /
+  ``adopt`` / ``copy`` — không biết SDK, không biết khoá đối tượng. Nơi chứa chọn bằng cấu hình ``BARISTA_FILES_STORE``: ``local`` = thư mục
   (``BARISTA_FILES_DIR``; dev, test, bản demo trên một máy); ``r2`` = Cloudflare R2 qua API tương thích S3 (``BARISTA_R2_*``). Nơi chứa khác =
   một lớp ``Store`` mới, không đổi gì ở module.
 * **Một sổ ở lõi** (``core.files``, RLS theo công ty): mỗi đối tượng một dòng — khoá ``t/<công ty>/<uuid ngẫu nhiên>`` (không khoá theo băm: xoá
@@ -9,25 +9,32 @@
   ``ON DELETE CASCADE`` — khoá ngoại là cách kernel biết bảng nào đang dùng tệp (``pg_constraint``) mà không phải biết tên module.
 * **Thứ tự ghi:** đẩy đối tượng lên kho TRƯỚC (băm + đếm cỡ trong lúc đẩy, vượt cỡ thì dừng ngay), rồi mới thêm dòng sổ trong CÙNG giao dịch với
   dòng của module ⇒ không bao giờ có dòng trỏ vào tệp không tồn tại. Giao dịch hỏng ⇒ đối tượng mồ côi, vòng quét xoá sau thời gian chờ (``orphan_age``).
-* **Mở = kiểm hai lớp:** chỉ module đã tạo tệp mở được (``core.files.module = ctx.module``), VÀ phải còn một dòng của chính module đó trỏ vào tệp mà
-  người gọi thấy được dưới RLS — biết ``file_id`` không đủ để mở. Mở luôn băm lại trong lúc đọc; lệch dấu ⇒ ghi lỗi + báo nhà vận hành.
+* **Một tệp, nhiều chỗ dùng** (ADR 0249 sửa 0122): CHỖ DÙNG là một dòng của bảng có ``file_id`` trỏ sổ (bảng module, ``core.record_files`` — tệp của
+  hồ sơ). Một tệp có thể có nhiều chỗ dùng thuộc nhiều module mà KHÔNG chép thân tệp: module đang giữ tệp ``grant`` (sau khi kiểm người xem thấy chỗ dùng
+  của mình), module đích ``adopt`` (giữ cùng tệp) trong cùng giao dịch. Module GIỮ tệp = module đã tạo (``core.files.module``) hoặc đã ``adopt``.
+* **Mở = kiểm hai lớp:** module đang chạy phải GIỮ tệp, VÀ phải còn một chỗ dùng của CHÍNH module đó mà người gọi thấy dưới RLS — biết ``file_id`` hay
+  tự chèn khoá ngoại không đủ để mở. Thấy MỘT chỗ dùng là mở được, qua đúng cửa của chỗ dùng đó (người xem trao đổi mở qua trao đổi, người xem hồ sơ mở
+  qua tệp của hồ sơ). Mở luôn băm lại trong lúc đọc; lệch dấu ⇒ ghi lỗi + báo nhà vận hành.
 * **Thu hồi khác xoá:** ``release`` chỉ đánh dấu (dòng module trỏ tới tệp mất hẳn: thay bản, xoá mục); xoá thật do vòng dọn theo thời hạn lưu của
-  công ty (``core.tenant_profile.file_retention_days``; trống = giữ mãi), không bao giờ khi ``legal_hold``.
-* **Sao giữa module** chỉ qua ``grant_copy`` (module sở hữu, sau khi kiểm quyền người xem) + ``copy`` (module đích, một lần, cùng người, cùng giao
-  dịch): sao đối tượng ở phía kho, không đọc thân tệp qua ứng dụng; bản sao sống độc lập và mang ``copied_from``.
+  công ty (``core.tenant_profile.file_retention_days``; trống = giữ mãi), không bao giờ khi ``legal_hold`` hay còn chỗ dùng nào trỏ tới.
+* **Bản độc lập** (đóng băng, sống riêng) chỉ khi cần: ``grant`` + ``copy`` (module đích, một lần, cùng người, cùng giao dịch) — sao đối tượng ở phía
+  kho, không đọc thân tệp qua ứng dụng; bản sao mang ``copied_from``.
 """
 
 import asyncio
 import base64
 import hashlib
 import hmac
+import io
 import logging
 import os
 import re
 import secrets
 import shutil
 import time
+import unicodedata
 import xml.etree.ElementTree as ET
+import zipfile
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from dataclasses import dataclass
@@ -51,7 +58,7 @@ log = logging.getLogger("barista.files")
 MB = 1024 * 1024
 CHUNK = 64 * 1024
 SIGNED_TTL_MAX = 60   # giây — link ký đi thẳng tới kho, bỏ qua kiểm quyền mỗi lần mở ⇒ rất ngắn, cấp ngay sau khi kiểm
-GRANT_TTL = 60        # giây — quyền sao tệp sang module khác (dự phòng: cấp và dùng nằm trong cùng giao dịch của lệnh)
+GRANT_TTL = 60        # giây — quyền lấy tệp (tham chiếu / sao) sang module khác (dự phòng: cấp và dùng nằm trong cùng giao dịch của lệnh)
 NAME_MAX = 300
 BACKUP_RE = re.compile(r"^backups/[A-Za-z0-9._-]{1,200}$")
 
@@ -83,6 +90,80 @@ ACTIVE = frozenset({"text/html", "application/xhtml+xml", "image/svg+xml", "text
 
 class TooBig(Exception):
     pass
+
+
+# ── Loại tệp NHẬN ĐƯỢC (một nơi quyết cho mọi cửa tải lên của người: trao đổi, tệp của hồ sơ…) ──
+# Theo NỘI DUNG, không tin loại máy khách khai; không HTML / SVG / tệp chạy được.
+OOXML = {"docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "word/"),
+         "xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xl/"),
+         "pptx": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "ppt/")}
+OLE = {"doc": "application/msword", "xls": "application/vnd.ms-excel", "ppt": "application/vnd.ms-powerpoint"}
+ACCEPTED = "ảnh (PNG, JPEG, GIF, WebP, HEIC), PDF, Word, Excel, PowerPoint, TXT, CSV"
+
+
+def sniff(filename: str, data: bytes | bytearray) -> str:
+    """Loại tệp theo NỘI DUNG: chỉ nhận danh sách cố định (``ACCEPTED``). Trả kiểu MIME; loại khác ⇒ ``Invalid``."""
+    visible = "".join(ch for ch in filename if unicodedata.category(ch) != "Cf")
+    ext = visible.rsplit(".", 1)[-1].lower().strip() if "." in visible else ""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[4:8] == b"ftyp" and data[8:12] in (b"heic", b"heix", b"mif1", b"heif"):
+        return "image/heic"
+    if data.startswith(b"%PDF-"):
+        return "application/pdf"
+    if data.startswith(b"PK\x03\x04") and ext in OOXML:
+        try:
+            names = zipfile.ZipFile(io.BytesIO(memoryview(data))).namelist()
+        except zipfile.BadZipFile:
+            names = []
+        if "[Content_Types].xml" in names and any(n.startswith(OOXML[ext][1]) for n in names):
+            return OOXML[ext][0]
+    if data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") and ext in OLE:
+        return OLE[ext]
+    if ext in ("txt", "csv") and b"\x00" not in data:
+        try:
+            data.decode("utf-8")
+            return "text/csv; charset=utf-8" if ext == "csv" else "text/plain; charset=utf-8"
+        except UnicodeDecodeError:
+            pass
+    raise Invalid(f"Không nhận loại tệp này — chỉ nhận {ACCEPTED}")
+
+
+MEDIA = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/heic")
+LABELS = {"application/pdf": "PDF", "application/msword": "Word", OOXML["docx"][0]: "Word", "application/vnd.ms-excel": "Excel",
+          OOXML["xlsx"][0]: "Excel", "application/vnd.ms-powerpoint": "PowerPoint", OOXML["pptx"][0]: "PowerPoint",
+          "text/csv; charset=utf-8": "CSV", "text/plain; charset=utf-8": "TXT"}
+
+
+def kind_label(content_type: str) -> str:
+    """Nhãn loại cho người đọc ("Ảnh", "PDF", "Word"…)."""
+    return "Ảnh" if content_type in MEDIA else LABELS.get(content_type, "Tệp")
+
+
+def size_text(n: int) -> str:
+    return f"{n / 1048576:.1f} MB".replace(".", ",") if n >= 1048576 else f"{max(1, n // 1024)} KB"
+
+
+EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/heic": "heic", "application/pdf": "pdf",
+       **{v[0]: k for k, v in OOXML.items()}, **{v: k for k, v in OLE.items()},
+       "text/csv; charset=utf-8": "csv", "text/plain; charset=utf-8": "txt"}
+
+
+def clean_name(filename: str, content_type: str) -> str:
+    """Tên tệp an toàn, GẮN với loại server nhận diện (review 07/11): bỏ thư mục, ký tự điều khiển và ký tự định dạng vô hình (đảo chiều chữ
+    U+202E, U+2066…, khoảng trắng không độ rộng — Unicode "Cf") vốn làm "ảnh.png" hiện / lưu thành ".html"; đuôi tệp luôn là đuôi của loại
+    đã nhận diện (PNG mang tên ".html" ⇒ ".png")."""
+    base = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    base = "".join(ch for ch in base if ch >= " " and ch != "\x7f" and unicodedata.category(ch) != "Cf").strip(" .")
+    stem = base.rsplit(".", 1)[0].strip(" .") if "." in base else base
+    ext = EXT[content_type]
+    return f"{(stem or 'tep')[:190]}.{ext}"
 
 
 # ── Nơi chứa ──
@@ -515,19 +596,25 @@ async def put(ctx: Ctx, source: Source, filename: str, content_type: str, *, max
     return Stored(fid, digest, size)
 
 
+# Bảng sổ của chính kernel trỏ vào core.files — không phải chỗ dùng (quyền lấy tệp một lần)
+_LEDGER = ("file_copy_grants",)
+
+
 async def _references(conn: Any) -> list[tuple[str, str, str]]:
-    """(schema, bảng, cột) của mọi khoá ngoại MỘT cột trỏ vào ``core.files`` từ bảng module — kernel không biết tên module, hỏi catalog."""
+    """(schema, bảng, cột) của mọi CHỖ DÙNG tệp: khoá ngoại MỘT cột trỏ vào ``core.files`` (bảng module + bảng lõi như ``core.record_files``; trừ sổ quyền
+    lấy tệp của kernel) — kernel không biết tên module, hỏi catalog."""
     cur = await conn.execute(
         """SELECT n.nspname, c.relname, a.attname FROM pg_constraint k
            JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
            JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
-           WHERE k.contype = 'f' AND k.confrelid = 'core.files'::regclass AND cardinality(k.conkey) = 1 AND n.nspname <> 'core'
-           ORDER BY 1, 2, 3""")
+           WHERE k.contype = 'f' AND k.confrelid = 'core.files'::regclass AND cardinality(k.conkey) = 1
+             AND NOT (n.nspname = 'core' AND c.relname = ANY(%s))
+           ORDER BY 1, 2, 3""", (list(_LEDGER),))
     return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in await cur.fetchall()]
 
 
 async def _visible(ctx: Ctx, file_id: UUID) -> bool:
-    """Còn một dòng của CHÍNH module này trỏ vào tệp mà người gọi thấy dưới RLS (thu hồi tin, gỡ quyền, đóng link ⇒ hết thấy ngay)."""
+    """Còn một chỗ dùng của CHÍNH module này trỏ vào tệp mà người gọi thấy dưới RLS (thu hồi tin, gỡ khỏi hồ sơ, gỡ quyền, đóng link ⇒ hết thấy ngay)."""
     for schema, table, col in await _references(ctx.conn):
         if schema != _mod(ctx):
             continue
@@ -537,12 +624,20 @@ async def _visible(ctx: Ctx, file_id: UUID) -> bool:
     return False
 
 
+async def _holds(ctx: Ctx, f: dict[str, Any]) -> bool:
+    """Module đang chạy GIỮ tệp: đã tạo nó, hoặc đã lấy theo tham chiếu (``adopt``) — sổ của kernel, module không tự ghi được."""
+    if f["module"] == _mod(ctx):
+        return True
+    return bool(await ctx.val("SELECT EXISTS (SELECT 1 FROM core.file_copy_grants WHERE file_id = %s AND to_module = %s AND by_reference)",
+                              (f["id"], _mod(ctx))))
+
+
 async def _own_row(ctx: Ctx, file_id: UUID) -> dict[str, Any]:
     f = await ctx.one("SELECT * FROM core.files WHERE id = %s", (file_id,))   # RLS: công ty khác ⇒ không thấy
     if f is None:
         raise NotFound("Không thấy tệp")
-    if f["module"] != _mod(ctx):
-        raise Denied(f"Tệp thuộc phân hệ khác — chỉ sao được qua quyền sao tệp (module {_mod(ctx) or '(không rõ)'})")
+    if not await _holds(ctx, f):
+        raise Denied(f"Tệp thuộc phân hệ khác — chỉ lấy được qua quyền lấy tệp (module {_mod(ctx) or '(không rõ)'})")
     if not await _visible(ctx, file_id):
         raise Denied("Không xem được mục chứa tệp này")
     return f
@@ -638,9 +733,10 @@ async def release(ctx: Ctx, file_id: UUID) -> bool:
                                (file_id, _mod(ctx))))
 
 
-async def grant_copy(ctx: Ctx, file_id: UUID, to_module: str, *, granted_to: UUID | None = None, ttl: int = GRANT_TTL) -> UUID:
-    """Module SỞ HỮU tệp cho phép module ``to_module`` sao MỘT lần, cho ĐÚNG một người (mặc định người đang gọi) — sau khi đã kiểm người đó xem
-    được mục chứa tệp (kernel kiểm lại như ``open``). Dùng ngay trong cùng giao dịch; hạn chỉ là dự phòng."""
+async def grant(ctx: Ctx, file_id: UUID, to_module: str, *, granted_to: UUID | None = None, ttl: int = GRANT_TTL) -> UUID:
+    """Module đang GIỮ tệp cho phép module ``to_module`` lấy tệp MỘT lần, cho ĐÚNG một người (mặc định người đang gọi) — sau khi đã kiểm người đó thấy
+    chỗ dùng của mình (kernel kiểm lại như ``open``). Module đích dùng bằng ``adopt`` (cùng tệp, thêm chỗ dùng) hoặc ``copy`` (bản độc lập). Dùng ngay trong
+    cùng giao dịch; hạn chỉ là dự phòng."""
     if not re.fullmatch(r"[a-z_]+", to_module):
         raise Invalid("Phân hệ đích không hợp lệ")
     await _own_row(ctx, file_id)
@@ -649,16 +745,31 @@ async def grant_copy(ctx: Ctx, file_id: UUID, to_module: str, *, granted_to: UUI
                          (file_id, to_module, granted_to or ctx.p.user_id, ctx.p.user_id, max(1, min(ttl, GRANT_TTL))))
 
 
-async def copy(ctx: Ctx, file_id: UUID, grant: UUID) -> Stored:
-    """Module ĐÍCH dùng quyền sao: đánh dấu đã dùng TRONG CÙNG câu lệnh kiểm (một lần, đúng module, đúng người, còn hạn) ⇒ sao đối tượng ở phía kho
-    (không đọc thân tệp qua ứng dụng) ⇒ dòng sổ mới thuộc module đích, ``copied_from`` = tệp gốc; cỡ / sha256 / loại giữ nguyên (mở vẫn băm lại).
-    Lỗi giữa chừng ⇒ giao dịch hoàn (quyền chưa dùng), đối tượng đã sao thành mồ côi, vòng quét xoá sau thời gian chờ (``orphan_age``)."""
-    used = await ctx.val("""UPDATE core.file_copy_grants SET used_at = now()
+async def _take(ctx: Ctx, file_id: UUID, grant_id: UUID, *, by_reference: bool) -> None:
+    """Dùng quyền lấy tệp: đánh dấu đã dùng TRONG CÙNG câu lệnh kiểm (một lần, đúng module, đúng người, còn hạn)."""
+    used = await ctx.val("""UPDATE core.file_copy_grants SET used_at = now(), by_reference = %s
                             WHERE id = %s AND file_id = %s AND to_module = %s AND granted_to IS NOT DISTINCT FROM %s
                               AND used_at IS NULL AND expires_at > now()
-                            RETURNING id""", (grant, file_id, _mod(ctx), ctx.p.user_id))
+                            RETURNING id""", (by_reference, grant_id, file_id, _mod(ctx), ctx.p.user_id))
     if used is None:
-        raise Denied("Không có quyền sao tệp này (quyền sao sai, đã dùng, hết hạn, hoặc cấp cho phân hệ / người khác)")
+        raise Denied("Không có quyền lấy tệp này (quyền sai, đã dùng, hết hạn, hoặc cấp cho phân hệ / người khác)")
+
+
+async def adopt(ctx: Ctx, file_id: UUID, grant_id: UUID) -> Stored:
+    """Module ĐÍCH giữ CÙNG tệp (không chép thân, không dòng sổ mới) bằng quyền ``grant`` vừa cấp; module thêm chỗ dùng của mình (dòng trỏ ``file_id``)
+    trong CÙNG giao dịch. Từ đó người thấy chỗ dùng đó mở được tệp qua module này, kể cả khi chỗ dùng gốc đã hết (tin thu hồi…)."""
+    await _take(ctx, file_id, grant_id, by_reference=True)
+    src = await ctx.one("SELECT sha256, size_bytes FROM core.files WHERE id = %s", (file_id,))
+    if src is None:
+        raise NotFound("Không thấy tệp")
+    return Stored(file_id, src["sha256"], src["size_bytes"])
+
+
+async def copy(ctx: Ctx, file_id: UUID, grant_id: UUID) -> Stored:
+    """Module ĐÍCH lấy BẢN ĐỘC LẬP bằng quyền ``grant`` ⇒ sao đối tượng ở phía kho (không đọc thân tệp qua ứng dụng) ⇒ dòng sổ mới thuộc module đích,
+    ``copied_from`` = tệp gốc; cỡ / sha256 / loại giữ nguyên (mở vẫn băm lại). Chỉ khi cần bản sống riêng (đóng băng) — dùng chung thì ``adopt``.
+    Lỗi giữa chừng ⇒ giao dịch hoàn (quyền chưa dùng), đối tượng đã sao thành mồ côi, vòng quét xoá sau thời gian chờ (``orphan_age``)."""
+    await _take(ctx, file_id, grant_id, by_reference=False)
     src = await ctx.one("SELECT * FROM core.files WHERE id = %s", (file_id,))
     if src is None:
         raise NotFound("Không thấy tệp")
@@ -667,7 +778,7 @@ async def copy(ctx: Ctx, file_id: UUID, grant: UUID) -> Stored:
     fid = await ctx.val("""INSERT INTO core.files (object_key, filename, content_type, size_bytes, sha256, module, created_by, copied_from)
                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
                         (key, src["filename"], src["content_type"], src["size_bytes"], src["sha256"], _mod(ctx), ctx.p.user_id, file_id))
-    await ctx.exec("UPDATE core.file_copy_grants SET copy_id = %s WHERE id = %s", (fid, grant))
+    await ctx.exec("UPDATE core.file_copy_grants SET copy_id = %s WHERE id = %s", (fid, grant_id))
     return Stored(fid, src["sha256"], src["size_bytes"])
 
 

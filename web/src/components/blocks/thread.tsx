@@ -336,11 +336,25 @@ function CardRef({ m, open, act }: { m: ThreadMsg; open: (q: string, input: Inpu
 
 /** Tệp trong tin: ảnh hiện ngay (bấm mở cỡ thật), loại khác là thẻ tên + cỡ, bấm tải. Đường tải qua BFF — server kiểm quyền mỗi lần. */
 function Files({ m, mine }: { m: ThreadMsg; mine: boolean }) {
+  const desk = useDesk();
   if (!m.attachments.length) return null;
+  /** "Lưu vào hồ sơ" (ADR 0249): CÙNG tệp thành tệp của hồ sơ của luồng — lệnh do server mô tả, người bấm. */
+  const keep = async (a: ActionSpec) => {
+    try {
+      const r = await api.command(a.command, a.preset, newKey());
+      if (r.status === "ok") {
+        desk.show(String((r.output as { summary?: string } | null)?.summary ?? "Đã lưu vào hồ sơ"));
+        desk.bumpRecordFiles();
+      } else desk.show(r.error || "Không lưu được vào hồ sơ", true);
+    } catch (e) {
+      desk.show(e instanceof Error ? e.message : "Không lưu được vào hồ sơ", true);
+    }
+  };
   return (
     <div className={cn("mt-1 flex flex-col gap-1", mine ? "items-end" : "items-start")}>
-      {m.attachments.map((f) =>
-        f.is_image ? (
+      {m.attachments.map((f) => (
+        <div key={f.id} className={cn("flex flex-col gap-0.5", mine ? "items-end" : "items-start")}>
+        {f.is_image ? (
           <a key={f.id} href={talkFileUrl(f.id)} target="_blank" rel="noreferrer" title={`${f.filename} · ${fileSize(f.size_bytes)}`}>
             {/* eslint-disable-next-line @next/next/no-img-element -- ảnh qua BFF có cookie, không qua bộ tối ưu ảnh */}
             <img src={talkFileUrl(f.id)} alt={f.filename} className="max-h-60 max-w-[280px] rounded-xl border border-border object-cover" loading="lazy" />
@@ -353,8 +367,12 @@ function Files({ m, mine }: { m: ThreadMsg; mine: boolean }) {
               <span className="t12 text-muted-foreground">{fileSize(f.size_bytes)}</span>
             </span>
           </a>
-        ),
-      )}
+        )}
+        {f.keep ? (
+          <button type="button" className="t12 text-primary hover:underline" onClick={() => void keep(f.keep!)}>{f.keep.title}</button>
+        ) : null}
+        </div>
+      ))}
     </div>
   );
 }

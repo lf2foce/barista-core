@@ -11,7 +11,7 @@ import { newKey } from "@/lib/idempotency";
 import { applyComposeEvent, liveTurn, retryTarget, splitPlaceholders, type LiveStep, type LiveTurn } from "@/lib/composer";
 import { datetime } from "@/lib/format";
 import { documentFileUrl } from "@/lib/links";
-import type { ComposerData, ComposerItem, ComposerSection, ComposerTurn, Input } from "@/lib/types";
+import type { ComposerData, ComposerItem, ComposerSection, ComposerTurn, Input, Option } from "@/lib/types";
 import { actionClass } from "@/components/primitives";
 import { useDesk } from "@/components/desk/desk-context";
 import { useFrameActions } from "@/components/desk/frame-context";
@@ -27,7 +27,7 @@ const ORIGIN: Record<string, string> = { ai: "AI viết", human: "Người sửa
 const VIA: Record<string, string> = { ai: "AI", agent: "Trợ lý", human: "Bạn" };
 /** Bấm "Tiếp tục" trên bản dở: một lượt sửa cả bản như người dùng tự gõ (ghi vào lịch sử trò chuyện). */
 const CONTINUE = "Tiếp tục: làm nốt phần còn thiếu, dùng số liệu đã lấy được.";
-// 0231: Soạn với AI là ẤN PHẨM MARKETING (tờ rơi, tờ giới thiệu, slide, bài đăng). Công văn / hợp đồng ⇒ "Văn bản & tài liệu"; báo cáo số nội bộ ⇒ hỏi trợ lý.
+// 0231 / 0249: ẤN PHẨM MARKETING (tờ rơi, tờ giới thiệu, slide, bài đăng). Công văn / hợp đồng ⇒ phân hệ Giấy tờ; báo cáo số nội bộ ⇒ hỏi trợ lý.
 const EXAMPLES = [
   "Tờ rơi ưu đãi tháng này cho sản phẩm bán chạy nhất",
   "Tờ giới thiệu sản phẩm đang bán, kèm bảng giá",
@@ -61,7 +61,7 @@ async function loadComposer(query: string, sid: string): Promise<ComposerData | 
 }
 
 /**
- * Soạn với AI (thử nghiệm) — như một cuộc trò chuyện: trái = lịch sử bản soạn + trò chuyện (gõ yêu cầu, AI báo từng bước, lỗi nói rõ kèm
+ * Ấn phẩm (thử nghiệm; khối server tên kỹ thuật `composer`) — như một cuộc trò chuyện: trái = lịch sử bản soạn + trò chuyện (gõ yêu cầu, AI báo từng bước, lỗi nói rõ kèm
  * "Thử lại"), phải = bản soạn (khối hiện dần khi AI lấy được số liệu; sửa từng khối, xuất tệp). Mọi lượt AI đi qua luồng `/v1/compose/stream`
  * (cùng cửa lệnh `compose.begin` / `compose.revise_begin`); các thao tác khác là lệnh server. Web không tự tính số.
  */
@@ -109,7 +109,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
       const next = await loadComposer(viewQuery, sid);
       if (next) setDoc(next);
     } catch (e) {
-      desk.show(e instanceof Error ? e.message : "Không tải được bản soạn", true);
+      desk.show(e instanceof Error ? e.message : "Không tải được ấn phẩm", true);
     }
   }, [viewQuery, desk]);
 
@@ -223,7 +223,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
   function fresh() {
     if (live) return;
     setLocal(null);
-    setDoc({ ...doc, session_id: "", title: "Bản soạn mới", brief: "", version: 0, status: "new", status_label: "", error: "", blocks: [],
+    setDoc({ ...doc, session_id: "", title: "Ấn phẩm mới", brief: "", version: 0, status: "new", status_label: "", error: "", blocks: [],
              stats: { flagged: 0, placeholders: 0, data: 0 }, layout: { ...doc.layout, template: "", sections: [] }, shares: [], versions: [], exports: [], turns: [] });
   }
 
@@ -238,7 +238,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
   // "Tài liệu đã soạn" thuộc phần CHÍNH (khung bản soạn); chưa mở bản soạn nào ⇒ nằm ở màn bắt đầu của trò chuyện. Đầu ngăn trò chuyện chỉ có những gì
   // đầu ngăn Trợ lý có.
   const docs = <HistoryMenu doc={doc} disabled={!!live} onOpen={open} onNew={fresh} onDelete={remove} />;
-  const title = live?.blocks ? live.title || doc.title : doc.session_id ? doc.title : "Bản soạn mới";
+  const title = live?.blocks ? live.title || doc.title : doc.session_id ? doc.title : "Ấn phẩm mới";
   const frameActions = useFrameActions();   // trong thẻ của khung làm việc: nút của khung (tải lại · phóng to · ghim · đóng) — thẻ không vẽ đầu riêng (0231)
   return (
     // Y NHƯ màn Trợ lý: bên trái ngăn trò chuyện (đầu ngăn PANE_HEADER, hội thoại trên nền trang, thanh nhập ở đáy); bên phải KHUNG LÀM VIỆC chứa bản soạn,
@@ -252,7 +252,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
           {full ? <RailToggle /> : null}
           <Orb busy={!!live} size={36} />
           <div className="min-w-0 flex-1">
-            <h1 className="t16 truncate">Soạn với AI</h1>
+            <h1 className="t16 truncate">Ấn phẩm</h1>
             <p className="t12 flex items-center gap-1.5 text-muted-foreground">
               <span className={cn("size-[7px] shrink-0 rounded-full", live ? "bg-primary" : "bg-ok")} />
               <span className="truncate">{live ? "đang soạn…" : doc.session_id ? title : "Thử nghiệm · số liệu đúng quyền của bạn"}</span>
@@ -260,24 +260,25 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
           </div>
           <HeaderGroup>
           {hasDraft && !draftOpen ? (
-            <button type="button" className={pillBtn} onClick={() => setDraftOpen(true)} aria-label="Mở bản soạn" title="Mở bản soạn">
+            <button type="button" className={pillBtn} onClick={() => setDraftOpen(true)} aria-label="Mở ấn phẩm" title="Mở ấn phẩm">
               <FileText className="size-4" />
             </button>
           ) : null}
-          <button type="button" className={pillBtn} onClick={fresh} disabled={!!live} aria-label="Bản soạn mới" title="Bản soạn mới">
+          <button type="button" className={pillBtn} onClick={fresh} disabled={!!live} aria-label="Ấn phẩm mới" title="Ấn phẩm mới">
             <MessageSquarePlus className="size-4" />
           </button>
           </HeaderGroup>
           {frameActions}
         </header>
         <Conversation doc={doc} live={live} local={local} docs={docs} onRetry={(t, retry) => void send(t.text, { block: t.block, mode: t.mode, retry })}
-                      onExample={(t) => void send(t)} onContinue={() => void send(CONTINUE)} />
+                      onExample={(t) => void send(t)} onContinue={() => void send(CONTINUE)}
+                      fromRecord={<FromRecord doc={doc} kind={kind} disabled={!!live} onBuilt={(sid) => void reload(sid)} />} />
         <ChatInput doc={doc} hasDraft={hasDraft} kind={kind} setKind={setKind} running={!!live} stopping={stopping} canStop={!!live?.sessionId}
                    onSend={(t) => void send(t)} onStop={() => void stop()} />
         {hasDraft ? (
           <button type="button" onClick={() => { setView("draft"); setDraftOpen(true); }}
                   className="t14m absolute right-4 bottom-[76px] z-10 inline-flex items-center gap-2 rounded-full bg-primary px-3.5 py-2.5 text-white shadow-lg @3xl:hidden">
-            <Layers className="size-4" aria-hidden /> Bản soạn
+            <Layers className="size-4" aria-hidden /> Ấn phẩm
           </button>
         ) : null}
       </section>
@@ -285,7 +286,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
       {hasDraft ? (
         <>
           {panes ? (
-            <div role="separator" aria-orientation="vertical" aria-label="Kéo để đổi bề ngang bản soạn (hoặc dùng phím mũi tên trái / phải)" tabIndex={0}
+            <div role="separator" aria-orientation="vertical" aria-label="Kéo để đổi bề ngang ấn phẩm (hoặc dùng phím mũi tên trái / phải)" tabIndex={0}
                  aria-valuemin={30} aria-valuemax={75} aria-valuenow={Math.round(pct)}
                  onPointerDown={(e) => e.currentTarget.setPointerCapture(e.pointerId)} onPointerMove={drag}
                  onKeyDown={(e) => {
@@ -299,7 +300,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
             </div>
           ) : null}
           <section className={cn("min-h-0 min-w-0 flex-1 flex-col bg-canvas", view === "draft" ? "flex" : "hidden", panes ? "@3xl:flex" : "@3xl:hidden")}
-                   aria-label="Khung làm việc — bản soạn">
+                   aria-label="Khung làm việc — ấn phẩm">
             <header className={cn(PANE_HEADER, "px-3 @3xl:px-6")}>
               <button type="button" onClick={() => setView("chat")} aria-label="Về trò chuyện" title="Về trò chuyện"
                       className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-surface hover:bg-accent @3xl:hidden">
@@ -312,7 +313,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
                 </p>
               </div>
               {docs}
-              <button type="button" onClick={() => { setDraftOpen(false); setView("chat"); }} aria-label="Đóng bản soạn" title="Đóng bản soạn (chỉ ẩn ngăn — bản vẫn được lưu)"
+              <button type="button" onClick={() => { setDraftOpen(false); setView("chat"); }} aria-label="Đóng ấn phẩm" title="Đóng ấn phẩm (chỉ ẩn ngăn — bản vẫn được lưu)"
                       className="hidden size-8 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring @3xl:grid">
                 <X className="size-4" />
               </button>
@@ -332,7 +333,11 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
                                const out = await act(c.share, { session_id: doc.session_id, recipient, days }, "Đang tạo link…");
                                return out && typeof out.url === "string" ? out.url : null;
                              }}
-                             onUnshare={(id) => void act(c.unshare, { share_id: id }, "Đang thu hồi link…")} />
+                             onUnshare={(id) => void act(c.unshare, { share_id: id }, "Đang thu hồi link…")}
+                             onDuplicate={async (leadId) => {
+                               const out = await run(c.duplicate, { session_id: doc.session_id, lead_id: leadId }, "Đang làm bản cho khách…");
+                               if (out && typeof out.session_id === "string") await reload(out.session_id);
+                             }} />
             </div>
           </section>
         </>
@@ -425,7 +430,7 @@ function SharePanel({ doc, locked, onShare, onUnshare }: {
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-hairline bg-surface p-3" aria-label="Chia sẻ qua link">
       <p className="t12 text-muted-foreground">
-        Khách mở link xem trang web của bản này, không cần đăng nhập. Trang là ảnh chụp lúc bấm “Tạo link”: sửa bản soạn sau đó không đổi trang đã gửi.
+        Khách mở link xem trang web của bản này, không cần đăng nhập. Trang là ảnh chụp lúc bấm “Tạo link”: sửa ấn phẩm sau đó không đổi trang đã gửi.
       </p>
       <div className="flex flex-wrap items-end gap-2">
         <label className="t12 flex min-w-[10rem] flex-1 flex-col gap-1">Gửi cho (để bạn nhớ)
@@ -483,17 +488,17 @@ function HistoryMenu({ doc, disabled, onOpen, onNew, onDelete }: {
   const [confirm, setConfirm] = useState<string | null>(null);
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setConfirm(null); }}>
-      <PopoverTrigger className={cn(actionClass("default"), "h-8 shrink-0 px-2.5")} aria-label="Tài liệu đã soạn" title="Tài liệu đã soạn">
+      <PopoverTrigger className={cn(actionClass("default"), "h-8 shrink-0 px-2.5")} aria-label="Ấn phẩm đã làm" title="Ấn phẩm đã làm">
         <History className="size-4" aria-hidden />
-        <span className="@max-md:sr-only">Tài liệu đã soạn</span>
+        <span className="@max-md:sr-only">Ấn phẩm đã làm</span>
         {doc.history.length ? <span className="t12m rounded-full bg-primary/12 px-1.5 text-primary">{doc.history.length}</span> : null}
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[min(22rem,calc(100vw-1.5rem))] gap-1.5 p-2">
         <button type="button" onClick={() => { setOpen(false); onNew(); }} disabled={disabled} className={cn(actionClass("primary"), "h-9 w-full justify-start")}>
-          <MessageSquarePlus className="size-4" aria-hidden /> Bản soạn mới
+          <MessageSquarePlus className="size-4" aria-hidden /> Ấn phẩm mới
         </button>
-        <ul className="flex max-h-[min(60vh,420px)] flex-col gap-0.5 overflow-y-auto" aria-label="Tài liệu đã soạn">
-          {doc.history.length ? null : <li className="t12 px-2 py-2 text-muted-foreground">Chưa có bản soạn nào.</li>}
+        <ul className="flex max-h-[min(60vh,420px)] flex-col gap-0.5 overflow-y-auto" aria-label="Ấn phẩm đã làm">
+          {doc.history.length ? null : <li className="t12 px-2 py-2 text-muted-foreground">Chưa có ấn phẩm nào.</li>}
           {doc.history.map((h) => {
             const current = h.id === doc.session_id;
             return (
@@ -513,7 +518,7 @@ function HistoryMenu({ doc, disabled, onOpen, onNew, onDelete }: {
                     <button type="button" onClick={() => setConfirm(null)} className="t12m h-6 rounded-md px-1.5 text-muted-foreground hover:bg-accent">Thôi</button>
                   </span>
                 ) : (
-                  <button type="button" onClick={() => setConfirm(h.id)} disabled={disabled} aria-label={`Xoá bản soạn ${h.title}`} title="Xoá bản soạn"
+                  <button type="button" onClick={() => setConfirm(h.id)} disabled={disabled} aria-label={`Xoá ấn phẩm ${h.title}`} title="Xoá ấn phẩm"
                           className="mt-1.5 mr-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-bad/10 hover:text-bad focus-visible:ring-2 focus-visible:ring-ring">
                     <Trash2 className="size-3.5" aria-hidden />
                   </button>
@@ -529,9 +534,104 @@ function HistoryMenu({ doc, disabled, onOpen, onNew, onDelete }: {
 
 // ── Trò chuyện ──
 
-function Conversation({ doc, live, local, docs, onRetry, onExample, onContinue }: {
+const SELECT = "t14 h-9 w-full rounded-lg border border-border bg-surface px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60";
+
+/**
+ * Làm ấn phẩm TỪ HỒ SƠ (ADR 0249): chọn công thức (theo loại đang chọn) → chọn hồ sơ trong danh sách server trả theo quyền → khách (tuỳ chọn) → "Thêm ý" (tuỳ chọn).
+ * Số lấy từ hồ sơ, AI chỉ viết chữ. Danh sách / lệnh đều do server nêu (`commands.recipe` · `subjects` · `customers`) — web chỉ vẽ ô chọn.
+ */
+function FromRecord({ doc, kind, disabled, onBuilt }: { doc: ComposerData; kind: string; disabled: boolean; onBuilt: (sessionId: string) => void }) {
+  const desk = useDesk();
+  const c = doc.commands;
+  const recipes = doc.recipes.filter((r) => r.piece === kind);
+  const [picked, setPicked] = useState("");
+  const recipe = recipes.find((r) => r.key === picked) ?? recipes[0];
+  const [subject, setSubject] = useState("");
+  const [customer, setCustomer] = useState("");
+  const [extra, setExtra] = useState("");
+  const [subjects, setSubjects] = useState<Option[] | null>(null);
+  const [customers, setCustomers] = useState<Option[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const key = recipe?.key ?? "";
+  const needs = !!recipe?.needs_subject;
+  const takesCustomer = !!recipe?.customer;
+  const [seenKey, setSeenKey] = useState(key);
+  if (seenKey !== key) {   // đổi công thức (hoặc đổi loại ở hàng chip) ⇒ hồ sơ đã chọn không còn hợp
+    setSeenKey(key);
+    setSubject("");
+    setSubjects(null);
+  }
+  useEffect(() => {
+    if (!key || !needs || !c.subjects) return;
+    let live = true;
+    api.options(c.subjects, { kind: key }).then((o) => { if (live) setSubjects(o); }, () => { if (live) setSubjects([]); });
+    return () => { live = false; };
+  }, [key, needs, c.subjects]);
+  useEffect(() => {
+    if (!takesCustomer || !c.customers || customers) return;
+    api.options(c.customers).then(setCustomers, () => setCustomers([]));
+  }, [takesCustomer, c.customers, customers]);
+  if (!recipe || !c.recipe) return null;
+  const ready = !needs || !!subject;
+  async function build() {
+    if (!recipe || !c.recipe || !ready) return;
+    setBusy(true);
+    try {
+      const r = await api.command(c.recipe, { kind: recipe.key, subject, ...(customer ? { lead_id: customer } : {}), ...(extra.trim() ? { extra: extra.trim() } : {}) }, newKey());
+      const out = r.output as { session_id?: string } | null;
+      if (r.status !== "ok" || !out?.session_id) desk.show(r.error || `Không dựng được (${r.status})`, true);
+      else onBuilt(String(out.session_id));
+    } catch (e) {
+      desk.show(e instanceof Error ? e.message : "Không dựng được", true);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="flex flex-col gap-2 rounded-[18px] border border-hairline bg-surface p-3" aria-label="Làm từ hồ sơ">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="t14m">Làm từ hồ sơ</h3>
+        <span className="t12 text-muted-foreground">số lấy từ hồ sơ, AI chỉ viết chữ</span>
+      </div>
+      {recipes.length > 1 ? (
+        <label className="t12 flex flex-col gap-1">Công thức
+          <select value={recipe.key} disabled={disabled || busy} className={SELECT}
+                  onChange={(e) => setPicked(e.target.value)}>
+            {recipes.map((r) => <option key={r.key} value={r.key} title={r.about}>{r.label}</option>)}
+          </select>
+        </label>
+      ) : <p className="t14">{recipe.label}{recipe.about ? <span className="t12 text-muted-foreground"> · {recipe.about}</span> : null}</p>}
+      {needs ? (
+        <label className="t12 flex flex-col gap-1">Hồ sơ
+          <select value={subject} disabled={disabled || busy || subjects === null} onChange={(e) => setSubject(e.target.value)} className={SELECT}>
+            <option value="">{subjects === null ? "Đang tải…" : subjects.length ? "Chọn hồ sơ" : "Chưa có hồ sơ nào bạn được xem"}</option>
+            {(subjects ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+      ) : null}
+      {takesCustomer ? (
+        <label className="t12 flex flex-col gap-1">Cho khách (không bắt buộc)
+          <select value={customer} disabled={disabled || busy} onChange={(e) => setCustomer(e.target.value)} className={SELECT}>
+            <option value="">Không riêng khách nào</option>
+            {(customers ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+      ) : null}
+      <label className="t12 flex flex-col gap-1">Thêm ý (không bắt buộc)
+        <input value={extra} maxLength={1000} disabled={disabled || busy} onChange={(e) => setExtra(e.target.value)} placeholder="Vd: nhấn mạnh ưu đãi tháng này"
+               className="t14 h-9 rounded-lg border border-border bg-surface px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+      </label>
+      <button type="button" disabled={disabled || busy || !ready} onClick={() => void build()} className={cn(actionClass("primary"), "h-9 self-start")}>
+        <Sparkles className="size-4" aria-hidden /> {busy ? "Đang dựng…" : "Dựng ấn phẩm"}
+      </button>
+    </section>
+  );
+}
+
+function Conversation({ doc, live, local, docs, onRetry, onExample, onContinue, fromRecord }: {
   doc: ComposerData; live: LiveTurn | null; local: { user: LiveTurn; error: string } | null; docs: React.ReactNode;
   onRetry: (t: { text: string; block: string; mode: string }, retry: boolean) => void; onExample: (text: string) => void; onContinue: () => void;
+  fromRecord: React.ReactNode;
 }) {
   const end = useRef<HTMLDivElement>(null);
   const retry = retryTarget(doc.turns);
@@ -549,10 +649,11 @@ function Conversation({ doc, live, local, docs, onRetry, onExample, onContinue }
                 {doc.history.length ? docs : null}
               </div>
               <p className="t14 text-muted-foreground">
-                Tờ rơi, tờ giới thiệu, slide hay bài đăng — nói ngắn gọn cần gì. Em lấy số liệu thật bằng quyền của anh/chị rồi dựng — bản soạn mở bên cạnh. Công văn, hợp đồng: dùng phân hệ Văn bản & tài liệu.
+                Tờ rơi, tờ giới thiệu, slide hay bài đăng. Chọn hồ sơ để làm từ dữ liệu thật — hoặc nói ngắn gọn cần gì. Ấn phẩm mở bên cạnh. Công văn, hợp đồng: dùng phân hệ Giấy tờ.
               </p>
+              {fromRecord}
               <div className="flex flex-col gap-2">
-                <p className="t12m text-muted-foreground">Hoặc chọn nhanh</p>
+                <p className="t12m text-muted-foreground">Hoặc nói AI cần gì</p>
                 {EXAMPLES.map((e) => (
                   <button key={e} type="button" onClick={() => onExample(e)}
                           className="t14 flex items-center justify-between gap-2 rounded-[18px] bg-incoming px-3.5 py-2.5 text-left outline-none hover:brightness-95 focus-visible:ring-2 focus-visible:ring-ring">
@@ -722,7 +823,7 @@ function ChatInput({ doc, hasDraft, kind, setKind, running, stopping, canStop, o
     <div className="flex flex-col gap-1.5 px-3 pt-1 pb-3">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5">
         {fresh && !running ? (
-          <div className="no-scrollbar flex gap-1.5 overflow-x-auto" role="radiogroup" aria-label="Loại bản soạn">
+          <div className="no-scrollbar flex gap-1.5 overflow-x-auto" role="radiogroup" aria-label="Loại ấn phẩm">
             {doc.kinds.map((k) => (
               <button key={k.key} type="button" role="radio" aria-checked={kind === k.key} onClick={() => setKind(k.key)}
                       className={cn("t12 shrink-0 rounded-full border px-2.5 py-1.5 whitespace-nowrap", kind === k.key ? "border-primary bg-primary text-white" : "border-border bg-surface hover:bg-accent")}>
@@ -739,7 +840,7 @@ function ChatInput({ doc, hasDraft, kind, setKind, running, stopping, canStop, o
                           submit();
                         }
                       }}
-                      placeholder={hasDraft ? "Sửa bản soạn…" : "Mô tả ấn phẩm cần làm…"}   // ngắn như "Hỏi trợ lý…"; ví dụ dài nằm ở gợi ý màn bắt đầu
+                      placeholder={hasDraft ? "Sửa ấn phẩm…" : "Mô tả ấn phẩm cần làm…"}   // ngắn như "Hỏi trợ lý…"; ví dụ dài nằm ở gợi ý màn bắt đầu
                       aria-label={fresh ? "Cần soạn gì" : "Muốn sửa gì"}
                       className={COMPOSER_TEXT} />
             {/* đọc chính tả như ô nhập của trợ lý: chữ chèn vào ô, người xem / sửa rồi tự gửi */}
@@ -753,12 +854,12 @@ function ChatInput({ doc, hasDraft, kind, setKind, running, stopping, canStop, o
 
 // ── Bản soạn ──
 
-function DocumentPanel({ doc, live, busy, onRevise, onEdit, onRemove, onRefresh, onRestore, onExport, onDownload, onLayout, onSlot, onCover, onShare, onUnshare }: {
+function DocumentPanel({ doc, live, busy, onRevise, onEdit, onRemove, onRefresh, onRestore, onExport, onDownload, onLayout, onSlot, onCover, onShare, onUnshare, onDuplicate }: {
   doc: ComposerData; live: LiveTurn | null; busy: string | null;
   onRevise: (block: string, instruction: string, mode: "rewrite" | "insert_after") => void; onEdit: (block: string, text: string) => void;
   onRemove: (block: string) => void; onRefresh: () => void; onRestore: (version: number) => void; onExport: (format: string) => void;
   onDownload: (id: string) => void; onLayout: (template: string) => void; onSlot: (block: string, slot: string) => void; onCover: (block: string) => void;
-  onShare: (recipient: string, days: number) => Promise<string | null>; onUnshare: (id: string) => void;
+  onShare: (recipient: string, days: number) => Promise<string | null>; onUnshare: (id: string) => void; onDuplicate: (leadId: string) => Promise<void>;
 }) {
   const [showVersions, setShowVersions] = useState(false);
   const [showShare, setShowShare] = useState(false);
@@ -768,16 +869,16 @@ function DocumentPanel({ doc, live, busy, onRevise, onEdit, onRemove, onRefresh,
   // đang soạn: bảng vừa lấy hiện trước (bản cũ — nếu có — vẫn thấy tới khi bản mới về)
   const blocks = live?.blocks ?? doc.blocks;
   const ready = doc.blocks.length > 0 && !live?.blocks;
-  const title = live?.blocks ? live.title || doc.title : doc.session_id ? doc.title : "Bản soạn mới";
+  const title = live?.blocks ? live.title || doc.title : doc.session_id ? doc.title : "Ấn phẩm mới";
   return (
     // như thẻ lớn của khung làm việc (CardFrame): mặt thẻ bo 20, viền mảnh; thanh xuất tệp ở đầu thẻ
-    <article className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto rounded-[20px] border border-border bg-surface p-3.5 @3xl:p-[18px]" aria-label="Bản soạn">
+    <article className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto rounded-[20px] border border-border bg-surface p-3.5 @3xl:p-[18px]" aria-label="Ấn phẩm">
       {ready ? (
         <div className="flex flex-wrap items-center gap-2">
-          {doc.formats.map((f) => (
+          {doc.formats.map((f, i) => (   // định dạng hợp loại ấn phẩm (server quyết); đầu = định dạng chính
             <button key={f.key} type="button" disabled={locked || doc.stats.flagged > 0} onClick={() => onExport(f.key)}
                     title={doc.stats.flagged ? "Còn khối có số không khớp số liệu — sửa hoặc xoá trước khi xuất" : `Xuất ${f.label}`}
-                    className={cn(actionClass(f.key === "docx" ? "primary" : "default"), "h-8")}>
+                    className={cn(actionClass(i === 0 ? "primary" : "default"), "h-8")}>
               <FileDown className="size-3.5" aria-hidden /> {f.label}
             </button>
           ))}
@@ -790,9 +891,9 @@ function DocumentPanel({ doc, live, busy, onRevise, onEdit, onRemove, onRefresh,
           {doc.layout.templates.length ? (
             <label className="t12 flex items-center gap-1.5 text-muted-foreground">
               Trang mẫu
-              <select value={doc.layout.template} disabled={locked} onChange={(e) => onLayout(e.target.value)} aria-label="Trang mẫu của bản soạn"
+              <select value={doc.layout.template} disabled={locked} onChange={(e) => onLayout(e.target.value)} aria-label="Trang mẫu của ấn phẩm"
                       className="t12 h-8 rounded-lg border border-border bg-surface px-2 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                <option value="">Bố cục cũ</option>
+                {doc.layout.template ? null : <option value="">Bố cục cũ</option>}
                 {doc.layout.templates.map((t) => <option key={t.key} value={t.key} title={t.about}>{t.label}</option>)}
               </select>
             </label>
@@ -801,6 +902,7 @@ function DocumentPanel({ doc, live, busy, onRevise, onEdit, onRemove, onRefresh,
                   title="Gửi khách một link xem trang web của bản này (có hạn, thu hồi được, đếm lượt xem)">
             <Link2 className="size-3.5" aria-hidden /> Chia sẻ{doc.shares.some((x) => x.active) ? ` · ${doc.shares.filter((x) => x.active).length}` : ""}
           </button>
+          {doc.commands.duplicate && doc.commands.customers ? <DuplicateMenu doc={doc} locked={locked} onDuplicate={onDuplicate} /> : null}
           {busy ? <span className="t12 flex items-center gap-1.5 text-muted-foreground" role="status">
             <span className="block size-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" aria-hidden />{busy}</span> : null}
         </div>
@@ -811,7 +913,14 @@ function DocumentPanel({ doc, live, busy, onRevise, onEdit, onRemove, onRefresh,
       <div className="flex min-w-0 flex-1 flex-col gap-1 [--brand-ink:var(--brand)] dark:[--brand-ink:color-mix(in_oklab,var(--brand)_45%,white)]"
            style={{ fontFamily: doc.brand.font, "--brand": `#${doc.brand.color}` } as React.CSSProperties}>
         <div className="mb-2 flex items-start gap-3 border-b-4 pb-3" style={{ borderColor: color }}>
-          <h2 className="t20 min-w-0 flex-1" style={{ color }}>{title}</h2>
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <h2 className="t20" style={{ color }}>{title}</h2>
+            {doc.subject.label || doc.customer.label ? (
+              <p className="t12 text-muted-foreground">
+                {doc.subject.label ? `Về: ${doc.subject.label}` : ""}{doc.subject.label && doc.customer.label ? " · " : ""}{doc.customer.label ? `Cho: ${doc.customer.label}` : ""}
+              </p>
+            ) : null}
+          </div>
           {doc.brand.logo ? (
             // eslint-disable-next-line @next/next/no-img-element -- logo nhỏ server gửi dạng data URL
             <img src={doc.brand.logo} alt="Logo công ty" className="h-10 w-auto shrink-0" />
@@ -835,7 +944,7 @@ function DocumentPanel({ doc, live, busy, onRevise, onEdit, onRemove, onRefresh,
         {!live && !blocks.length ? (
           <div className="grid place-items-center rounded-xl border border-dashed border-border px-4 py-16 text-center">
             <p className="t14 max-w-sm text-muted-foreground">
-              {doc.status === "failed" ? "Chưa có nội dung — xem lời báo bên khung trò chuyện rồi bấm “Thử lại”." : "Bản soạn sẽ hiện ở đây khi AI viết xong. Bảng số liệu hiện ngay khi lấy được."}
+              {doc.status === "failed" ? "Chưa có nội dung — xem lời báo bên khung trò chuyện rồi bấm “Thử lại”." : "Ấn phẩm sẽ hiện ở đây khi AI viết xong. Bảng số liệu hiện ngay khi lấy được."}
             </p>
           </div>
         ) : null}
@@ -849,6 +958,39 @@ function DocumentPanel({ doc, live, busy, onRevise, onEdit, onRemove, onRefresh,
         {doc.brand.footer ? <p className="t12 mt-4 border-t border-hairline pt-2 text-center text-muted-foreground">{doc.brand.footer}</p> : null}
       </div>
     </article>
+  );
+}
+
+/** "Làm bản cho khách khác": chọn khách (danh sách server trả theo quyền) ⇒ ấn phẩm mới riêng cho khách đó — dựng lại từ hồ sơ nếu ấn phẩm làm từ hồ sơ. */
+function DuplicateMenu({ doc, locked, onDuplicate }: { doc: ComposerData; locked: boolean; onDuplicate: (leadId: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [options, setOptions] = useState<Option[] | null>(null);
+  const [lead, setLead] = useState("");
+  const query = doc.commands.customers ?? "";
+  useEffect(() => {
+    if (!open || options || !query) return;
+    api.options(query).then(setOptions, () => setOptions([]));
+  }, [open, options, query]);
+  const choices = (options ?? []).filter((o) => o.value !== doc.customer.id);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger disabled={locked} className={cn(actionClass("default"), "h-8")}
+                      title={doc.from_record ? "Dựng lại từ hồ sơ cho một khách khác (số, lời chào theo khách đó)" : "Chép ấn phẩm này cho một khách khác"}>
+        <Copy className="size-3.5" aria-hidden /> Làm bản cho khách khác
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[min(20rem,calc(100vw-1.5rem))] gap-2 p-3">
+        <label className="t12 flex flex-col gap-1">Cho khách
+          <select value={lead} onChange={(e) => setLead(e.target.value)} disabled={options === null} className={SELECT}>
+            <option value="">{options === null ? "Đang tải…" : choices.length ? "Chọn khách" : "Chưa có khách nào bạn được xem"}</option>
+            {choices.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+        <button type="button" disabled={!lead || locked} className={cn(actionClass("primary"), "h-8 self-start")}
+                onClick={() => { setOpen(false); void onDuplicate(lead).then(() => setLead("")); }}>
+          {doc.from_record ? "Dựng bản mới" : "Chép thành bản mới"}
+        </button>
+      </PopoverContent>
+    </Popover>
   );
 }
 

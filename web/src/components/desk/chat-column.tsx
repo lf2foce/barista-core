@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Brain, Check, ChevronRight, CircleAlert, History, ImageIcon, ImagePlus, MessageSquarePlus, Play, Share2, Sparkles, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronRight, CircleAlert, FileText, History, ImageIcon, ImagePlus, MessageSquarePlus, Play, Share2, Sparkles, TriangleAlert, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { confirmAll, waitingProposals } from "@/lib/confirm-all";
 import { newKey } from "@/lib/idempotency";
@@ -11,7 +11,8 @@ import { asideCards, resultCards, stepDone, type ChatMessage, type LiveTurn } fr
 import { ProposalRow, ResultRow } from "./chat-cards";
 import { CompactCard } from "./compact-card";
 import { isNearBottom } from "@/lib/scroll";
-import { splitDrop } from "@/lib/documents";
+import { CHAT_DOC_MAX, splitDrop } from "@/lib/documents";
+import type { ChatDocument } from "@/lib/api";
 import { withoutDocumentIds } from "@/lib/documents";
 import { DocumentDropDialog } from "./document-drop";
 import type { ActionSpec, Attention, ChatCard } from "@/lib/types";
@@ -58,8 +59,10 @@ function usePendingImages() {
 export function ChatColumn() {
   const pending = usePendingImages();
   const [dragging, setDragging] = useState(false);
-  // chứng từ PDF / Word thả vào ⇒ hộp chọn kệ rồi mới tải lên (components/desk/document-drop.tsx) — không tự lưu vào kệ "Chung"
+  // tài liệu PDF / Word thả vào ⇒ hộp hỏi dùng vào việc gì (components/desk/document-drop.tsx — ADR 0249): gắn hồ sơ đang mở / chỉ cuộc trò chuyện này /
+  // đăng lên kho tri thức (chọn rõ). Không bao giờ tự vào kho.
   const [dropped, setDropped] = useState<File[]>([]);
+  const [docs, setDocs] = useState<ChatDocument[]>([]);
   const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
   return (
     <div
@@ -84,11 +87,14 @@ export function ChatColumn() {
     >
       <ChatHeader />
       <Conversation />
-      <Composer pending={pending} />
-      {dropped.length ? <DocumentDropDialog files={dropped} onClose={() => setDropped([])} /> : null}
+      <Composer pending={pending} docs={docs} setDocs={setDocs} />
+      {dropped.length ? (
+        <DocumentDropDialog files={dropped} onClose={() => setDropped([])}
+                            onKeep={(d) => setDocs((cur) => [...cur, ...d].slice(0, CHAT_DOC_MAX))} />
+      ) : null}
       {dragging ? (
         <div className="pointer-events-none absolute inset-2 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-primary bg-primary/10" aria-hidden>
-          <span className="t14m rounded-full bg-surface px-4 py-2 text-primary shadow-sm">Thả ảnh (trợ lý đọc, tối đa {IMAGE_MAX}) hoặc chứng từ PDF / Word (vào kho tài liệu)</span>
+          <span className="t14m rounded-full bg-surface px-4 py-2 text-primary shadow-sm">Thả ảnh (trợ lý đọc, tối đa {IMAGE_MAX}) hoặc tài liệu PDF / Word (hỏi dùng vào việc gì)</span>
         </div>
       ) : null}
     </div>
@@ -331,6 +337,15 @@ function Bubble({ message }: { message: ChatMessage }) {
               <ImageIcon className="size-3" aria-hidden />
               {message.attachments} ảnh (không lưu lại)
             </span>
+          ) : null}
+          {message.documents?.length ? (
+            <div className="flex flex-wrap justify-end gap-1.5">
+              {message.documents.map((n) => (
+                <span key={n} className="t12 inline-flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-muted-foreground" title="Chỉ dùng trong cuộc trò chuyện này — không lưu tệp">
+                  <FileText className="size-3" aria-hidden />{n}
+                </span>
+              ))}
+            </div>
           ) : null}
         <div className="max-w-full rounded-[18px] bg-cold px-3 pt-1.5 pb-1 text-white">
           <p className="t14 select-text whitespace-pre-wrap break-words">{withoutDocumentIds(message.text)}</p>
@@ -578,14 +593,16 @@ function LiveBubble({ turn }: { turn: LiveTurn }) {
   );
 }
 
-function Composer({ pending }: { pending: ReturnType<typeof usePendingImages> }) {
+function Composer({ pending, docs, setDocs }: {
+  pending: ReturnType<typeof usePendingImages>; docs: ChatDocument[]; setDocs: (d: ChatDocument[]) => void;
+}) {
   const desk = useDesk();
   const chat = useChat();
   const [draft, setDraft] = useState("");
   const ta = useRef<HTMLTextAreaElement>(null);
   const file = useRef<HTMLInputElement>(null);
   const withImages = pending.images.length > 0;
-  const has = draft.trim().length > 0 || withImages;
+  const has = draft.trim().length > 0 || withImages || docs.length > 0;
   const busy = !!chat.live || pending.preparing > 0;
 
   // "Hỏi trợ lý…" từ thẻ ⇒ câu mở đầu vào ô, con trỏ ở cuối
@@ -612,9 +629,10 @@ function Composer({ pending }: { pending: ReturnType<typeof usePendingImages> })
 
   const submit = () => {
     if (!has || busy) return;
-    chat.send(draft, pending.images);
+    chat.send(draft, pending.images, docs);
     setDraft("");
     pending.clear();
+    setDocs([]);
   };
 
   return (
@@ -627,6 +645,23 @@ function Composer({ pending }: { pending: ReturnType<typeof usePendingImages> })
               {s}
             </button>
           ))}
+        </div>
+      ) : null}
+      {docs.length ? (
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap gap-1.5 pt-1.5" aria-label="Tài liệu gửi kèm">
+            {docs.map((d, i) => (
+              <span key={d.filename + i} className="t12 inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2.5 py-1">
+                <FileText className="size-3.5 text-primary" aria-hidden />
+                <span className="max-w-[200px] truncate">{d.filename}</span>
+                <button type="button" onClick={() => setDocs(docs.filter((_, j) => j !== i))} aria-label={`Bỏ ${d.filename}`} title="Bỏ tài liệu"
+                        className="grid size-4 place-items-center rounded-full text-muted-foreground hover:bg-accent">
+                  <X className="size-3" strokeWidth={3} />
+                </button>
+              </span>
+            ))}
+          </div>
+          <p className="t12 text-muted-foreground">Trợ lý đọc để trả lời trong cuộc trò chuyện này — tệp không lưu, không vào kho tri thức</p>
         </div>
       ) : null}
       {withImages || pending.preparing > 0 ? (

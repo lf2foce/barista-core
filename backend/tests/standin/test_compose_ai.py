@@ -40,7 +40,7 @@ async def _start(who: Who, p: Any, outputs: list[dict[str, Any]]) -> tuple[dict[
     model, calls = _model(outputs, {"query": "orderdesk.list", "title": "Đơn của tôi", "input": {}})
     compose.MODEL = model
     try:
-        out = await ok(p, "compose.start", kind="document", brief="Báo cáo đơn dịch vụ tháng này cho giám đốc")
+        out = await ok(p, "compose.start", kind="post", brief="Báo cáo đơn dịch vụ tháng này cho giám đốc")
     finally:
         compose.MODEL = None
     assert out["status"] == "drafting"   # lệnh chỉ ghi "đang soạn"; lượt model chạy SAU commit (executor chờ xong mới trả lời)
@@ -77,20 +77,19 @@ async def test_flagged_numbers_block_export_until_fixed_and_files_open(who: Who)
     comp = (await q(sale, "compose.view", session_id=sid))["blocks"][0]
     bad = next(b for b in comp["blocks"] if b["flags"])
     await ok(sale, "compose.remove_block", session_id=sid, block=bad["id"])
-    for fmt in ("docx", "pptx"):
+    for fmt in ("docx", "html"):
         e = await ok(sale, "compose.export", session_id=sid, format=fmt)
         f = await q(sale, "compose.download", export_id=e["export_id"])
         raw = base64.b64decode(f["data_b64"])
-        assert raw[:2] == b"PK"
+        assert raw[:2] == b"PK" if fmt == "docx" else raw.startswith(b"<!DOCTYPE html>")
         if fmt == "docx":
             from docx import Document
             text = "\n".join(p.text for p in Document(io.BytesIO(raw)).paragraphs)
             # dòng nguồn in tên truy vấn của gói. Tên đó viết bằng dấu nhãn từ vựng ([[service_order]] — 0124) và tệp xuất hiện CHƯA đổi dấu nhãn thành
             # chữ của công ty (compose/render.py source_line) ⇒ ở đây chỉ kiểm có dòng nguồn + giờ lấy số, không kiểm chữ của nhãn
             assert "Nguồn: " in text and "(theo quyền xem của người soạn) — số liệu lúc" in text
-        else:
-            from pptx import Presentation
-            assert len(Presentation(io.BytesIO(raw)).slides) >= 2
+    r = await executor.run(sale, "compose.export", {"session_id": sid, "format": "pptx"})   # loại quyết định dạng (ADR 0249): bài đăng không ra PowerPoint
+    assert r.status == "invalid" and "không xuất" in r.error
     other = await who("sale2")
     assert (await executor.query(other, "compose.download", {"export_id": str(e["export_id"])})).status == "not_found"
     v = (await q(sale, "compose.view", session_id=sid))["blocks"][0]

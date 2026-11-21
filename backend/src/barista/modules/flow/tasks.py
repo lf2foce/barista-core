@@ -27,6 +27,7 @@ from barista.api import (
     line,
     notify,
     num,
+    record_files,
     today,
     ui,
     zone,
@@ -57,6 +58,7 @@ class TaskRef(Input):
 # Lịch sử thay đổi theo trường (ADR 0246): "ai đổi hạn / giao lại việc này"
 m.tracks(TASK_SUBJECT, "assignee", "Người làm", fmt="person", empty="Đội (chưa ai nhận)")
 m.tracks(TASK_SUBJECT, "due_on", "Hạn", fmt="date", empty="không hạn")
+m.record_files(TASK_SUBJECT, labels=("Kết quả", "Bằng chứng", "Tài liệu tham khảo"))   # tệp của việc (ADR 0249)
 
 
 @m.subject(TASK_SUBJECT, "Việc")
@@ -158,6 +160,8 @@ async def task(ctx: Ctx, inp: TaskRef) -> dict[str, Any]:
             opens.append({"title": f"Tin nhắn gốc ({src['author']})", **src["open"]})
     if talk := await ctx.call_as_optional("talk.block", ctx.p, subject_kind=TASK_SUBJECT, subject_id=t["id"]):   # gói Trao đổi (0046, 0117)
         blocks.append(talk)
+    if kept := await record_files.block(ctx, TASK_SUBJECT, t["id"]):   # tệp của việc (ADR 0249)
+        blocks.append(kept)
     if changes := await history.block(ctx, TASK_SUBJECT, t["id"]):   # lịch sử thay đổi theo trường (ADR 0246)
         blocks.append(changes)
     by = f"Giao bởi {t['by_name']} · " if t["by_name"] else ""

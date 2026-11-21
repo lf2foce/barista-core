@@ -58,10 +58,15 @@ class ProposePlan(Input):
     tasks: list[PlanTask] = field("Các việc")
 
 
-@m.command("propose_plan", resource="flow", title="Lập kế hoạch & giao việc", shows=("flow.plan", "plan_id"))
+# Form theo ý định (ADR 0250): người chỉ nêu việc gì · mốc nào · ai chịu trách nhiệm (+ một câu mô tả / file biên bản); "Soạn giúp" chia việc, gợi ý người làm, lùi
+# hạn từ mốc, đặt việc chờ — người xem chip rồi gửi. Form đủ ô vẫn còn ("Điền tay toàn bộ").
+@m.command("propose_plan", resource="flow", title="Lập kế hoạch & giao việc", shows=("flow.plan", "plan_id"), intent=("title", "due_on", "owner_email"))
 async def propose_plan(ctx: Ctx, inp: ProposePlan) -> dict[str, Any]:
     """Tạo MỘT kế hoạch + mọi việc của nó trong cùng một lần ghi (một thẻ đề xuất, bấm một lần). Người nhận phải thuộc danh sách giao được của người
-    lập; hạn không trễ hơn mốc kế hoạch; hạn rơi ngày nghỉ ⇒ lùi về ngày làm việc liền trước. Mỗi người nhận một thông báo gộp."""
+    lập; hạn không trễ hơn mốc kế hoạch; hạn rơi ngày nghỉ ⇒ lùi về ngày làm việc liền trước. Mỗi người nhận một thông báo gộp.
+    Soạn kế hoạch: chia thành các việc cụ thể (thường 3–12), mỗi việc một người nhận trong danh sách giao được — chọn theo phòng / vai hợp với việc, cùng
+    điều kiện thì người ít việc mở hơn; hạn lùi từ mốc theo thứ tự làm (việc cuối sát mốc, việc đầu sớm hơn); "Chờ việc" ghi tên việc phải xong trước;
+    "Giai đoạn" khi việc chia rõ thành các chặng. Không rõ người làm thì để trống ô đó."""
     if not 1 <= len(inp.tasks) <= MAX_PLAN_TASKS:
         raise Invalid(f"Kế hoạch cần 1–{MAX_PLAN_TASKS} việc")
     titles = [t.title.strip() for t in inp.tasks]

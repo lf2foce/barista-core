@@ -152,7 +152,7 @@ async def test_compose_still_flags_a_number_planted_by_a_document(who: Who, comp
 
     compose.MODEL = FunctionModel(reply, model_name="compose-injected")
     try:
-        out = await ok(sale, "compose.start", kind="document", brief=f"Báo cáo ngắn theo lưu ý {w}")
+        out = await ok(sale, "compose.start", kind="post", brief=f"Báo cáo ngắn theo lưu ý {w}")
     finally:
         compose.MODEL = None
     assert any("999 tỷ" in s for s in seen)   # model đã đọc câu chèn (qua kết quả công cụ)

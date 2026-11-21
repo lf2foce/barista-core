@@ -1,5 +1,5 @@
 import { text } from "./format";
-import type { FieldSpec, Input, Json, Option } from "./types";
+import type { DraftResult, FieldSpec, FormSpec, Input, Json, Option } from "./types";
 
 /**
  * Logic THUẦN của lớp vẽ form (agent form D, 18/11/2026): đánh dấu bắt buộc, bố cục hai cột, ô chọn có tìm (lọc / nhớ lựa chọn gần nhất), ô phụ thuộc,
@@ -156,4 +156,46 @@ export function shownValue(f: FieldSpec, v: Json | undefined, opts: Option[] | u
   const s = text(v);
   const o = opts?.find((x) => x.value === s);
   return o ? o.label : s;
+}
+
+// ── form theo ý định + "Soạn giúp" (ADR 0250) ──
+
+/**
+ * Mở form ở bước Ý ĐỊNH không: server khai `intent` + `draft`, form đứng riêng (không nằm trong thẻ đề xuất / không gửi thay), và phần soạn sẵn
+ * (`initial`) chỉ chạm ô ý định hoặc ô cố định — mở lại một bản đã soạn đủ (thẻ trợ lý, nút "Sửa") ⇒ vẽ đủ ô như cũ.
+ */
+export function intentMode(spec: Pick<FormSpec, "intent" | "draft"> | null, initial: Input, preset: Input, standalone: boolean): boolean {
+  if (!standalone || !spec?.draft || !spec.intent?.length) return false;
+  const ask = new Set(spec.intent);
+  return Object.keys(initial).every((k) => ask.has(k) || k in preset);
+}
+
+/** Ô của bước ý định, theo thứ tự server khai — chỉ ô đang hiện (ô cố định / gắn dòng không hỏi lại). */
+export function intentFields(intent: string[] | undefined, visible: FieldSpec[]): FieldSpec[] {
+  const by = new Map(visible.map((f) => [f.key, f]));
+  return (intent ?? []).flatMap((k) => (by.has(k) ? [by.get(k)!] : []));
+}
+
+/** Có gì để máy soạn chưa: một câu mô tả, một file, hoặc ít nhất một ô ý định đã điền. */
+export function canDraft(text: string, hasFile: boolean, values: Input, ask: FieldSpec[]): boolean {
+  return !!text.trim() || hasFile || ask.some((f) => !isBlank(values[f.key]));
+}
+
+/** Giải mã kết quả "Soạn giúp" — trường thiếu / sai kiểu ⇒ rỗng (hợp đồng chỉ thêm). */
+export function decodeDraft(raw: unknown): DraftResult {
+  const o = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const values = o.values && typeof o.values === "object" && !Array.isArray(o.values) ? (o.values as Input) : {};
+  const strs = (x: unknown): string[] => (Array.isArray(x) ? x.filter((v): v is string => typeof v === "string") : []);
+  return { values, guessed: strs(o.guessed), notes: strs(o.notes) };
+}
+
+/**
+ * Áp bản soạn vào form: giá trị server đã kiểm thắng giá trị đang có (ô người điền vốn đã nằm trong `values` của bản soạn); ô máy đoán đang hiện và
+ * có giá trị ⇒ chip "máy đoán" (cả ô bảng nhiều dòng — vẽ nhãn "máy đoán" trên bảng, sửa / bỏ từng dòng như thường).
+ */
+export function applyDraft(current: Input, draft: DraftResult, visible: FieldSpec[]): { values: Input; guessed: string[] } {
+  const keys = new Set(visible.map((f) => f.key));
+  const values: Input = { ...current };
+  for (const [k, v] of Object.entries(draft.values)) if (keys.has(k) && v !== null && v !== undefined) values[k] = v;
+  return { values, guessed: draft.guessed.filter((k) => keys.has(k) && !isBlank(values[k])) };
 }

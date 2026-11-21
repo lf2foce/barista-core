@@ -1011,13 +1011,41 @@ async def turn_context(p: Principal) -> str:
     return "\n".join(lines)
 
 
+DOC_CHARS = 60_000   # chữ của MỘT tài liệu thả vào chat đưa cho model (đủ hợp đồng / báo giá vài chục trang; dài hơn ⇒ cắt, nói rõ)
+
+
+def document_parts(documents: list[tuple[str, bytes]]) -> list[Any]:
+    """Tài liệu thả vào chat ⇒ phần của câu hỏi: chữ đọc MIỄN PHÍ (bộ office + lớp chữ PDF — không model, không DB); PDF scan không có chữ ⇒ đưa
+    nguyên PDF cho model đọc như ảnh (thân tệp không lưu — ``_pack`` bỏ phần nhị phân như ảnh)."""
+    from barista.docread import read_free
+
+    out: list[Any] = []
+    for name, data in documents:
+        text = ""
+        try:
+            text = read_free(name, data).text().strip()
+        except Exception:   # tệp hỏng / loại lạ ⇒ không có chữ; PDF vẫn đưa nguyên cho model, loại khác nói rõ không đọc được
+            log.info("không đọc được chữ của tài liệu thả vào chat (%s)", name.rsplit(".", 1)[-1][:8])
+        if text:
+            cut = "\n(… còn tiếp — tài liệu dài, chỉ đọc phần đầu)" if len(text) > DOC_CHARS else ""
+            out.append(f"Tài liệu người dùng gửi kèm câu hỏi (chỉ cho cuộc trò chuyện này): “{name}”\n{text[:DOC_CHARS]}{cut}")
+        elif name.lower().endswith(".pdf"):
+            out.append(f"Tài liệu người dùng gửi kèm câu hỏi (bản scan, chỉ cho cuộc trò chuyện này): “{name}”")
+            out.append(BinaryContent(data=data, media_type="application/pdf"))
+        else:
+            out.append(f"(Không đọc được chữ của tài liệu “{name}” — nói với người dùng như vậy.)")
+    return out
+
+
 async def chat_turn(p: Principal, message: str, *, emit: Emit, thread_id: UUID | None = None,
                     model: Model | None = None, style: str = "", fast: bool = False, surface: str = "chat",
                     images: list[tuple[bytes, str]] | None = None, mode: str = "assistant", context: str = "",
-                    standing: Standing | None = None) -> dict[str, Any]:
+                    standing: Standing | None = None, documents: list[tuple[str, bytes]] | None = None) -> dict[str, Any]:
     """Chạy một lượt; phát sự kiện qua ``emit``; lưu lượt vào cuộc trò chuyện. Trả {thread_id, text, cards, steps, pending}.
     ``style``: dặn thêm cách trả lời (giọng nói: ngắn, không bảng) — nối vào lời dặn hệ thống, không đổi bộ công cụ / quyền.
     ``images``: (bytes, media_type) — model đọc trong lượt này; KHÔNG lưu (chỉ ghi "có N ảnh").
+    ``documents``: (tên tệp, bytes) — tài liệu NGƯỜI thả vào chat và chọn "chỉ dùng trong cuộc trò chuyện này" (ADR 0249): chữ đọc được (``document_parts``)
+    nằm trong cuộc trò chuyện RIÊNG của người hỏi như chính câu hỏi (hỏi tiếp được); thân tệp KHÔNG lưu, không vào kho tri thức, không gắn hồ sơ.
     ``standing``: tư cách người hỏi của luồng mở lượt (phiên đăng nhập của request, phiên giọng nói) — kiểm lại trước mỗi công cụ (F1)."""
     turns: list[dict[str, Any]] = []
     if mode != "assistant" and mode not in registry.MODES:
@@ -1033,7 +1061,8 @@ async def chat_turn(p: Principal, message: str, *, emit: Emit, thread_id: UUID |
     if mode == "assistant" and (extra := await turn_context(p)):   # việc vừa xảy ra quanh người hỏi (vd cuộc gọi vừa xong) — module khai, agent không biết module nào
         run.mode_context = f"{context}\n{extra}".strip()
     await emit({"type": "status", "text": "Đang suy nghĩ…"})
-    prompt: str | list[Any] = [message, *(BinaryContent(data=b, media_type=mt) for b, mt in images)] if images else message
+    extra = [*(BinaryContent(data=b, media_type=mt) for b, mt in images or ()), *document_parts(documents or [])]
+    prompt: str | list[Any] = [message, *extra] if extra else message
     with executor.tracing(f"chat:{run.turn_id}"):   # mọi lệnh lượt này chạy / soạn ghi vết lượt (nhật ký thao tác ↔ cuộc trò chuyện)
         try:
             out = await _run_agent(p, run, prompt=prompt, history=_history(turns), surface=surface, model=model, style=style, fast=fast)
@@ -1055,8 +1084,9 @@ async def chat_turn(p: Principal, message: str, *, emit: Emit, thread_id: UUID |
     reply, packed, waiting = out
     now = datetime.now(UTC).isoformat()
     tid = await _save(p, thread_id, [{"role": "user", "text": message, "at": now,
-                                      **({"attachments": [{"kind": "image", "media_type": mt, "bytes": len(b)} for b, mt in images]}
-                                         if images else {})},
+                                      **({"attachments": [*({"kind": "image", "media_type": mt, "bytes": len(b)} for b, mt in images or ()),
+                                                          *({"kind": "document", "filename": n, "bytes": len(b)} for n, b in documents or ())]}
+                                         if images or documents else {})},
                                      {"role": "assistant", "text": reply, "cards": run.cards, "steps": run.steps, "at": now, "trace": run.turn_id,
                                       **({"messages": packed} if packed else {}),
                                       **({"asides": run.asides} if run.asides else {}),

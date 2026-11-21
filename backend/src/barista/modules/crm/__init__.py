@@ -117,6 +117,7 @@ LEAD = "crm.lead"
 m.tracks(LEAD, "owner", "Người phụ trách", fmt="person", empty="Hàng chờ (chưa giao)")
 m.tracks(LEAD, "next_follow_up", "Hẹn chăm sóc lại", fmt="date", empty="chưa hẹn")
 m.tracks(LEAD, "budget", "Ngân sách", fmt="money", empty="chưa ghi")
+m.record_files(LEAD, labels=("Hợp đồng", "Báo giá", "Giấy tờ của khách", "Chứng từ thanh toán"))   # tệp của hồ sơ khách (ADR 0249)
 m.trigger("crm.lead_created", "Có lead mới", {"source": "Nguồn", "offering_code": "[[offering]] quan tâm"}, open=("crm.journey", {"lead_id": "lead_id"}))
 # ADR 0246: hai sự kiện đã phát (mọi đường giao / đổi chặng đi qua ``_stage_event``) thành cò — trường an toàn: giai đoạn / chặng (mã), tên đội, tên người
 # phụ trách (người trong công ty, không phải khách); ``owner_id`` ⇒ luật gửi được cho "người phụ trách"

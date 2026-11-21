@@ -1,10 +1,10 @@
 "use client";
 
-import { Check, ChevronRight, ExternalLink, Pencil, Sparkles } from "lucide-react";
+import { Check, ChevronRight, ExternalLink, Paperclip, Pencil, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "@/lib/api";
 import { buildInput, callPage, coerce, fixedInput, hiddenInitial, initialValues, missingRequired, openLink, prefillInput, rowsOf, savedWarning, splitGroups, setCell, visibleFields, type SavedWarning } from "@/lib/form";
-import { caretAfter, dependentsOf, groupMoney, isBlank, markMode, optionsParams, pairFields, shownValue } from "@/lib/form-ui";
+import { applyDraft, canDraft, caretAfter, decodeDraft, dependentsOf, groupMoney, intentFields, intentMode, isBlank, markMode, optionsParams, pairFields, shownValue } from "@/lib/form-ui";
 import { parseDay, vnLong } from "@/lib/dates";
 import { text } from "@/lib/format";
 import { newKey, nextKey } from "@/lib/idempotency";
@@ -100,6 +100,12 @@ export function FormBody({
   const [chips, setChips] = useState<Record<string, Chip>>({});
   const [opened, setOpened] = useState<Record<string, boolean>>({});   // nhóm gấp người đã tự mở / đóng (không có ⇒ theo giá trị / lỗi)
   const [after, setAfter] = useState<{ message: string; output: Json; warn: SavedWarning } | null>(null);
+  // FORM THEO Ý ĐỊNH (ADR 0250): bước 1 hỏi vài ô + "Mô tả / thả file" → "Soạn giúp" (server soạn, không chạy lệnh) → bước 2 form đủ ô với chip máy đoán
+  const [step, setStep] = useState<"intent" | "full">("full");
+  const [brief, setBrief] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [drafting, setDrafting] = useState(false);
+  const [notes, setNotes] = useState<string[] | null>(null);   // null = chưa soạn; [] = đã soạn, không có ghi chú
   const [link, setLink] = useState<{ message: string; output: Json; url: string; host: string } | null>(null);
   const [fixed0] = useState(() => fixedInput(action, row));
   const [initial0] = useState(initial);
@@ -146,6 +152,7 @@ export function FormBody({
         const vals = initialValues(s.fields, initial, filled);
         setValues(vals);
         setSpec(s);
+        if (intentMode(s, initial, action.preset, !embedded && !submitter)) setStep("intent");
         // danh sách tuỳ trường khác của form (`options_with` / `options_args`, vd mã tin nhắn, dự án): gửi kèm giá trị cố định / điền sẵn
         const known = { ...vals, ...hiddenInitial(s, initial), ...fixedInput(action, row) };
         const fx = fixedInput(action, row);
@@ -261,6 +268,35 @@ export function FormBody({
   };
   const guessKeys = Object.keys(chips).filter((k) => chips[k] === "guess" && visibleKeys.has(k));
   const acceptAll = () => setChips((cur) => Object.fromEntries(Object.entries(cur).map(([k, c]) => [k, c === "guess" ? "ok" : c])));
+  const ask = useMemo(() => intentFields(spec?.intent, visible), [spec, visible]);
+  const draftReady = canDraft(brief, !!file, values, ask);
+
+  /** "Soạn giúp": server soạn ĐỦ đầu vào của đúng lệnh này bằng quyền người dùng (không chạy lệnh) ⇒ form đủ ô, ô máy đoán là chip ✨. */
+  async function draft() {
+    if (!spec?.draft || drafting || !draftReady) return;
+    setDrafting(true);
+    setError(null);
+    try {
+      const typed = Object.fromEntries(ask.filter((f) => !isBlank(values[f.key])).map((f) => [f.key, values[f.key]]));
+      const body: Input = { command: action.command, text: brief, values: { ...fixed, ...typed } };
+      if (file) {
+        if (file.size > DRAFT_FILE_MAX) throw new Error("File quá lớn cho soạn giúp (tối đa 10 MB)");
+        body.file_name = file.name;
+        body.file_b64 = await fileBase64(file);
+      }
+      const res = decodeDraft(await api.queryRaw(spec.draft, body));
+      const got = applyDraft(values, res, visible);
+      edited.current = true;
+      setValues(got.values);
+      setChips((cur) => ({ ...cur, ...Object.fromEntries(got.guessed.map((k) => [k, "guess" as Chip])) }));
+      setNotes(res.notes);
+      setStep("full");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Máy chưa soạn được");
+    } finally {
+      setDrafting(false);
+    }
+  }
 
   async function submit() {
     const miss = missingRequired(visible, values);
@@ -332,7 +368,21 @@ export function FormBody({
     });
   };
   const renderField = (f: FieldSpec) => {
-    if (f.kind === "rows") return <RowsField key={f.key} f={f} value={values[f.key]} dyn={dyn} bad={invalid.includes(f.key)} onChange={(v) => set(f.key, v)} />;
+    if (f.kind === "rows")
+      return (
+        <RowsField
+          key={f.key}
+          f={f}
+          value={values[f.key]}
+          dyn={dyn}
+          bad={invalid.includes(f.key)}
+          guessed={chips[f.key] === "guess"}
+          onChange={(v) => {
+            set(f.key, v);
+            if (chips[f.key] === "guess") setChips((cur) => ({ ...cur, [f.key]: "ok" }));   // người sửa bảng = đã xem bản máy soạn
+          }}
+        />
+      );
     const { waiting } = optionsParams(f, { ...fixed, ...values }, visibleKeys);
     const opts = f.options ?? dyn[f.key];
     const q = f.options_query;
@@ -412,22 +462,39 @@ export function FormBody({
       noValidate
       onSubmit={(e) => {
         e.preventDefault();
-        if (!blocked) void submit();
+        if (step === "intent") void draft();
+        else if (!blocked) void submit();
       }}
     >
       {!embedded && spec?.description ? <p className="t12 text-muted-foreground">{spec.description}</p> : null}
       {!spec && !error ? <Spinner /> : null}
-      {visible.length ? (
+      {step === "intent" ? (
+        <div className="-mx-1.5 flex min-h-0 flex-col gap-3 overflow-y-auto px-1.5 py-1">
+          {renderRows(ask)}
+          <IntentBrief text={brief} file={file} busy={drafting} onText={setBrief} onFile={(f) => { setFile(f); setError(null); }} onError={setError} />
+        </div>
+      ) : visible.length ? (
         <div className="-mx-1.5 flex min-h-0 flex-col gap-3 overflow-y-auto px-1.5 py-1">   {/* lề cho viền chọn ô (ring 2–3px) không bị khung cuộn cắt, cả bốn phía */}
-          {guessKeys.length >= 2 ? (
-            <div className="t12 flex items-center justify-between gap-2 rounded-lg bg-primary/5 px-2.5 py-1.5 text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <Sparkles className="size-3.5 text-primary" aria-hidden />
-                Máy điền sẵn {guessKeys.length} ô — xem lại, bấm vào ô để sửa
-              </span>
-              <button type="button" className="t12m shrink-0 rounded-md px-2 py-1 text-primary hover:bg-primary/10" onClick={acceptAll}>
-                Chấp nhận tất cả
-              </button>
+          {guessKeys.length >= 2 || (notes !== null && (guessKeys.length > 0 || notes.length > 0)) ? (
+            <div className="t12 flex flex-col gap-1 rounded-lg bg-primary/5 px-2.5 py-1.5 text-muted-foreground">
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="size-3.5 text-primary" aria-hidden />
+                  {guessKeys.length ? <>Máy đoán {guessKeys.length} ô — xem lại, bấm vào ô để sửa</> : <>Máy đã soạn xong — xem lại trước khi gửi</>}
+                </span>
+                {guessKeys.length ? (
+                  <button type="button" className="t12m shrink-0 rounded-md px-2 py-1 text-primary hover:bg-primary/10" onClick={acceptAll}>
+                    Chấp nhận tất cả
+                  </button>
+                ) : null}
+              </div>
+              {notes?.length ? (
+                <ul className="flex list-disc flex-col gap-0.5 pl-6">
+                  {notes.map((n, i) => (
+                    <li key={i}>{n}</li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           ) : null}
           {renderRows(main)}
@@ -451,6 +518,24 @@ export function FormBody({
         <p className="t14 text-muted-foreground">Không cần điền gì thêm — bấm “{action.title}” để xác nhận.</p>
       ) : null}
       {error ? <ErrorLine>{error}</ErrorLine> : null}
+      {step === "intent" ? (
+        <div className="flex items-center justify-between gap-2 max-sm:flex-col-reverse max-sm:items-stretch">
+          <button type="button" className="t14m rounded-md px-1 text-primary hover:underline max-sm:h-10" onClick={() => setStep("full")}>
+            Điền tay toàn bộ
+          </button>
+          <div className="flex items-center gap-2">
+            {onCancel ? (
+              <button type="button" onClick={onCancel} className="t14m h-8 rounded-lg border border-border bg-surface px-3 hover:bg-accent max-sm:h-10 max-sm:flex-1">
+                Huỷ
+              </button>
+            ) : null}
+            <button type="submit" disabled={drafting || !draftReady} className="t14m flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-white hover:bg-primary/90 disabled:opacity-50 max-sm:h-10 max-sm:flex-[2] max-sm:justify-center">
+              <Sparkles className="size-4" aria-hidden />
+              {drafting ? "Đang soạn…" : "Soạn giúp"}
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="flex flex-col gap-2">
         {blocked ? <p className="t12 text-muted-foreground">Cần điền: {missing.map((f) => f.label).join(", ")}</p> : null}
         <div className="flex items-center justify-end gap-2">
@@ -468,7 +553,90 @@ export function FormBody({
           </button>
         </div>
       </div>
+      )}
     </form>
+  );
+}
+
+/** File cho "Soạn giúp" (biên bản họp, kế hoạch Excel, ảnh chụp…) — server đọc bằng bộ đọc tài liệu chung, tối đa 10 MB. */
+const DRAFT_FILE_MAX = 10 * 1024 * 1024;
+const DRAFT_ACCEPT = ".pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.pptx,.txt,.md,.jpg,.jpeg,.png,.webp,.heic";
+
+function fileBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ""));
+    r.onerror = () => reject(r.error ?? new Error("Không đọc được file"));
+    r.readAsDataURL(file);
+  });
+}
+
+/** Bước ý định: một ô "Mô tả" + thả / chọn MỘT file (ADR 0225: có file thì thả file, không dán nội dung). */
+function IntentBrief({ text: value, file, busy, onText, onFile, onError }: {
+  text: string; file: File | null; busy: boolean; onText: (v: string) => void; onFile: (f: File | null) => void; onError: (m: string) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+  const take = (f: File | undefined | null) => {
+    if (!f) return;
+    if (f.size > DRAFT_FILE_MAX) onError("File quá lớn cho soạn giúp (tối đa 10 MB)");
+    else onFile(f);
+  };
+  return (
+    <div
+      className={cn("flex flex-col gap-1.5 rounded-lg", over && "ring-2 ring-primary/40")}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        if (!e.dataTransfer.files.length) return;
+        e.preventDefault();
+        setOver(false);
+        take(e.dataTransfer.files[0]);
+      }}
+    >
+      <label htmlFor="f-intent-brief" className="t12m text-muted-foreground">
+        Mô tả
+      </label>
+      <Textarea
+        id="f-intent-brief"
+        rows={4}
+        value={value}
+        disabled={busy}
+        placeholder="Kể ngắn việc cần làm — máy soạn phần còn lại để bạn xem lại trước khi gửi"
+        onChange={(e) => onText(e.target.value)}
+      />
+      <div className="flex min-h-8 items-center gap-2">
+        {file ? (
+          <span className="t12 flex min-w-0 items-center gap-1.5 rounded-md bg-accent px-2 py-1">
+            <Paperclip className="size-3.5 shrink-0" aria-hidden />
+            <span className="min-w-0 truncate">{file.name}</span>
+            <button type="button" aria-label="Bỏ file" className="shrink-0 rounded hover:bg-foreground/10" onClick={() => onFile(null)}>
+              <X className="size-3.5" aria-hidden />
+            </button>
+          </span>
+        ) : (
+          <button type="button" className="t12m flex items-center gap-1.5 rounded-md px-1 text-primary hover:underline" onClick={() => input.current?.click()}>
+            <Paperclip className="size-3.5" aria-hidden />
+            Thả file hoặc chọn file (biên bản họp, kế hoạch Excel…)
+          </button>
+        )}
+        <input
+          ref={input}
+          type="file"
+          accept={DRAFT_ACCEPT}
+          className="sr-only"
+          aria-label="Chọn file để máy soạn giúp"
+          onChange={(e) => {
+            take(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -493,7 +661,9 @@ function openCallPage(page: string): boolean {
 
 /** Bảng nhiều dòng (kind "rows", vd các việc của kế hoạch): dòng 1 = ô đầu (tên) + nút bỏ; dòng 2 = các ô còn lại (người nhận, hạn).
  *  Ghi chú dài (textarea) không vẽ trong dòng gọn — trợ lý / form riêng điền. Như rowsView của app Mac. */
-function RowsField({ f, value, dyn, bad, onChange }: { f: FieldSpec; value: Json | undefined; dyn: Record<string, Option[]>; bad: boolean; onChange: (v: Json | undefined) => void }) {
+function RowsField({ f, value, dyn, bad, guessed = false, onChange }: {
+  f: FieldSpec; value: Json | undefined; dyn: Record<string, Option[]>; bad: boolean; guessed?: boolean; onChange: (v: Json | undefined) => void;
+}) {
   const rows = rowsOf(value);
   const subs = (f.fields ?? []).filter((c) => !c.hidden);
   const [head, ...rest] = subs;
@@ -535,6 +705,12 @@ function RowsField({ f, value, dyn, bad, onChange }: { f: FieldSpec; value: Json
       <span className="t12m flex items-center gap-1.5 text-muted-foreground">
         {f.label}
         <span className="t12m rounded-full bg-foreground/10 px-1.5 tabular-nums">{rows.length}</span>
+        {guessed ? (
+          <span className="t12 flex items-center gap-1 rounded-full bg-primary/10 px-1.5 text-primary">
+            <Sparkles className="size-3" aria-hidden />
+            máy đoán — sửa, bỏ dòng tuỳ ý
+          </span>
+        ) : null}
       </span>
       {f.required && !rows.length ? <p className="t12 text-warn">Cần ít nhất một dòng</p> : null}
       {rows.map((_, i) => (

@@ -15,6 +15,8 @@ export type ChatMessage = {
   images?: string[];
   /** Lượt cũ mở lại: số ảnh đã gửi (server chỉ ghi "có N ảnh"). */
   attachments?: number;
+  /** Tài liệu gửi kèm chỉ cho cuộc trò chuyện này (ADR 0249) — tên tệp; thân tệp không lưu. */
+  documents?: string[];
   /** Lượt dừng vì chạm trần bước: câu gửi khi bấm "Tiếp tục" (lõi soạn). Không có ⇒ không vẽ nút. */
   cont?: string;
 };

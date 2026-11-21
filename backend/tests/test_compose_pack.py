@@ -22,7 +22,7 @@ async def _workspaces(p) -> set[str]:  # type: ignore[no-untyped-def]
 
 def test_the_pack_is_optional_self_contained_and_not_always_on() -> None:
     pack = registry.PACKS["compose"]
-    assert pack.kind == "capability" and not pack.always_on and pack.title == "Soạn với AI (thử nghiệm)"
+    assert pack.kind == "capability" and not pack.always_on and pack.title == "Ấn phẩm (thử nghiệm)"
     assert registry.MODULE_PACK["compose"] == "compose" and "compose" not in registry.BASE_MODULES
     assert "compose" not in registry.always_on()
 
@@ -32,11 +32,11 @@ async def test_off_by_default_nothing_of_it_is_visible_or_runnable(who: Who) -> 
     assert "compose" not in await _workspaces(sale)                                          # menu
     tools = {op.name for op, _ in await chat.catalog(sale)}
     assert not {n for n in tools if n.startswith("compose.")}                                # công cụ trợ lý
-    for name, inp in (("compose.start", {"kind": "document", "brief": "x"}), ("compose.begin", {"kind": "document", "brief": "x"})):
+    for name, inp in (("compose.start", {"kind": "post", "brief": "x"}), ("compose.begin", {"kind": "post", "brief": "x"})):
         assert (await executor.run(sale, name, inp)).status != "ok", name                    # thao tác (ghi)
     assert (await executor.query(sale, "compose.studio", {})).status != "ok"                 # truy vấn (màn)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:   # luồng HTTP đi qua cùng cửa lệnh
-        r = await c.post("/v1/compose/stream", headers=_h(sale), json={"kind": "document", "brief": "Báo cáo"})
+        r = await c.post("/v1/compose/stream", headers=_h(sale), json={"kind": "post", "brief": "Báo cáo"})
     assert r.status_code == 200 and '"type": "error"' in r.text and '"session"' not in r.text
 
 
@@ -44,7 +44,7 @@ async def test_the_admin_switches_it_on_in_the_store_and_off_again(who: Who) -> 
     admin, sale = await who("admin"), await who("sale1")
     store = await q(admin, "admin.pack_store")
     tiles = [t for b in store["blocks"] if b.get("type") == "tiles" for t in b["items"]]
-    tile = next((t for t in tiles if t["title"] == "Soạn với AI (thử nghiệm)"), None)
+    tile = next((t for t in tiles if t["title"] == "Ấn phẩm (thử nghiệm)"), None)
     assert tile is not None and tile["badge"] == "Có sẵn", "gói phải hiện ở Store (Có sẵn) để quản trị bật"
     await ok(admin, "admin.set_pack", pack="compose", enabled=True)
     try:

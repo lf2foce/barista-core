@@ -10,7 +10,7 @@ import pytest
 
 from barista.kernel.text import vnd_text
 from barista.modules import compose
-from barista.modules.compose import check, editorial, layout, render, vn
+from barista.modules.compose import check, editorial, kinds, layout, render, vn
 from barista.modules.compose import html as htmlpage
 
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
@@ -122,8 +122,8 @@ def _blocks() -> list[dict[str, Any]]:
 
 def test_editorial_is_data_default_for_brochures_and_customer_facing() -> None:
     t = layout.TEMPLATES["editorial"]
-    assert layout.DEFAULT_FOR_KIND["brochure"] == "editorial" and t["style"] == vn.STYLE_VN and t["customer"] and t["look"] == "editorial" and t["cover"] == "hero"
-    assert {x["key"] for x in layout.choices()} >= {"plain", "brochure", "proposal", "editorial"}
+    assert kinds.template_for("brochure") == "editorial" and t["style"] == vn.STYLE_VN and t["customer"] and t["look"] == "editorial" and t["cover"] == "hero"
+    assert {x["key"] for x in kinds.templates("brochure")} == {"brochure", "proposal", "editorial"}
     secs = layout.sections(_blocks(), t, "Hồ Sen")
     assert [s["kind"] for s in secs] == ["cover", "tiles", "flow", "columns", "grid", "footer"]
     assert sorted(layout.block_ids(secs)) == sorted(b["id"] for b in _blocks())                                   # vẫn mỗi khối đúng một lần

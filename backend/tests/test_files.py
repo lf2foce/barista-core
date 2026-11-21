@@ -233,15 +233,15 @@ async def test_copy_needs_a_one_time_grant_for_this_module_and_person(who: Who) 
     _, _, fid = await _talk_file(sale1)
     async with as_module(sale2, "talk") as ctx:                       # không qua được RLS của module gốc ⇒ không xin được quyền sao
         with pytest.raises(Denied):
-            await files.grant_copy(ctx, fid, "kb")
+            await files.grant(ctx, fid, "kb")
     async with as_module(gd, "kb", rollback=True) as ctx:             # không có quyền sao
         with pytest.raises(Denied):
             await files.copy(ctx, fid, uuid.uuid4())
     async with as_module(gd, "talk") as ctx:
-        for_x = await files.grant_copy(ctx, fid, "mkt")
-        once = await files.grant_copy(ctx, fid, "kb")
-        late = await files.grant_copy(ctx, fid, "kb")
-        someone_else = await files.grant_copy(ctx, fid, "kb", granted_to=sale1.user_id)
+        for_x = await files.grant(ctx, fid, "mkt")
+        once = await files.grant(ctx, fid, "kb")
+        late = await files.grant(ctx, fid, "kb")
+        someone_else = await files.grant(ctx, fid, "kb", granted_to=sale1.user_id)
     async with as_module(gd, "kb", rollback=True) as ctx:             # cấp cho module X, module Y dùng ⇒ từ chối
         with pytest.raises(Denied):
             await files.copy(ctx, fid, for_x)
@@ -268,7 +268,7 @@ async def test_a_copy_lives_on_its_own_and_each_module_opens_only_its_own(who: W
     subj, _, fid = await _talk_file(sale1)
     doc = str((await ok(gd, "kb.add_document", title=f"Lưu từ trao đổi {uuid.uuid4().hex[:6]}", kind="other", body="Ảnh"))["document_id"])
     async with as_module(gd, "talk") as talk_ctx:                     # cấp và dùng trong CÙNG giao dịch
-        grant = await files.grant_copy(talk_ctx, fid, "kb")
+        grant = await files.grant(talk_ctx, fid, "kb")
         kb_ctx = core_ctx(talk_ctx.conn, gd, module="kb")
         copied = await files.copy(kb_ctx, fid, grant)
         await kb_ctx.exec("INSERT INTO kb.files (document_id, filename, content_type, size_bytes, file_id) VALUES (%s, 'anh.png', 'image/png', %s, %s)",
@@ -295,7 +295,7 @@ async def test_copying_does_not_pull_the_file_through_the_app(who: Who) -> None:
     big = PNG + b"\2" * (talk.FILE_MAX - len(PNG) - 1024)
     _, _, fid = await _talk_file(sale1, big)
     async with as_module(gd, "talk", rollback=True) as talk_ctx:
-        grant = await files.grant_copy(talk_ctx, fid, "kb")
+        grant = await files.grant(talk_ctx, fid, "kb")
         tracemalloc.start()
         try:
             copied = await files.copy(core_ctx(talk_ctx.conn, gd, module="kb"), fid, grant)

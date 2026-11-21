@@ -1,6 +1,6 @@
-"""XUẤT bản soạn: .docx (python-docx) cho văn bản / tờ giới thiệu, .pptx (python-pptx) cho slide; PDF đổi từ một trong hai bằng LibreOffice
-(``kernel/convert.py``). Số trong tệp CHỈ in từ khối số liệu (ảnh chụp kết quả truy vấn) — kèm dòng nguồn + lúc chụp. Bộ nhận diện (màu,
-phông, logo, chân trang) là dữ liệu công ty (``compose.brand``)."""
+"""XUẤT ấn phẩm: .docx (python-docx) cho tờ rơi / tờ giới thiệu / bài đăng, .pptx (python-pptx) cho slide; PDF đổi từ một trong hai bằng LibreOffice
+(``kernel/convert.py``). Số trong tệp CHỈ in từ khối số liệu (ảnh chụp kết quả truy vấn) — kèm dòng nguồn + lúc chụp. Nhận diện thương hiệu (màu,
+phông, logo, chân trang) là dữ liệu CÔNG TY (cài đặt công ty, ``admin.brand`` — ADR 0249); module đọc qua ``admin.brand`` rồi truyền vào đây."""
 
 import io
 import logging
@@ -13,7 +13,6 @@ from barista.modules.compose import vn
 
 log = logging.getLogger("barista.compose.render")
 
-DEFAULT_BRAND = {"primary_color": "1F4E79", "font": "Arial", "footer": "", "logo": None}
 
 
 def fmt(v: Any, f: str, style: str = "", unit: str = "") -> str:

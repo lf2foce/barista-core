@@ -4,6 +4,7 @@ import type {
   ComposerData,
   ComposerItem,
   ComposerLayout,
+  ComposerRef,
   ComposerSection,
   ComposerTurn,
   ActionSpec,
@@ -14,6 +15,7 @@ import type {
   Column,
   Compact,
   DetailOriginal,
+  ListAttach,
   DetailPage,
   Input,
   Paging,
@@ -112,7 +114,9 @@ export function decodeThread(o: Obj): ThreadBlockData {
         reply: reply ? { id: int(reply.id), author: str(reply.author), body: str(reply.body), recalled: bool(reply.recalled) } : null,
         attachments: arr(mo.attachments).map((f) => {
           const x = obj(f);
-          return { id: str(x.id), filename: str(x.filename, "tệp"), content_type: str(x.content_type), size_bytes: int(x.size_bytes), is_image: bool(x.is_image) };
+          // ADR 0249: hồ sơ của luồng nhận tệp ⇒ nút "Lưu vào hồ sơ" (lệnh do server mô tả)
+          return { id: str(x.id), filename: str(x.filename, "tệp"), content_type: str(x.content_type), size_bytes: int(x.size_bytes), is_image: bool(x.is_image),
+                   ...(isObj(x.keep) ? { keep: decodeAction(x.keep) } : {}) };
         }).filter((f) => f.id),
         reactions: arr(mo.reactions).map((r) => {
           const x = obj(r);
@@ -395,6 +399,17 @@ function decodeSectionTable(raw: unknown): SectionTable | null {
   return { columns, rows: arr(t.rows).map((r) => arr(r).map((c) => str(c))), total: arr(t.total).map((c) => str(c)) };
 }
 
+/** Khối "Tệp" của hồ sơ (ADR 0249): chỉ đường của chính core (/v1/…) — không gửi tệp tới chỗ server lạ. */
+export function decodeAttach(raw: unknown): ListAttach | null {
+  if (!isObj(raw)) return null;
+  const path = str(raw.path);
+  if (!path.startsWith("/v1/") || !str(raw.subject_kind) || !str(raw.subject_id)) return null;
+  return {
+    subject_kind: str(raw.subject_kind), subject_id: str(raw.subject_id), subject_title: str(raw.subject_title), path,
+    file_max: int(raw.file_max), file_kinds: str(raw.file_kinds), labels: arr(raw.labels).map((l) => str(l)).filter(Boolean),
+  };
+}
+
 function decodeOriginal(raw: unknown): DetailOriginal | null {
   if (raw === null || typeof raw !== "object") return null;
   const o = obj(raw);
@@ -536,6 +551,7 @@ function decodeBlockBody(raw: unknown): Block {
         return {
           type: "list",
           title: str(o.title),
+          ...(decodeAttach(o.attach) ? { attach: decodeAttach(o.attach)! } : {}),
           items: arr(o.items).map((i) => {
             const io = obj(i);
             const f = isObj(io.file) && typeof io.file.id === "string" && io.file.id ? io.file : null;
@@ -741,13 +757,19 @@ export function decodeComposerTurn(x: unknown): ComposerTurn {
   };
 }
 
+/** Hồ sơ / khách của ấn phẩm — thiếu ⇒ rỗng (bản cũ chưa gắn). */
+export function decodeComposerRef(v: unknown): ComposerRef {
+  const r = obj(v);
+  return { kind: str(r.kind), id: str(r.id), label: str(r.label) };
+}
+
 export function decodeComposer(o: Obj): ComposerData {
   const pairs = (v: unknown) => arr(v).map((x) => ({ key: str(obj(x).key), label: str(obj(x).label) }));
   const st = obj(o.stats);
   const br = obj(o.brand);
   return {
     session_id: str(o.session_id),
-    kind: str(o.kind, "document"),
+    kind: str(o.kind, "brochure"),
     kind_label: str(o.kind_label),
     title: str(o.title),
     brief: str(o.brief),
@@ -755,8 +777,15 @@ export function decodeComposer(o: Obj): ComposerData {
     status: str(o.status, "ready"),
     status_label: str(o.status_label),
     error: str(o.error),
-    kinds: pairs(o.kinds),
+    kinds: arr(o.kinds).map((x) => ({ key: str(obj(x).key), label: str(obj(x).label), templates: pairs(obj(x).templates), formats: pairs(obj(x).formats) })),
     formats: pairs(o.formats),
+    subject: decodeComposerRef(o.subject),
+    customer: decodeComposerRef(o.customer),
+    from_record: o.from_record === true,
+    recipes: arr(o.recipes).map((x) => {
+      const r = obj(x);
+      return { key: str(r.key), label: str(r.label), about: str(r.about), piece: str(r.piece, "brochure"), needs_subject: r.needs_subject === true, customer: r.customer === true };
+    }).filter((r) => r.key),
     blocks: arr(o.blocks).map(decodeComposerItem),
     stats: { flagged: int(st.flagged), placeholders: int(st.placeholders), data: int(st.data) },
     layout: decodeComposerLayout(o.layout),

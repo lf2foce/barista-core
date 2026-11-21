@@ -323,7 +323,9 @@ export type ThreadMsg = {
   marks: MessageMark[];
 };
 export type MessageMark = { title: string; detail: string; tone: string; open: OpenRef | null };
-export type TalkFile = { id: string; filename: string; content_type: string; size_bytes: number; is_image: boolean };
+export type TalkFile = { id: string; filename: string; content_type: string; size_bytes: number; is_image: boolean; keep?: ActionSpec };
+/** Khối "Tệp" của hồ sơ (ADR 0249): danh sách thường + nơi gắn tệp — app thả / chọn tệp gửi lên ``path`` cùng loại + mã hồ sơ. */
+export type ListAttach = { subject_kind: string; subject_id: string; subject_title: string; path: string; file_max: number; file_kinds: string; labels: string[] };
 export type ThreadBlockData = {
   title: string;
   subject_kind: string;
@@ -363,7 +365,7 @@ export type Block = (
   | { type: "steps"; title: string; steps: StepItem[] }
   | { type: "stages"; title: string; stages: Stage[] }
   | { type: "callout"; tone: string; title: string; text: string; facts: string[]; draft: string; actions: ActionSpec[] }
-  | { type: "list"; title: string; items: ListItem[] }
+  | { type: "list"; title: string; items: ListItem[]; attach?: ListAttach }
   | { type: "tiles"; title: string; items: Tile[] }
   | { type: "text"; title: string; markdown: string }
   /** Ghi âm (tổng đài — 0149): `src` là đường /v1/… của core (qua BFF), quyền kiểm mỗi lần tải */
@@ -426,7 +428,13 @@ export type FormSpec = {
   fields: FieldSpec[];
   /** (tương lai, nếu server công bố) truy vấn xem kết quả của lệnh: {query, key} — `key` là khoá trong output = tham số truy vấn. */
   shows?: { query: string; key: string } | [string, string] | null;
+  /** FORM THEO Ý ĐỊNH (ADR 0250): ô hỏi trước (vd việc gì · mốc · ai chịu trách nhiệm) + ô "Mô tả / thả file"; phần còn lại do `draft` soạn. Không có ⇒ form đủ ô. */
+  intent?: string[];
+  /** Truy vấn "Soạn giúp" (vd `core.draft_input`): nhận {command, text, values, file_name, file_b64}, trả `DraftResult` — không chạy lệnh. */
+  draft?: string;
 };
+/** Bản soạn của "Soạn giúp" (ADR 0250): giá trị đã kiểm ở server (gồm ô người đã điền), ô nào máy đoán, ghi chú chỗ đoán / còn thiếu. */
+export type DraftResult = { values: Input; guessed: string[]; notes: string[] };
 export type CommandResult = {
   status: string; // ok · pending_approval · invalid · conflict · forbidden …
   output: Json;
@@ -720,6 +728,12 @@ export type ComposerLayout = {
 /** Một lần chia sẻ qua link: số lượt khách mở, còn hiệu lực hay không (link chỉ hiện đúng lúc tạo). */
 export type ComposerShare = { id: string; recipient: string; version: number; at: string; expires_at: string; views: number; last_viewed_at: string; active: boolean };
 
+/** Ấn phẩm VỀ hồ sơ nào / cho khách nào (ADR 0249) — trống = chưa gắn. */
+export type ComposerRef = { kind: string; id: string; label: string };
+
+/** Công thức làm ấn phẩm từ hồ sơ (gói / module chủ hồ sơ góp): loại ấn phẩm làm ra, có cần chọn hồ sơ, có nhận khách. */
+export type ComposerRecipe = { key: string; label: string; about: string; piece: string; needs_subject: boolean; customer: boolean };
+
 export type ComposerData = {
   session_id: string;
   kind: string;
@@ -731,8 +745,15 @@ export type ComposerData = {
   status: string;
   status_label: string;
   error: string;
-  kinds: { key: string; label: string }[];
+  /** loại ấn phẩm mời chọn — mỗi loại kèm mẫu + định dạng hợp nó (server quyết, một danh sách) */
+  kinds: { key: string; label: string; templates: { key: string; label: string }[]; formats: { key: string; label: string }[] }[];
+  /** định dạng xuất của ấn phẩm này (đầu = chính) */
   formats: { key: string; label: string }[];
+  subject: ComposerRef;
+  customer: ComposerRef;
+  /** ấn phẩm dựng từ hồ sơ (công thức của gói): "làm bản cho khách khác" dựng lại bằng công thức */
+  from_record: boolean;
+  recipes: ComposerRecipe[];
   blocks: ComposerItem[];
   stats: { flagged: number; placeholders: number; data: number };
   layout: ComposerLayout;

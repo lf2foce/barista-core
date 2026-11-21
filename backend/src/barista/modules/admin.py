@@ -6,6 +6,7 @@ khách của cả đội, bắt huỷ giao dịch phải qua giám đốc… B�
 "access_change" → chủ tài khoản (luật mặc định của gói nền; ``sensitive`` của từng lệnh nói lần gọi nào thuộc luật + mô tả cho người duyệt).
 """
 
+import base64
 import re
 from dataclasses import replace
 from datetime import date, timedelta
@@ -29,6 +30,7 @@ from barista.api import (
     Screen,
     Workspace,
     field,
+    files,
     today,
     ui,
     zone,
@@ -1738,6 +1740,82 @@ async def set_profile(ctx: Ctx, inp: Profile) -> dict[str, Any]:
     return {"summary": "Đã lưu giới thiệu công ty cho trợ lý"}
 
 
+# ── Nhận diện thương hiệu công ty (ADR 0249 lát 2): MỘT bộ cho mọi thứ công ty phát ra (ấn phẩm, giấy tờ, Word) — trước nằm riêng ở Soạn với AI ──
+
+LOGO_MAX = 500 * 1024
+
+
+async def _brand_row(ctx: Ctx) -> dict[str, Any]:
+    r = await ctx.one("SELECT primary_color, font, footer, logo_file_id, logo_filename, updated_at FROM admin.brand")
+    return {**company_settings.BRAND_DEFAULT, "logo_file_id": None, "logo_filename": "", "updated_at": None, **(r or {})}
+
+
+@m.query("brand_view", resource="core.admin", action="manage", title="Nhận diện thương hiệu")
+async def brand_view(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    """Một dòng: màu chính, phông, chân trang, logo của công ty — ấn phẩm, giấy tờ, Word xuất ra theo bộ này (nút Sửa điền sẵn giá trị hiện tại)."""
+    b = await _brand_row(ctx)
+    return ui.table([{"id": "brand", "primary_color": b["primary_color"], "color": f"#{b['primary_color']}", "font": b["font"], "footer": b["footer"],
+                      "logo": b["logo_filename"] or "(chưa có)", "updated_at": b["updated_at"]}],
+                    [ui.col("color", "Màu chính"), ui.col("font", "Phông chữ"), ui.col("footer", "Chân trang", width=320), ui.col("logo", "Logo"),
+                     ui.col("updated_at", "Cập nhật", "datetime")],
+                    title="Nhận diện thương hiệu",
+                    note="Dùng chung cho mọi thứ công ty xuất ra: ấn phẩm (tờ rơi, tờ giới thiệu, slide), giấy tờ, file Word.")
+
+
+class SetBrand(Input):
+    primary_color: str = field("Màu chính (hex)", "1F4E79", max_length=7, example="1F4E79")
+    font: Literal["Arial", "Calibri", "Times New Roman", "Roboto", "Be Vietnam Pro"] = field(
+        "Phông chữ", "Arial", options={f: f for f in company_settings.FONTS})
+    footer: str = field("Chân trang", "", max_length=200, example="Công ty CP Mẫu · 010 000 0000 · mau.example")
+    logo_b64: str = field("Logo (PNG / JPEG, base64)", "", hidden=True, max_length=700_000)
+    logo_filename: str = field("Tên tệp logo", "", hidden=True, max_length=120)
+
+
+@m.command("set_brand", resource="core.admin", action="manage", title="Sửa nhận diện thương hiệu", agent="propose")
+async def set_brand(ctx: Ctx, inp: SetBrand) -> dict[str, Any]:
+    """Màu / phông / chân trang / logo của công ty. Logo mới thay logo cũ (logo cũ được thu hồi ở kho tệp); không gửi logo ⇒ giữ logo đang có."""
+    color = inp.primary_color.removeprefix("#").upper()
+    if not re.fullmatch(r"[0-9A-F]{6}", color):
+        raise Invalid("Màu viết dạng hex 6 ký tự, vd 1F4E79")
+    logo_id = None
+    if inp.logo_b64:
+        if not inp.logo_filename.lower().endswith((".png", ".jpg", ".jpeg")):
+            raise Invalid("Logo nhận PNG / JPEG")
+        try:
+            raw = base64.b64decode(inp.logo_b64, validate=True)
+        except ValueError:
+            raise Invalid("Logo hỏng (base64)") from None
+        stored = await files.put(ctx, raw, inp.logo_filename, "image/png" if inp.logo_filename.lower().endswith(".png") else "image/jpeg", max_bytes=LOGO_MAX)
+        logo_id = stored.id
+    old = await ctx.val("SELECT logo_file_id FROM admin.brand")
+    await ctx.exec("""INSERT INTO admin.brand (primary_color, font, footer, logo_file_id, logo_filename, updated_by) VALUES (%s, %s, %s, %s, %s, core.me())
+                      ON CONFLICT (tenant_id) DO UPDATE SET primary_color = EXCLUDED.primary_color, font = EXCLUDED.font, footer = EXCLUDED.footer,
+                          logo_file_id = coalesce(EXCLUDED.logo_file_id, admin.brand.logo_file_id),
+                          logo_filename = CASE WHEN EXCLUDED.logo_file_id IS NULL THEN admin.brand.logo_filename ELSE EXCLUDED.logo_filename END,
+                          updated_by = EXCLUDED.updated_by, updated_at = now()""",
+                   (color, inp.font, inp.footer.strip(), logo_id, inp.logo_filename if logo_id else ""))
+    if logo_id and old:
+        await files.release(ctx, old)
+    return {"summary": "Đã lưu nhận diện thương hiệu"}
+
+
+@m.query("brand", resource=None, title="Nhận diện thương hiệu (cho tệp xuất)", internal=True, agent="deny", callers=("compose",),
+         why="compose (ấn phẩm: xem trước, xuất Word / PDF / PowerPoint / trang web, trang chia sẻ — ADR 0249): bộ nhận diện CỦA CÔNG TY người gọi để vẽ tệp. "
+             "Trả {primary_color, font, footer, logo_filename, logo_type, logo_b64} — dữ liệu công ty ai trong công ty cũng thấy trên tệp xuất, không dữ liệu người.")
+async def brand(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    """Bộ nhận diện để vẽ tệp. ``logo_b64`` rỗng khi chưa có logo / logo không đọc được (tệp vẫn xuất, không logo)."""
+    b = await _brand_row(ctx)
+    logo, ctype = b"", ""
+    if b["logo_file_id"]:
+        try:
+            logo = await files.read(ctx, b["logo_file_id"])
+            ctype = "image/png" if b["logo_filename"].lower().endswith(".png") else "image/jpeg"
+        except (Denied, NotFound):
+            logo = b""
+    return {"primary_color": b["primary_color"], "font": b["font"], "footer": b["footer"], "logo_filename": b["logo_filename"],
+            "logo_type": ctype, "logo_b64": base64.b64encode(logo).decode() if logo else ""}
+
+
 @m.query("term_options", resource="core.admin", title="Khái niệm có nhãn riêng")
 async def term_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
     return [{"value": k, "label": t.meaning[:1].upper() + t.meaning[1:]} for k, t in vocab.TERMS.items()]
@@ -2741,6 +2819,8 @@ _STORE_SCREENS = (
     Screen("packs", "Gói đang dùng", "square.stack.3d.up", "admin.packs", open=Open("admin.pack_info", {"pack": "id"}, "Trang gói")),
     Screen("profile", "Hồ sơ công ty cho trợ lý", "building.columns", "admin.profile",
            row_actions=(A("admin.set_profile", "Sửa", prefill={"about": "about"}, style="primary"),)),
+    Screen("brand", "Nhận diện thương hiệu", "paintpalette", "admin.brand_view",
+           row_actions=(A("admin.set_brand", "Sửa", prefill={"primary_color": "primary_color", "font": "font", "footer": "footer"}, style="primary"),)),
     Screen("vocabulary", "Từ vựng công ty", "textformat", "admin.vocabulary",
            row_actions=(A("admin.set_term", "Đổi chữ", bind={"term": "id"}, prefill={"label": "label"}, style="primary"),)),
     Screen("settings", "Cài đặt công ty", "switch.2", "admin.settings",
@@ -2819,7 +2899,7 @@ _ADMIN_SCREENS = (
 # (web gấp lại). Khoá màn giữ nguyên ⇒ ghim cũ vẫn trỏ đúng (``manifest`` tìm màn theo khoá khi phân hệ đổi). Màn góp từ module khác (``m.screens("admin", …)``) giữ nhóm
 # "Hệ thống" của chúng và đứng cuối.
 _GROUP_OF = {
-    **dict.fromkeys(("profile", "settings", "legal_entities"), "Công ty"),
+    **dict.fromkeys(("profile", "brand", "settings", "legal_entities"), "Công ty"),
     **dict.fromkeys(("users", "teams", "permissions", "chains", "info_access"), "Người & quyền"),
     **dict.fromkeys(("store", "packs"), "Gói & ứng dụng"),
     **dict.fromkeys(("agent", "agent_actions", "ai_usage"), "Trợ lý AI"),

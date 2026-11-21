@@ -22,6 +22,7 @@ import { CalendarBlock } from "@/components/blocks/calendar";
 import { PickerBlock } from "@/components/blocks/picker";
 import { Callout, ListBlock, StageList, StepStrip, TilesBlock } from "@/components/blocks/misc";
 import { FindingCard } from "@/components/blocks/finding";
+import { RecordFilesBlock } from "@/components/blocks/record-files";
 import { ThreadBlock } from "@/components/blocks/thread";
 import { ComposerBlock } from "@/components/blocks/composer";
 import { WordDocBlock } from "@/components/blocks/word-doc";
@@ -291,6 +292,13 @@ export function CardView({ page: raw, onClose, onChanged, head }: { page: CardPa
                            onOpenDocument={(id, page, title) => desk.openPage("kb.document", page ? { document_id: id, page } : { document_id: id }, title)} />
             );
           case "list":
+            if (b.attach) {   // khối "Tệp" của hồ sơ (ADR 0249): cùng danh sách + gắn tệp
+              return (
+                <RecordFilesBlock key={i} title={b.title} items={b.items} attach={b.attach} onChanged={onChanged}
+                  onOpen={(q, input, title) => desk.openPage(q, input, title)}
+                  onAsk={(q) => { desk.select({ kind: "assistant" }); chat.send(q); }} />
+              );
+            }
             return (
               <Section key={i} title={b.title}>
                 <ListBlock

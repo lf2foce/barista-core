@@ -4,6 +4,10 @@
   ⇒ ``admin.install_defaults`` ghi giá trị mặc định vào ``core.settings`` qua nhật ký cài (công ty đã đổi thì bật lại gói không ghi đè — như từ vựng 0124).
 * Công ty chưa có dòng (bật gói TRƯỚC khi công tắc được khai) ⇒ giá trị mặc định khai trong code.
 * Quản trị đổi trong app (``admin.set_setting``); module chỉ ĐỌC qua ``enabled`` — SQL của module không chạm ``core.settings`` (bất biến 3).
+
+NHẬN DIỆN THƯƠNG HIỆU công ty (ADR 0249 lát 2): màu chính, phông, chân trang, logo — MỘT bộ cho mọi thứ công ty phát ra (ấn phẩm, giấy tờ, Word). Giá trị là
+dữ liệu của công ty ở ``admin.brand`` (module Quản trị giữ cả tệp logo — sổ tệp 0122 cần một bảng module trỏ vào tệp); ở đây chỉ là HỢP ĐỒNG chung: phông được
+chọn (``FONTS``) và mặc định khi công ty chưa đặt (``BRAND_DEFAULT``). Module đọc bằng thao tác nội bộ ``admin.brand`` (``callers=``), không đọc bảng.
 """
 
 import re
@@ -14,6 +18,8 @@ from uuid import UUID
 from barista.db import Conn
 
 KEY = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+FONTS = ("Arial", "Calibri", "Times New Roman", "Roboto", "Be Vietnam Pro")   # khớp CHECK của ``admin.brand.font`` (migration base/107)
+BRAND_DEFAULT: dict[str, str] = {"primary_color": "1F4E79", "font": "Arial", "footer": ""}
 AI_FALLBACK_VENDOR = "core.ai_allow_fallback_vendor"   # khai ở kernel/core_ops.py; ``auth.load`` đọc vào ``Principal.ai_fallback`` (agent/llm.py: nhà cung cấp thứ hai)
 
 

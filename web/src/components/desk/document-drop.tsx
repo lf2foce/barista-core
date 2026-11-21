@@ -1,11 +1,15 @@
 "use client";
 
-import { FileText, Users } from "lucide-react";
+import { FileText, MessageSquare, Paperclip, Sparkles, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { actionClass } from "@/components/primitives";
-import { api } from "@/lib/api";
-import { decodeShelves, decodeTypeHint, documentTitle, uploadOutcome, uploadedPrompt, type TypeHint, type UploadShelf, type Uploaded } from "@/lib/documents";
+import { api, type ChatDocument } from "@/lib/api";
+import {
+  CHAT_DOC_MAX, decodeShelves, decodeTypeHint, defaultDropChoice, documentTitle, dropChoices, toChatDocument, uploadOutcome, uploadedPrompt,
+  type DropChoice, type TypeHint, type UploadShelf, type Uploaded,
+} from "@/lib/documents";
+import { newKey } from "@/lib/idempotency";
 import { cn } from "@/lib/utils";
 import { useDesk } from "./desk-context";
 
@@ -14,12 +18,15 @@ type Row = Uploaded & { hint?: TypeHint | null };
 
 const READERS = 3;   // đọc loại song song vừa phải: chip hiện dần, không phải đợi cả bộ
 
-/** Chứng từ thả vào ô chat ⇒ hộp này: NGƯỜI chọn kệ (thấy "ai đọc được"), rồi mới tải lên. Không chọn sẵn kệ nào — tài liệu kệ "Chung" cả công ty
- *  đọc (review 04/11, bản demo mở công khai). Chỉ tài liệu ĐÃ LƯU vào câu mời trợ lý; chờ duyệt / lỗi báo riêng.
- *  Công ty có loại chứng từ: tải xong hộp hiện từng tệp với chip server soạn, chip hiện dần; Xong bấm được bất cứ lúc nào (model chậm không khoá người).
- *  Không tệp nào có gợi ý ⇒ đóng thẳng, như hộp tải lên thường. */
-export function DocumentDropDialog({ files, onClose }: { files: File[]; onClose: () => void }) {
+/** Tài liệu thả vào chat TRỢ LÝ (ADR 0249) ⇒ hộp này: KHÔNG tự vào kho tri thức. Máy chọn sẵn (người xác nhận — 0225): đang mở một hồ sơ nhận tệp ⇒
+ *  "Gắn vào hồ sơ"; không thì "Chỉ dùng trong cuộc trò chuyện này" (tài liệu đi kèm câu hỏi tiếp theo, thân tệp không lưu). "Đăng lên kho tri thức"
+ *  chỉ khi người chọn rõ — khi đó NGƯỜI chọn kệ (thấy "ai đọc được"), không chọn sẵn kệ nào; tải xong hiện chip loại chứng từ server soạn, chỉ tài
+ *  liệu ĐÃ LƯU vào câu mời trợ lý; chờ duyệt / lỗi báo riêng. */
+export function DocumentDropDialog({ files, onClose, onKeep }: { files: File[]; onClose: () => void; onKeep: (docs: ChatDocument[]) => void }) {
   const desk = useDesk();
+  const record = desk.openRecord;
+  const [choice, setChoice] = useState<DropChoice>(() => defaultDropChoice(record));
+  const guessed = defaultDropChoice(record);
   const [shelves, setShelves] = useState<UploadShelf[] | null>(null);
   const [shelf, setShelf] = useState("");
   const [busy, setBusy] = useState("");
@@ -30,8 +37,48 @@ export function DocumentDropDialog({ files, onClose }: { files: File[]; onClose:
   const closed = useRef(false);
 
   useEffect(() => {
+    if (choice !== "knowledge" || shelves !== null) return;
     api.queryRaw<unknown>("kb.upload_shelves").then((r) => setShelves(decodeShelves(r)), () => setShelves([]));
-  }, []);
+  }, [choice, shelves]);
+
+  /** Gắn vào hồ sơ đang mở — cùng cửa với khối "Tệp" của thẻ (server kiểm quyền, cỡ, loại). */
+  const attach = async () => {
+    if (!record) return;
+    let done = 0;
+    const bad: string[] = [];
+    for (const [i, f] of files.entries()) {
+      setBusy(`Đang gắn ${i + 1}/${files.length}: ${f.name}…`);
+      try {
+        const r = await api.recordFileUpload(record.path, f, { subject_kind: record.subjectKind, subject_id: record.subjectId }, newKey());
+        if (r.status === "ok") done++;
+        else bad.push(f.name);
+      } catch {
+        bad.push(f.name);
+      }
+    }
+    setBusy("");
+    onClose();
+    if (bad.length) desk.show(`Không gắn được: ${bad.join(", ")}`, true);
+    if (done) {
+      desk.show(`Đã gắn ${done} tệp vào “${record.title}”`);
+      desk.bumpRecordFiles();
+    }
+  };
+
+  /** Chỉ cho cuộc trò chuyện này: tài liệu đi kèm câu hỏi tiếp theo (người gõ câu hỏi rồi gửi). */
+  const keep = async () => {
+    const out: ChatDocument[] = [];
+    for (const f of files.slice(0, CHAT_DOC_MAX)) {
+      try {
+        out.push(await toChatDocument(f));
+      } catch (e) {
+        desk.show(e instanceof Error ? e.message : `Không đọc được ${f.name}`, true);
+      }
+    }
+    if (files.length > CHAT_DOC_MAX) desk.show(`Tối đa ${CHAT_DOC_MAX} tài liệu mỗi câu hỏi — bỏ bớt ${files.length - CHAT_DOC_MAX}`, true);
+    onClose();
+    if (out.length) onKeep(out);
+  };
 
   /** Đóng hộp + đưa câu mời vào ô soạn tin — người sửa rồi bấm gửi. */
   const finish = (done: Row[], wait: string[], bad: string[]) => {
@@ -109,9 +156,11 @@ export function DocumentDropDialog({ files, onClose }: { files: File[]; onClose:
     <Dialog open onOpenChange={(o) => !o && !busy && (rows ? finish(rows, pending, failed) : onClose())}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle className="t16">{rows ? `Đã lưu ${rows.length}/${files.length} chứng từ` : `Tải ${files.length} chứng từ vào kho tài liệu`}</DialogTitle>
+          <DialogTitle className="t16">{rows ? `Đã lưu ${rows.length}/${files.length} chứng từ` : `Dùng ${files.length} tài liệu vào việc gì?`}</DialogTitle>
           <DialogDescription className="t12">
-            {rows ? "Loại do hệ thống đọc từ nội dung và đề xuất. Tệp ghi “chưa chắc” sẽ được hỏi lại, không tự xếp loại." : "Chọn kệ — ai đọc được kệ đó sẽ thấy các chứng từ này. Xong em điền sẵn câu mời trợ lý."}
+            {rows ? "Loại do hệ thống đọc từ nội dung và đề xuất. Tệp ghi “chưa chắc” sẽ được hỏi lại, không tự xếp loại."
+              : choice === "knowledge" ? "Chọn kệ — ai đọc được kệ đó sẽ thấy các chứng từ này. Xong em điền sẵn câu mời trợ lý."
+              : "Em chọn sẵn theo việc anh/chị đang làm — đổi được trước khi bấm."}
           </DialogDescription>
         </DialogHeader>
 
@@ -134,6 +183,23 @@ export function DocumentDropDialog({ files, onClose }: { files: File[]; onClose:
                 <li key={f.name} className="t14 flex items-center gap-2"><FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />{f.name}</li>
               ))}
             </ul>
+            <div role="radiogroup" aria-label="Dùng tài liệu vào việc gì" className="flex flex-col gap-1.5">
+              {dropChoices(record).map((c) => {
+                const Icon = c.value === "record" ? Paperclip : c.value === "conversation" ? MessageSquare : Users;
+                return (
+                  <button key={c.value} type="button" role="radio" aria-checked={choice === c.value} disabled={!!busy} onClick={() => setChoice(c.value)}
+                          className={cn("flex items-start gap-2 rounded-lg border p-2.5 text-left", choice === c.value ? "border-primary bg-primary/5" : "border-border")}>
+                    <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="t14m">{c.label}</span>
+                      <span className="t12 text-muted-foreground">{c.detail}</span>
+                    </span>
+                    {c.value === guessed ? <span className="t12 inline-flex shrink-0 items-center gap-1 text-primary"><Sparkles className="size-3" aria-hidden />chọn sẵn</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+            {choice === "knowledge" ? (
             <div role="radiogroup" aria-label="Kệ lưu" className="flex flex-col gap-1.5">
               {shelves === null ? <p className="t12 text-muted-foreground">Đang tải danh sách kệ…</p> : null}
               {shelves?.length === 0 ? <p className="t12" style={{ color: "var(--bad)" }}>Bạn chưa thêm được tài liệu vào kệ nào.</p> : null}
@@ -148,7 +214,8 @@ export function DocumentDropDialog({ files, onClose }: { files: File[]; onClose:
                 </button>
               ))}
             </div>
-            {chosen?.everyone ? <p className="t12" style={{ color: "var(--warn)" }}>Kệ này cả công ty đọc được.</p> : null}
+            ) : null}
+            {choice === "knowledge" && chosen?.everyone ? <p className="t12" style={{ color: "var(--warn)" }}>Kệ này cả công ty đọc được.</p> : null}
           </>
         )}
 
@@ -159,7 +226,10 @@ export function DocumentDropDialog({ files, onClose }: { files: File[]; onClose:
           ) : (
             <>
               <button type="button" className={actionClass("default")} onClick={() => (busy ? stop.current?.abort() : onClose())}>{busy ? "Dừng tải" : "Huỷ"}</button>
-              <button type="button" className={actionClass("primary")} disabled={!shelf || !!busy} onClick={() => void upload()}>Tải lên</button>
+              <button type="button" className={actionClass("primary")} disabled={!!busy || (choice === "knowledge" && !shelf)}
+                      onClick={() => void (choice === "record" ? attach() : choice === "conversation" ? keep() : upload())}>
+                {choice === "record" ? "Gắn vào hồ sơ" : choice === "conversation" ? "Dùng trong cuộc trò chuyện" : "Đăng lên kho"}
+              </button>
             </>
           )}
         </DialogFooter>

@@ -67,6 +67,31 @@ describe("composer", () => {
     expect(page.blocks[0].blocks[0].slot).toBe("");
   });
 
+  it("ấn phẩm gắn hồ sơ (0249): hồ sơ / khách / công thức / mẫu + định dạng theo loại; bản cũ thiếu ⇒ rỗng", () => {
+    const page = decodePage({
+      kind: "card", title: "Ấn phẩm", blocks: [{
+        type: "composer", session_id: "s", kind: "flyer", from_record: true,
+        subject: { kind: "orderdesk.order", id: "o1", label: "DH-1 · Tư vấn" }, customer: { kind: "crm.lead", id: "l1", label: "Khách Một" },
+        recipes: [{ key: "demo_order", label: "Tờ rơi một đơn", piece: "flyer", needs_subject: true, customer: true }, { label: "thiếu khoá" }],
+        kinds: [{ key: "flyer", label: "Tờ rơi", templates: [{ key: "flyer", label: "Tờ rơi" }], formats: [{ key: "pdf", label: "PDF" }] }],
+        formats: [{ key: "pdf", label: "PDF" }, { key: "html", label: "Trang web (.html)" }],
+      }],
+    });
+    if (page.kind !== "card" || page.blocks[0].type !== "composer") throw new Error("composer");
+    const c = page.blocks[0];
+    expect(c.subject).toEqual({ kind: "orderdesk.order", id: "o1", label: "DH-1 · Tư vấn" });
+    expect(c.customer.label).toBe("Khách Một");
+    expect(c.from_record).toBe(true);
+    expect(c.recipes).toEqual([{ key: "demo_order", label: "Tờ rơi một đơn", about: "", piece: "flyer", needs_subject: true, customer: true }]);
+    expect(c.kinds[0].templates.map((t) => t.key)).toEqual(["flyer"]);
+    expect(c.formats[0].key).toBe("pdf");
+    const old = decodePage({ kind: "card", title: "Cũ", blocks: [{ type: "composer", session_id: "s" }] });
+    if (old.kind !== "card" || old.blocks[0].type !== "composer") throw new Error("composer");
+    expect(old.blocks[0].subject).toEqual({ kind: "", id: "", label: "" });
+    expect(old.blocks[0].recipes).toEqual([]);
+    expect(old.blocks[0].from_record).toBe(false);
+  });
+
   it("giải mã lượt trò chuyện + lịch sử, thiếu trường ⇒ mặc định", () => {
     const page = decodePage({
       kind: "card", title: "Soạn", blocks: [{ type: "composer", session_id: "", turns: [{ role: "user", text: "Báo cáo" }, { role: "assistant", status: "failed", text: "Chưa cấu hình mô hình AI — báo quản trị", steps: [{ title: "Giao dịch" }] }, { role: "lạ" }],
@@ -77,7 +102,7 @@ describe("composer", () => {
     expect(c.turns.map((t) => t.role)).toEqual(["user", "assistant", "assistant"]);
     expect(c.turns[1].steps).toEqual([{ title: "Giao dịch", status: "ok" }]);
     expect(c.history[0]).toMatchObject({ id: "s1", status: "failed" });
-    expect(c.kind).toBe("document");
+    expect(c.kind).toBe("brochure");   // thiếu loại ⇒ tờ giới thiệu ("Văn bản" không còn là loại soạn mới — 0249)
     expect(retryTarget(c.turns.slice(0, 2))?.text).toBe("Báo cáo");
     expect(retryTarget(c.turns.slice(0, 1))).toBeNull();
   });

@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-18 gói · 30 module · 1019 thao tác (280 nội bộ) · 20 bên nghe sự kiện.
+18 gói · 30 module · 1030 thao tác (281 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
@@ -11,7 +11,7 @@
 |---|---|---|---|---|
 | `base` | Nền | lõi | — | `admin`, `apps`, `asks`, `connect`, `connectors`, `core`, `flow`, `health`, `kb`, `memory`, `papers`, `work` |
 | `books` | Sổ sách & nghĩa vụ | năng lực | — | `books` |
-| `compose` | Soạn với AI (thử nghiệm) | năng lực | — | `compose` |
+| `compose` | Ấn phẩm (thử nghiệm) | năng lực | — | `compose` |
 | `crm` | Khách hàng | năng lực | `directory`, `schedule` | `crm`, `leadflow` |
 | `directory` | Cá nhân & tổ chức | năng lực | — | `parties` |
 | `finance` | Tài chính | năng lực | `directory` | `acct` |
@@ -33,14 +33,14 @@
 | Module | Tên | Gói | Schema | Mã | Lệnh | Truy vấn | Nội bộ |
 |---|---|---|---|---|---|---|---|
 | `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (20 file) | 68 | 83 | 55 |
-| `admin` | Quản trị | `base` | — | `modules/admin.py` | 38 | 43 | 12 |
+| `admin` | Quản trị | `base` | `admin` | `modules/admin.py` | 39 | 45 | 13 |
 | `apps` | App của tôi | `base` | `apps` | `modules/apps.py` | 11 | 20 | 2 |
 | `asks` | Yêu cầu gửi bên ngoài | `base` | `asks` | `modules/asks.py` | 10 | 3 | 4 |
 | `books` | Sổ sách & nghĩa vụ | `books` | `books` | `modules/books.py` | 9 | 14 | 6 |
-| `compose` | Soạn với AI | `compose` | `compose` | `modules/compose/` (7 file) | 20 | 6 | 1 |
+| `compose` | Ấn phẩm | `compose` | `compose` | `modules/compose/` (8 file) | 20 | 6 | 1 |
 | `connect` | Ứng dụng kết nối | `base` | — | `modules/connect.py` | 9 | 3 | 4 |
 | `connectors` | Kết nối ngoài | `base` | `connectors` | `modules/connectors.py` | 10 | 6 | 6 |
-| `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py` | 32 | 28 | 9 |
+| `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/record_files.py` | 34 | 33 | 9 |
 | `crm` | Khách hàng | `crm` | `crm` | `modules/crm/` (18 file) | 24 | 49 | 42 |
 | `findings` | Báo cáo chạy song song | `findings` | — | `modules/findings.py` | 0 | 7 | 1 |
 | `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (15 file) | 37 | 49 | 33 |
@@ -57,7 +57,7 @@
 | `parties` | Cá nhân & tổ chức | `directory` | `parties` | `modules/parties.py` | 20 | 16 | 19 |
 | `pay` | Lương & thù lao | `pay` | `pay` | `modules/pay/` (7 file) | 15 | 17 | 7 |
 | `schedule` | Lịch & nguồn lực | `schedule` | `schedule` | `modules/schedule/` (5 file) | 18 | 16 | 6 |
-| `talk` | Trao đổi | `talk` | `talk` | `modules/talk.py` | 16 | 18 | 7 |
+| `talk` | Trao đổi | `talk` | `talk` | `modules/talk.py` | 17 | 18 | 7 |
 | `timekeeping` | Chấm công | `timekeeping` | `timekeeping` | `modules/timekeeping/` (8 file) | 22 | 16 | 8 |
 | `training` | Đào tạo | `training` | `training` | `modules/training.py` | 8 | 7 | 0 |
 | `word` | Văn bản Word | `word` | `word` | `modules/word/` (2 file) | 8 | 5 | 0 |
@@ -129,6 +129,7 @@
 
 - **Tài nguyên quyền:** —
 - **Hợp đồng quyền hệ thống** (thao tác ← module được gọi):
+  - `admin.brand` ← `compose`
   - `admin.delivery_health` ← `health`
   - `admin.members_with_grant` ← `acct`
 - **Mở cho gói ngoài** (thao tác → họ; gói khai `consumes`):
@@ -165,12 +166,13 @@
 - **Bộ kiểm:** `books.filings_done`
 - **Vòng quét:** `books.open_due`, `books.sync_rules`
 
-### `compose` — Soạn với AI
+### `compose` — Ấn phẩm
 
-- **Mã:** `compose/__init__.py`, `compose/check.py`, `compose/editorial.py`, `compose/html.py`, `compose/layout.py`, `compose/render.py`, `compose/vn.py`
+- **Mã:** `compose/__init__.py`, `compose/check.py`, `compose/editorial.py`, `compose/html.py`, `compose/kinds.py`, `compose/layout.py`, `compose/render.py`, `compose/vn.py`
 - **Tài nguyên quyền:** —
 - **Điểm cắm của module này** (điểm ← thao tác cắm vào):
   - `compose.brochure` ← `findings.plug_brochure`
+- **Sự kiện phát:** `compose.piece_opened`
 
 ### `connect` — Ứng dụng kết nối
 
@@ -240,7 +242,7 @@
   - `crm.offering_options` ← —
 - **Cắm vào:** `schedule.calendar_items`, `schedule.markers`, `schedule.quick_add`
 - **Sự kiện phát:** `crm.lead_assigned`, `crm.lead_created`, `crm.lead_outcome_recorded`, `crm.lead_stage_changed`, `subject.changed`
-- **Nghe sự kiện:** `parties.party_renamed` → `crm.follow_party_name`, `schedule.booking_changed` → `crm.on_booking_changed`
+- **Nghe sự kiện:** `parties.party_renamed` → `crm.follow_party_name`, `schedule.booking_changed` → `crm.on_booking_changed`, `compose.piece_opened` → `crm.piece_opened`
 - **Cò tự động hoá:** `crm.lead_assigned`, `crm.lead_created`, `crm.lead_stage_changed`
 - **Chỉ số:** `crm.metric_appointments`, `crm.metric_calls`, `crm.metric_connected`, `crm.metric_leads`
 - **Tìm nhanh:** `crm.search_customers`

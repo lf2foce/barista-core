@@ -768,6 +768,7 @@ async def chat_stream(request: Request, body: Annotated[dict[str, Any], Body()],
     except ValueError as e:
         raise HTTPException(422, "thread_id không hợp lệ") from e
     images = parse_images(body.get("images"))
+    documents = parse_documents(body.get("documents"))   # ADR 0249: thả vào chat, chọn "chỉ dùng trong cuộc trò chuyện này" — không vào kho / hồ sơ
     # chế độ (0098): "assistant" (mặc định) hoặc chế độ module khai (vd "builder" — trình tạo app); app_id ⇒ đang làm trên app đó
     mode = str(body.get("mode") or "assistant")
     if mode != "assistant" and mode not in registry.MODES:
@@ -789,7 +790,7 @@ async def chat_stream(request: Request, body: Annotated[dict[str, Any], Body()],
     key = str(body.get("turn_key") or "")[:64]   # mã lượt app tạo ⇒ bấm "Dừng" được
     held = standing.for_request(request.headers, p, epoch)   # kiểm lại tư cách trước mỗi công cụ của lượt (khoá / đổi vai / đăng xuất giữa lượt)
     return _ndjson(lambda emit: chat.chat_turn(p, message, emit=emit, thread_id=thread_id, images=images, mode=mode, context=context,
-                                               standing=held), p, stop_key=key)
+                                               standing=held, documents=documents), p, stop_key=key)
 
 
 @app.post("/v1/assistant/chat/stop")
@@ -857,6 +858,31 @@ def parse_images(raw: Any) -> list[tuple[bytes, str]]:
         if not data or len(data) > IMAGE_BYTES:
             raise HTTPException(422, "Mỗi ảnh tối đa 5 MB")
         out.append((data, mt))
+    return out
+
+
+DOC_MAX, DOC_BYTES = 3, 10 * 1024 * 1024
+
+
+def parse_documents(raw: Any) -> list[tuple[str, bytes]]:
+    """Tài liệu gửi kèm câu hỏi: [{filename, data: base64}] — tối đa 3, mỗi tệp ≤ 10 MB, PDF / Word / Excel / PowerPoint / chữ. Thân tệp không lưu (chat.chat_turn)."""
+    from barista.docread.types import kind_of
+    if not raw:
+        return []
+    if not isinstance(raw, list) or len(raw) > DOC_MAX:
+        raise HTTPException(422, f"Tối đa {DOC_MAX} tài liệu mỗi câu hỏi")
+    out: list[tuple[str, bytes]] = []
+    for item in raw:
+        name = str((item or {}).get("filename") or "").strip()[:300] or "tai-lieu"
+        if kind_of(name) in ("", "image"):   # ảnh đi đường ``images``; loại docread không đọc được ⇒ từ chối
+            raise HTTPException(422, "Chỉ nhận tài liệu PDF, Word, Excel, PowerPoint hoặc chữ")
+        try:
+            data = base64.b64decode(str(item.get("data") or ""), validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise HTTPException(422, "Tài liệu không đọc được") from e
+        if not data or len(data) > DOC_BYTES:
+            raise HTTPException(422, "Mỗi tài liệu tối đa 10 MB")
+        out.append((name, data))
     return out
 
 
