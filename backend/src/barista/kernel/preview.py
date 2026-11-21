@@ -18,6 +18,7 @@ Luật xác nhận của nút không ô nào (``confirm_rule``) cũng ở đây 
 from typing import TYPE_CHECKING, Any
 
 from barista.kernel import registry
+from barista.kernel.agent_policy import self_serve
 from barista.kernel.forms import field_specs
 from barista.kernel.text import vnd_text
 
@@ -35,7 +36,7 @@ def reversibility(op: registry.Op) -> dict[str, Any]:
         return {"ok": True, "how": op.reversible}
     if op.undone_by:
         return {"ok": True, "how": "Bấm Hoàn tác ở thẻ kết quả (trong 7 ngày), hoặc sửa lại bằng chính thao tác này."}
-    if op.agent == "allow":
+    if self_serve(op):
         return {"ok": True, "how": "Sửa lại được bằng chính thao tác này."}
     return dict(UNKNOWN)
 
