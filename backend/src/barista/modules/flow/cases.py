@@ -193,8 +193,8 @@ class SetTemplate(Input):
                               "soạn đề xuất (người bấm mới chạy). Lời dặn cho trợ lý ghi bằng dòng ~ trong chặng")
     source: str = field("Các chặng", kind="textarea", max_length=20000,
                         example="# Nộp & bàn giao | Kế toán\n- Đã gửi khách báo cáo kỳ\n- Nghĩa vụ của kỳ đã nộp = books.filings_done",
-                        help="Mỗi chặng một dòng bắt đầu bằng # (tên chặng | người giữ); dưới mỗi chặng, mỗi mục một dòng bắt đầu bằng - . "
-                             "Mục có thể gắn bộ kiểm tự động (= tên_bộ_kiểm), việc tự sinh (> việc @ĐỘI | số ngày) hoặc lời dặn trợ lý (~)")
+                        help="Mỗi chặng một dòng bắt đầu bằng # ; dưới mỗi chặng, mỗi việc cần xong một dòng bắt đầu bằng - . Chưa quen? Đóng form, chọn một mẫu có sẵn ở màn "
+                             "Mẫu quy trình rồi sửa. Nâng cao: # Chặng | người giữ · mục = bộ_kiểm_tự_động · > việc @ĐỘI | số ngày · ~ lời dặn trợ lý")
 
 
 @m.command("set_template", resource="flow.templates", action="manage", title="Lưu mẫu quy trình")
@@ -229,6 +229,16 @@ async def subject_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
             *({"value": k, "label": v[0]} for k, v in registry.SUBJECTS.items() if not k.startswith("flow."))]
 
 
+def _starter_block(has_any: bool) -> dict[str, Any]:
+    """Khối "Bắt đầu từ một mẫu có sẵn": mỗi nút mở form Thêm quy trình đã điền sẵn tên + các chặng (người sửa được). Chưa có quy trình nào ⇒ nói thẳng việc nên làm."""
+    from barista.modules.flow.starters import STARTERS
+
+    return ui.b_callout("blue", "Bắt đầu từ một mẫu có sẵn" if not has_any else "Thêm quy trình từ mẫu có sẵn",
+                        "Quy trình là các chặng việc một hồ sơ đi qua. Chọn mẫu gần việc của bạn rồi sửa chặng cho khớp." if not has_any else "",
+                        facts=[f"{name} — {note}" for name, note, _ in STARTERS],
+                        actions=[ui.act("flow.set_template", f"Mẫu: {name}", values={"name": name, "source": text}) for name, _, text in STARTERS])
+
+
 @m.query("templates", resource="flow.templates", title="Mẫu quy trình")
 async def templates(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     rows = await ctx.all(
@@ -242,7 +252,8 @@ async def templates(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     return ui.table(rows, [
         ui.col("name", "Quy trình"), ui.col("version", "Phiên bản", "number"), ui.col("subject", "Bám theo"), ui.col("summary", "Chặng & mục", width=420),
         ui.col("open_cases", "Hồ sơ đang mở", "number"), ui.col("by_name", "Người sửa"), ui.col("created_at", "Lúc", "datetime"),
-    ], title="Mẫu quy trình", empty="Chưa có quy trình — thêm bằng nút, hoặc nhờ trợ lý soạn", row_key="key")
+    ], title="Mẫu quy trình", empty="Chưa có quy trình — bấm một mẫu có sẵn ở trên, hoặc nhờ trợ lý soạn", row_key="key",
+        header=[_starter_block(bool(rows))])
 
 
 class TemplateRef(Input):

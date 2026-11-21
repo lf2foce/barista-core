@@ -39,8 +39,10 @@ export function SoloScreenFrame({ children }: { children: React.ReactNode }) {
           </button>
         ) : null}
       </header>
-      <div className="min-h-0 flex-1 overflow-auto p-3 min-[980px]:p-4">
-        <section className="flex min-h-full min-w-0 flex-col gap-3 rounded-[20px] border border-border bg-surface p-3.5 min-[980px]:p-[18px]" aria-label={solo?.screen.title}>
+      {/* thẻ VỪA một màn hình (rà UI 21/11): phần tự cuộn bên trong (lịch, bảng) có chiều cao giới hạn nên cuộn trong thẻ, không đội thẻ cao rồi cuộn cả trang;
+          nội dung thường dài hơn màn hình thì chính thẻ cuộn. Lề trên nhỏ để thẻ sát tiêu đề. */}
+      <div className="min-h-0 flex-1 overflow-hidden px-3 pb-3 pt-0.5 min-[980px]:px-4 min-[980px]:pb-4">
+        <section className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-y-auto rounded-[20px] border border-border bg-surface p-3.5 min-[980px]:p-[18px]" aria-label={solo?.screen.title}>
           {children}
         </section>
       </div>

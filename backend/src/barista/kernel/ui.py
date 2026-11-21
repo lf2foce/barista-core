@@ -362,6 +362,20 @@ def b_picker(title: str, items: list[dict[str, Any]], *, current: str, custom: s
     return gated({"type": "picker", "title": title, "items": items, "current": current, "custom": custom, "note": note, "pending": pending}, needs)
 
 
+def b_image(src: str, *, caption: str = "", alt: str = "", note: str = "", needs: Needs = None) -> dict[str, Any]:
+    """ẢNH trong thẻ (api 1.73): ``src`` = link ký ngắn hạn của ``files.signed_url(inline=True)`` (ảnh / PDF) hoặc đường /v1/… của core; bấm ⇒ xem to. ``note`` hiện thay
+    ảnh khi chưa có ("Chưa có ảnh phiếu"). Mảnh ghép nền — ghép với ``b_split`` để bố cục "nguồn bên trái, dòng đọc bên phải"; app chưa biết khối ⇒ bỏ qua."""
+    return gated({"type": "image", "src": src, "caption": caption, "alt": alt or caption, "note": note}, needs)
+
+
+def b_split(left: list[dict[str, Any]], right: list[dict[str, Any]], *, ratio: str = "1:1", needs: Needs = None) -> dict[str, Any]:
+    """CHIA HAI CỘT (api 1.73): mỗi cột là danh sách khối bất kỳ (kể cả ``b_split`` lồng nhau). ``ratio`` "1:1" · "2:3" · "1:2"… (trái:phải); màn hẹp ⇒ xếp dọc,
+    cột trái trước. Mảnh ghép bố cục chung — gói tự ghép kiểu nhìn riêng của nghiệp vụ mình (ảnh + dòng đọc, hai bản so sánh, hồ sơ + lịch sử…) mà không chờ lõi thêm khối mới."""
+    if not re.fullmatch(r"[1-9]:[1-9]", ratio):
+        raise ValueError(f"ratio phải dạng 'a:b' (một chữ số), nhận {ratio!r}")
+    return gated({"type": "split", "left": left, "right": right, "ratio": ratio}, needs)
+
+
 def b_list(items: list[dict[str, Any]], title: str = "", *, needs: Needs = None) -> dict[str, Any]:
     """Mục của danh sách có thể tự khai ``needs`` (``gated(mục, …)``) — vd gợi ý dựa trên doanh thu chỉ cho người thấy doanh thu."""
     return gated({"type": "list", "title": title, "items": items}, needs)

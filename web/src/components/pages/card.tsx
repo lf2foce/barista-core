@@ -20,6 +20,7 @@ import { Board } from "@/components/blocks/board";
 import { TimelineBlock } from "@/components/blocks/timeline";
 import { CalendarBlock } from "@/components/blocks/calendar";
 import { PickerBlock } from "@/components/blocks/picker";
+import { ImageBlock } from "@/components/blocks/image-block";
 import { Callout, ListBlock, StageList, StepStrip, TilesBlock } from "@/components/blocks/misc";
 import { FindingCard } from "@/components/blocks/finding";
 import { RecordFilesBlock } from "@/components/blocks/record-files";
@@ -318,6 +319,18 @@ export function CardView({ page: raw, onClose, onChanged, head }: { page: CardPa
             );
           case "text":
             return <Section key={i} title={b.title}><Markdown text={b.markdown} /></Section>;
+          case "image":
+            return <ImageBlock key={i} src={b.src} caption={b.caption} alt={b.alt} note={b.note} />;
+          case "split": {
+            // chia hai cột (ui.b_split): mỗi cột là danh sách khối bất kỳ; màn hẹp ⇒ xếp dọc, cột trái trước
+            const [l, r] = b.ratio.split(":").map(Number);
+            return (
+              <div key={i} className="grid min-w-0 gap-3 md:[grid-template-columns:var(--cols)]" style={{ "--cols": `minmax(0,${l}fr) minmax(0,${r}fr)` } as React.CSSProperties}>
+                <div className="flex min-w-0 flex-col gap-3">{b.left.map((c, k) => blockView(i * 1000 + k, c))}</div>
+                <div className="flex min-w-0 flex-col gap-3">{b.right.map((c, k) => blockView(i * 1000 + 500 + k, c))}</div>
+              </div>
+            );
+          }
           case "audio":
             return (
               <Section key={i} title={b.title}>

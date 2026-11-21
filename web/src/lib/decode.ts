@@ -572,6 +572,17 @@ function decodeBlockBody(raw: unknown): Block {
         };
       case "text":
         return { type: "text", title: str(o.title), markdown: str(o.markdown) };
+      case "image": {
+        // ảnh (ui.b_image): link ký của kho tệp (http/https) hoặc đường /v1/… của core; khác ⇒ coi như chưa có ảnh (hiện `note`), không vẽ link lạ
+        const src = str(o.src);
+        const safe = /^https?:\/\/[^\s"'<>]+$/.test(src) || /^\/v1(\/[A-Za-z0-9_-][A-Za-z0-9_.-]*)+(\?[^\s"'<>]*)?$/.test(src) ? src : "";
+        return { type: "image", src: safe, caption: str(o.caption), alt: str(o.alt), note: str(o.note) };
+      }
+      case "split": {
+        // chia hai cột (ui.b_split): giải mã đệ quy từng cột, bỏ khối lạ; tỉ lệ sai dạng ⇒ 1:1
+        const ratio = /^[1-9]:[1-9]$/.test(str(o.ratio)) ? str(o.ratio) : "1:1";
+        return { type: "split", ratio, left: arr(o.left).map(decodeBlock).filter((b) => b.type !== "unknown"), right: arr(o.right).map(decodeBlock).filter((b) => b.type !== "unknown") };
+      }
       case "audio": {
         // chỉ đường của chính core (/v1/…, đi qua BFF có phiên) — không phát link ngoài server gửi nhầm
         const src = str(o.src);

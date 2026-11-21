@@ -1,4 +1,4 @@
-"""Màn Lịch kiểu app lịch (0240): Ngày / Tuần / Lịch biểu trên MỘT nguồn lịch (``schedule.events``) + mốc hạn; người cạnh nhau theo phạm vi quyền; màu
+"""Màn Lịch kiểu app lịch (0240): Ngày / Tuần / Danh sách trên MỘT nguồn lịch (``schedule.events``) + mốc hạn; người cạnh nhau theo phạm vi quyền; màu
 theo loại lịch (dữ liệu công ty); tạo nhanh từ ô giờ trống bằng lệnh của module sở hữu; thêm bằng câu tự nhiên (máy đoán, người xác nhận).
 
 Hai điểm cắm của module này (module khác góp, bằng quyền người xem — thiếu quyền ⇒ bỏ phần đó):
@@ -39,7 +39,7 @@ from barista.modules.schedule import (
     when,
 )
 
-VIEWS = {"day": "Ngày", "week": "Tuần", "agenda": "Lịch biểu"}
+VIEWS = {"day": "Ngày", "week": "Tuần", "agenda": "Danh sách"}
 WHO = {"me": "Của tôi", "team": "Cả đội"}
 WHO_ALL = {"me": "Của tôi", "team": "Theo đơn vị"}   # phạm vi cả công ty: chọn chi nhánh / phòng; chưa chọn ⇒ các trưởng nhóm
 PALETTE = ("blue", "green", "orange", "purple", "teal", "pink", "indigo", "red")   # loại chưa chọn màu ⇒ theo thứ tự loại
@@ -325,7 +325,7 @@ async def _creators(ctx: Ctx, kinds: dict[str, dict[str, str]]) -> list[dict[str
 # ── Thêm bằng câu tự nhiên: máy đoán ngày giờ / loại / khách / địa điểm, người sửa chip rồi bấm xác nhận (0225) ──
 
 class UnderstandIn(Input):
-    text: str = field("Câu", max_length=300, example="Thứ 5 2h chiều dẫn khách Lan xem Sun Feliza")
+    text: str = field("Câu", max_length=300, example="Thứ 5 2h chiều gặp khách giao hàng")
     on: Day | None = field("Đang xem ngày", None, help="Không nêu ngày trong câu ⇒ ngày này")
 
 

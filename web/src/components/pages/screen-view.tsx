@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { actionClass, LoadError, Spinner } from "@/components/primitives";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePage } from "@/hooks/use-page";
+import { Callout } from "@/components/blocks/misc";
 import { useDesk } from "@/components/desk/desk-context";
 import { useChat } from "@/components/desk/chat-context";
 import { SoloScreenFrame, useFullFrame } from "@/components/desk/full-frame";
@@ -284,7 +285,11 @@ export function ScreenView({
       {page?.kind === "card" ? <CardView page={page} onChanged={changed} head={head} /> : null}
       {table ? (
         <>
-          {table.header?.map((b, i) => (b.type === "picker" ? <PickerBlock key={i} block={b} onChanged={changed} /> : null))}
+          {/* khối đầu bảng: "chọn mức" và CẢNH BÁO (kèm nút việc nên làm) — trước đây khối cảnh báo bị bỏ qua lặng lẽ nên nút trên đó không bao giờ hiện (rà UI 20/11) */}
+          {table.header?.map((b, i) =>
+            b.type === "picker" ? <PickerBlock key={i} block={b} onChanged={changed} />
+            : b.type === "callout" ? <Callout key={i} {...b} onAction={(a) => desk.openForm(a, { onDone: changed })} />
+            : null)}
           <HeaderCharts page={table} />
           {table.rows.length === 0 && Object.keys(filters).length === 0 && table.kpis.every((k) => k.value === 0 || k.value === null || k.value === "" || k.value === "—") ? null : <KpiRow kpis={table.kpis} inset />}
           {table.note ? <ClampNote text={table.note} /> : null}

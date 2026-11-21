@@ -26,7 +26,7 @@ type Drag =
 
 const STATUS: Record<string, string> = { tentative: "Chờ xác nhận", maybe: "Bận (chưa chắc)", busy: "Bận", done: "Đã xong", marker: "Mốc hạn" };
 
-/** Màn Lịch (0240): Ngày (người cạnh nhau) · Tuần · Lịch biểu. Server khai mọi thứ (mục, màu, ai kéo được gì, cách tạo); khối chỉ vẽ + chạy lệnh server khai. */
+/** Màn Lịch (0240): Ngày (người cạnh nhau) · Tuần · Danh sách. Server khai mọi thứ (mục, màu, ai kéo được gì, cách tạo); khối chỉ vẽ + chạy lệnh server khai. */
 export function CalendarBlock({ block, onChanged }: { block: CalendarData; onChanged?: () => void }) {
   const desk = useDesk();
   const filters = useScreenFilters();
@@ -215,7 +215,16 @@ export function CalendarBlock({ block, onChanged }: { block: CalendarData; onCha
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
       <Toolbar block={block} canNav={!!filters && !!nav} onNav={setFilter} canCreate={canCreate} onAdd={addNow}
-               onGuess={(g) => setDraft({ ...g, seq: ++seq.current })} understand={block.create?.understand ?? ""} />
+               onGuess={(g) => {
+                 // MÁY ĐIỀN HỘ (rà UI 21/11): câu gõ ⇒ mở FORM tạo lịch đã điền sẵn (ô máy đoán là chip ✨ + "Chấp nhận tất cả"), người sửa rồi Lưu — không qua ô nổi
+                 const c = creators.find((x) => x.key === g.creator) ?? creators[0];
+                 if (!c) return setDraft({ ...g, seq: ++seq.current });
+                 desk.openForm(decodeAction({ command: c.command, title: c.label }), {
+                   initial: createPayload(c, { day: g.day, start: g.start, end: g.end, title: g.title ?? "", subject: g.subject?.value, place: g.place,
+                                               attendees: [laneEmail(g.lane) || block.create?.me || ""].filter(Boolean) }),
+                   onDone: onChanged,
+                 });
+               }} understand={block.create?.understand ?? ""} />
       {block.kinds.length ? <Legend block={block} /> : null}
       {block.note ? <p className="t12 text-muted-foreground">{block.note}</p> : null}
 
@@ -472,11 +481,11 @@ function Toolbar({ block, canNav, onNav, canCreate, onAdd, onGuess, understand }
           <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-input bg-field px-2.5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40">
             <Sparkles className="size-4 shrink-0 text-primary" aria-hidden />
             <input value={text} onChange={(e) => setText(e.target.value)} aria-label="Thêm nhanh bằng một câu"
-                   placeholder="Thêm nhanh: “Thứ 5 2h chiều dẫn khách Lan xem Sun Feliza”"
+                   placeholder="Gõ một câu, máy điền hộ: “Thứ 5 2h chiều gặp khách giao hàng”"
                    className="t14 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground" />
             {thinking ? <Spinner className="size-3.5" /> : null}
           </label>
-          <button type="submit" className={actionClass("default")} disabled={!text.trim() || thinking}>Đoán</button>
+          <button type="submit" className={actionClass("default")} disabled={!text.trim() || thinking} title="Máy đọc câu rồi điền sẵn form tạo lịch — bạn xem lại rồi Lưu">Điền hộ</button>
         </form>
       ) : null}
       {err ? <p className="t12 text-bad">{err}</p> : null}

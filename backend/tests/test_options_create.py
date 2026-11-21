@@ -51,3 +51,14 @@ async def test_find_time_accepts_one_person_sent_as_a_plain_string(co: dict[str,
 
     r = await executor.query(co["chu"], "schedule.find_time", {"attendee_emails": co["chu"].email, "resource_ids": ""})
     assert r.status == "ok", (r.status, r.error)
+
+
+def test_every_starter_process_template_parses() -> None:
+    """Mẫu quy trình dựng sẵn phải qua đúng bộ phân tích của form (không để người bấm mẫu rồi gặp lỗi cú pháp)."""
+    from barista.modules.flow.cases import parse_template
+    from barista.modules.flow.starters import STARTERS
+
+    assert len(STARTERS) >= 3
+    for name, _, text in STARTERS:
+        stages = parse_template(text, "")
+        assert stages and all(st["items"] for st in stages), name

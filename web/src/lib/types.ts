@@ -368,6 +368,10 @@ export type Block = (
   | { type: "list"; title: string; items: ListItem[]; attach?: ListAttach }
   | { type: "tiles"; title: string; items: Tile[] }
   | { type: "text"; title: string; markdown: string }
+  /** Ảnh trong thẻ (ui.b_image): `src` link ký ngắn hạn / đường /v1/…; trống ⇒ hiện `note` */
+  | { type: "image"; src: string; caption: string; alt: string; note: string }
+  /** Chia hai cột (ui.b_split): mỗi cột là danh sách khối; `ratio` "a:b"; màn hẹp ⇒ xếp dọc */
+  | { type: "split"; left: Block[]; right: Block[]; ratio: string }
   /** Ghi âm (tổng đài — 0149): `src` là đường /v1/… của core (qua BFF), quyền kiểm mỗi lần tải */
   | { type: "audio"; title: string; src: string; duration_s: number | null }
   | { type: "table"; page: TablePage }

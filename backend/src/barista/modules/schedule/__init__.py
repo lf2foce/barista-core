@@ -531,8 +531,8 @@ class CreateEvent(Input):
     day: Day = field("Ngày", example="10/11/2026")
     start: str = field("Từ", "08:00", max_length=5, kind="time")
     end: str = field("Đến", "09:00", max_length=5, kind="time")
-    resource_ids: list[UUID] = field("Người / phòng", [], kind="multiselect", options_query="schedule.resource_options",
-                                     help="Giữ cứng: trùng giờ (hoặc đã đủ lượt) ⇒ không đặt được")
+    resource_ids: list[UUID] = field("Người / phòng / thiết bị", [], kind="multiselect", options_query="schedule.resource_options", group=WHO_GROUP,
+                                     help="Đã bận giờ này (hoặc hết chỗ) thì không đặt được")   # rà UI 21/11: gấp vào nhóm người tham dự — lịch cá nhân không cần
     kind: str = field("Loại lịch", "", options_query="schedule.event_kind_options", help="Trống = không phân loại")
     # rà form nhóm B 18/11/2026: ô giờ là ô chọn giờ (trước đây gõ chữ "08:00"); ngày kết thúc / đội / ghi chú / ngoài giờ rảnh gấp lại
     end_day: Day | None = field("Ngày kết thúc", None, help="Trống = cùng ngày. Qua đêm thì chọn ngày hôm sau", placeholder="Cùng ngày", group="Thêm chi tiết")
@@ -1392,8 +1392,8 @@ async def kind_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
 m.workspace(Workspace("schedule", "Lịch làm việc", "calendar", (
     # 0240: màn chính là LỊCH kiểu app lịch (Ngày mặc định — hôm nay theo giờ, người cạnh nhau; Tuần; Lịch biểu). Khoá màn giữ "schedule_week" để màn đã
     # ghim / bộ menu theo vai không đổi; bảng "Lịch tuần" (schedule.week) vẫn là truy vấn cho trợ lý / xuất Excel.
-    Screen("schedule_week", "Lịch", "calendar", "schedule.calendar", tint="orange",
-           actions=(A("schedule.create", "Đặt lịch chi tiết"),)),
+    # MỘT cách tạo lịch (rà UI 21/11): nút "Thêm lịch" của khối lịch (ô nổi → "Thêm chi tiết…" mở form đầy đủ) + ô gõ câu máy điền hộ — bỏ nút "Đặt lịch chi tiết" trùng việc
+    Screen("schedule_week", "Lịch", "calendar", "schedule.calendar", tint="orange"),
     Screen("schedule_free", "Tìm người / phòng rảnh", "person.badge.clock", "schedule.find_free", tint="green", needs_action=True, feature=USE_RESOURCES, pinnable=False,
            actions=(A("schedule.create"),),
            open=Open("schedule.resource", {"resource_id": "id"}, "Xem lịch người / phòng")),

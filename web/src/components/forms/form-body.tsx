@@ -860,6 +860,15 @@ function Field({
         const cur = Array.isArray(value) ? value.map(text) : [];
         control = (
           <div className="flex max-h-44 flex-col gap-1 overflow-y-auto rounded-lg border border-border bg-field px-2.5 py-2" role="group" aria-labelledby={`${id}-l`}>
+            {/* danh sách rỗng: nói rõ + lối tạo mới (options_create), không để một ô trống không chữ (rà UI 21/11: "Người / phòng" trống trơn) */}
+            {!(options ?? []).length ? (
+              <span className="t14 flex flex-wrap items-center gap-2 text-muted-foreground">
+                {loading ? "Đang tải…" : `Chưa có ${f.label.toLowerCase()} nào`}
+                {!loading && onCreate && f.options_create ? (
+                  <button type="button" className="t14m text-primary hover:underline" onClick={onCreate}>+ {f.options_create.title}</button>
+                ) : null}
+              </span>
+            ) : null}
             {(options ?? []).map((o) => (
               <label key={o.value} className="t14 flex items-center gap-2">
                 <input
