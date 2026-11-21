@@ -817,7 +817,7 @@ export function decodeComposerTurn(x: unknown): ComposerTurn {
   };
 }
 
-/** Trang còn tràn khung do server đo — khối không có mã bị bỏ; hành động chỉ nhận `compose.revise` với đủ mã khối + lời dặn (lệnh khác ⇒ không nút). */
+/** Trang còn tràn khung do server đo — khối không có mã bị bỏ; hành động chỉ nhận khi là lệnh sửa khối (đuôi `.revise` — web không nhắc tên module của gói, app chỉ vẽ) với đủ mã khối + lời dặn; lệnh khác ⇒ không nút. */
 function decodeOverflowPage(x: unknown): ComposerOverflowPage {
   const o = obj(x);
   return {
@@ -828,10 +828,10 @@ function decodeOverflowPage(x: unknown): ComposerOverflowPage {
       const r = obj(b);
       const a = obj(r.action);
       const inp = obj(a.input);
-      const ok = str(a.command) === "compose.revise" && str(inp.session_id) && str(inp.block) && str(inp.instruction);
+      const ok = str(a.command).endsWith(".revise") && str(inp.session_id) && str(inp.block) && str(inp.instruction);
       return {
         id: str(r.id), kind: str(r.kind), label: str(r.label), culprit: r.culprit === true,
-        action: ok ? { command: "compose.revise", label: str(a.label, "Rút gọn khối này"), input: { session_id: str(inp.session_id), block: str(inp.block), mode: str(inp.mode, "rewrite"), instruction: str(inp.instruction) } } : null,
+        action: ok ? { command: str(a.command), label: str(a.label, "Rút gọn khối này"), input: { session_id: str(inp.session_id), block: str(inp.block), mode: str(inp.mode, "rewrite"), instruction: str(inp.instruction) } } : null,
       };
     }).filter((b) => b.id),
   };
