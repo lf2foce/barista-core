@@ -514,13 +514,17 @@ class JoinIn(CallRef):
     video: bool = field("Bật camera", False, hidden=True)
 
 
-@m.command("join", resource="meet", title="Tham gia cuộc gọi", agent="deny", shows=("meet.call", "call_id"))
+@m.command("join",
+           reversible="Bấm Rời cuộc gọi",
+           resource="meet", title="Tham gia cuộc gọi", agent="deny", shows=("meet.call", "call_id"))
 async def join(ctx: Ctx, inp: JoinIn) -> dict[str, Any]:
     """Ghi lần bấm rồi đưa link (gọi trực tiếp: giữ ghế rồi đưa trang gọi). Trợ lý không làm thay được: "ai đã bấm tham gia" phải là chính người đó."""
     return await _join(ctx, await _call(ctx, inp.call_id), enter=inp.enter, video=inp.video)
 
 
-@m.command("leave", resource="meet", title="Rời cuộc gọi", agent="deny")
+@m.command("leave",
+           reversible="Bấm Tham gia để vào lại",
+           resource="meet", title="Rời cuộc gọi", agent="deny")
 async def leave(ctx: Ctx, inp: CallRef) -> dict[str, Any]:
     """Không bắt buộc: không bấm thì số phút của người đó là "không đo được", không phải 0."""
     c = await _call(ctx, inp.call_id)
@@ -567,7 +571,9 @@ async def _finish(ctx: Ctx, c: dict[str, Any], reason: str) -> None:
                      push="Một cuộc gọi vừa kết thúc", open={"query": "meet.call", "input": {"call_id": str(c["id"])}})
 
 
-@m.command("end", resource="meet", title="Kết thúc cuộc gọi", agent="propose")
+@m.command("end",
+           purpose="Kết thúc cuộc gọi đã xong để thẻ không báo đang gọi và biên bản được chốt.", irreversible=True, effect="Cuộc gọi đóng cho mọi người và người bắt đầu được báo; không mở lại được. Phòng Google Meet / Zoom của công ty phải tắt riêng ở đó.",
+           resource="meet", title="Kết thúc cuộc gọi", agent="propose")
 async def end(ctx: Ctx, inp: CallRef) -> dict[str, Any]:
     """Chỉ đóng phía Barista: phòng Google Meet / Zoom vẫn là của công ty, tắt ở đó."""
     c = await _call(ctx, inp.call_id, lock=True)
@@ -906,7 +912,9 @@ async def seat_member(ctx: Ctx, inp: SeatMemberIn) -> dict[str, Any]:
     return {"call_id": c["id"], "summary": f"Đã chọn {inp.member} gọi cùng"}
 
 
-@m.command("release_seat", resource="meet", title="Trả chỗ người gọi cùng", agent="propose")
+@m.command("release_seat",
+           purpose="Trả chỗ người gọi cùng để chọn người khác hoặc mời người ngoài.", irreversible=True, effect="Người ở chỗ thứ hai mất kết nối với cuộc gọi ngay; muốn gọi tiếp phải chọn lại họ.",
+           resource="meet", title="Trả chỗ người gọi cùng", agent="propose")
 async def release_seat(ctx: Ctx, inp: CallRef) -> dict[str, Any]:
     """Người bắt đầu trả chỗ thứ hai của một thành viên: người đó mất kênh tín hiệu ngay, trang bên này bỏ kết nối với họ. Người ngoài ⇒ Thu hồi lời mời."""
     c = await _as_host(ctx, inp.call_id)
@@ -948,7 +956,9 @@ async def invite(ctx: Ctx, inp: InviteIn) -> dict[str, Any]:
             "summary": f"Đã tạo link mời {inp.name} (dùng được {inp.hours} giờ)"}
 
 
-@m.command("revoke_invite", resource="meet", title="Thu hồi lời mời", agent="propose")
+@m.command("revoke_invite",
+           purpose="Thu hồi lời mời khi gửi nhầm người hoặc không còn cần người ngoài tham dự.", irreversible=True, effect="Link mời chết ngay và người ngoài bị ngắt khỏi cuộc gọi; không bật lại được, chỉ tạo link mời mới.",
+           resource="meet", title="Thu hồi lời mời", agent="propose")
 async def revoke_invite(ctx: Ctx, inp: CallRef) -> dict[str, Any]:
     """Link chết ngay, kênh tín hiệu của người ngoài đóng, trang bên này bỏ kết nối với họ; chỗ trống lại. Nhật ký có mặt của người đó giữ nguyên.
     Thư đã gửi người đó không ai khác đọc được (thư gửi theo người, không theo ghế)."""

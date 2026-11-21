@@ -46,7 +46,9 @@ class UpsertSite(Input):
     active: bool = field("Đang dùng", True)
 
 
-@m.command("upsert_site", resource="timekeeping.policy", action="manage", title="Thêm / sửa địa điểm chấm công", agent="deny", risk="authority")
+@m.command("upsert_site",
+           purpose="Thêm hoặc sửa địa điểm chấm công và luật kiểm chấm để giờ chấm được xét đúng nơi.", reversible="Chạy lại lệnh với giá trị cũ (chỉ áp cho lần chấm sau)",
+           resource="timekeeping.policy", action="manage", title="Thêm / sửa địa điểm chấm công", agent="deny", risk="authority")
 async def upsert_site(ctx: Ctx, inp: UpsertSite) -> dict[str, Any]:
     """Luật chấm của địa điểm (dữ liệu). Đổi luật chỉ áp cho lần chấm SAU; lần chấm cũ giữ kết quả kiểm đã ghi."""
     _need_policy(ctx)
@@ -71,7 +73,9 @@ class UpsertPattern(Input):
     active: bool = field("Đang dùng", True)
 
 
-@m.command("upsert_pattern", resource="timekeeping.policy", action="manage", title="Thêm / sửa giờ làm", agent="deny", risk="authority")
+@m.command("upsert_pattern",
+           purpose="Thêm hoặc sửa giờ làm để công được tính đúng lịch của từng nhóm người.", reversible="Chạy lại lệnh với giá trị cũ",
+           resource="timekeeping.policy", action="manage", title="Thêm / sửa giờ làm", agent="deny", risk="authority")
 async def upsert_pattern(ctx: Ctx, inp: UpsertPattern) -> dict[str, Any]:
     _need_policy(ctx)
     code = inp.code.strip().upper()
@@ -101,7 +105,9 @@ class Enrol(Input):
     valid_from: Day = field("Từ ngày", example="01/11/2026", help="Đổi ⇒ dòng mới từ ngày mới; dòng cũ giữ làm lịch sử")
 
 
-@m.command("enrol", resource="timekeeping.policy", action="manage", title="Gán giờ làm / địa điểm cho người", agent="deny", risk="authority")
+@m.command("enrol",
+           purpose="Gán giờ làm và địa điểm cho người lao động để công được tính đúng cách.", reversible="Gán lại giờ làm / địa điểm cũ với ngày hiệu lực mới",
+           resource="timekeeping.policy", action="manage", title="Gán giờ làm / địa điểm cho người", agent="deny", risk="authority")
 async def enrol(ctx: Ctx, inp: Enrol) -> dict[str, Any]:
     """Cách tính công quyết công có lương (đủ công theo lịch hay theo giờ chấm) ⇒ người gán không gán cho chính mình."""
     _need_policy(ctx)
@@ -132,7 +138,9 @@ class UpsertLeaveType(Input):
     active: bool = field("Đang dùng", True)
 
 
-@m.command("upsert_leave_type", resource="timekeeping.policy", action="manage", title="Thêm / sửa loại nghỉ", agent="deny", risk="authority")
+@m.command("upsert_leave_type",
+           purpose="Thêm hoặc sửa loại nghỉ để đơn nghỉ và sổ phép dùng đúng danh mục của công ty.", reversible="Chạy lại lệnh với giá trị cũ",
+           resource="timekeeping.policy", action="manage", title="Thêm / sửa loại nghỉ", agent="deny", risk="authority")
 async def upsert_leave_type(ctx: Ctx, inp: UpsertLeaveType) -> dict[str, Any]:
     _need_policy(ctx)
     code = inp.code.strip().upper()
@@ -151,7 +159,9 @@ DEFAULT_LEAVE = (("PHEP_NAM", "Nghỉ phép năm", "company", True), ("VIEC_RIEN
                  ("KHONG_LUONG", "Nghỉ không lương", "none", False))
 
 
-@m.command("install_leave_types", resource="timekeeping.policy", action="manage", title="Cài loại nghỉ thường gặp", agent="deny", risk="authority")
+@m.command("install_leave_types",
+           purpose="Cài các loại nghỉ thường gặp để công ty có sẵn danh mục nghỉ theo luật.", reversible="Tắt loại nghỉ không cần ở “Thêm / sửa loại nghỉ”",
+           resource="timekeeping.policy", action="manage", title="Cài loại nghỉ thường gặp", agent="deny", risk="authority")
 async def install_leave_types(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     _need_policy(ctx)
     n = 0

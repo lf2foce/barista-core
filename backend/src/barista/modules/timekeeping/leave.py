@@ -120,7 +120,9 @@ class CancelLeave(Input):
     request_id: UUID = field("Đơn", hidden=True)
 
 
-@m.command("cancel_leave", resource="timekeeping", title="Huỷ đơn nghỉ đang chờ", agent="propose", risk="low")
+@m.command("cancel_leave",
+           purpose="Huỷ đơn nghỉ đang chờ duyệt khi không còn nghỉ nữa.", irreversible=True, effect="Đơn nghỉ bị huỷ và người duyệt không còn thấy; muốn nghỉ phải gửi đơn mới.",
+           resource="timekeeping", title="Huỷ đơn nghỉ đang chờ", agent="propose", risk="low")
 async def cancel_leave(ctx: Ctx, inp: CancelLeave) -> dict[str, Any]:
     user = _me(ctx)
     n = await ctx.exec("UPDATE timekeeping.leave_requests SET status='cancelled' WHERE id=%s AND user_id=%s AND status='requested'", (inp.request_id, user))
@@ -205,7 +207,9 @@ class GrantLeave(Input):
     note: str = field("Lý do", max_length=300, example="Cấp phép năm 2026 theo hợp đồng")
 
 
-@m.command("grant_leave", resource="timekeeping", action="manage", title="Cấp / điều chỉnh phép", agent="deny", risk="authority")
+@m.command("grant_leave",
+           purpose="Cấp hoặc điều chỉnh số ngày phép của một người, có lý do, để sổ phép đúng thực tế.", reversible="Điều chỉnh ngược cùng số ngày bằng chính lệnh này (sổ phép chỉ thêm, có lý do)",
+           resource="timekeeping", action="manage", title="Cấp / điều chỉnh phép", agent="deny", risk="authority")
 async def grant_leave(ctx: Ctx, inp: GrantLeave) -> dict[str, Any]:
     """Dòng sổ phép cấp / điều chỉnh (chỉ thêm, có lý do). Không tự cấp cho mình (DB)."""
     if not ctx.p.has_scope("timekeeping", "all"):
@@ -229,7 +233,9 @@ class AnnualIn(Input):
     year: int = field("Năm", ge=2000, le=2100, example="2026")
 
 
-@m.command("grant_annual_leave", resource="timekeeping", action="manage", title="Cấp phép năm cho mọi người", agent="deny", risk="authority")
+@m.command("grant_annual_leave",
+           purpose="Cấp phép năm cho mọi người đang chấm công để sổ phép đầu năm đủ số ngày theo luật.", irreversible=True, effect="Cấp đủ số ngày phép năm cho mọi người đang chấm công vào sổ phép (sổ chỉ thêm); sửa phải điều chỉnh từng người.",
+           resource="timekeeping", action="manage", title="Cấp phép năm cho mọi người", agent="deny", risk="authority")
 async def grant_annual_leave(ctx: Ctx, inp: AnnualIn) -> dict[str, Any]:
     """Phép năm theo ``vn-labour:ANNUAL_LEAVE`` cho mọi người đang chấm công: cấp ĐỦ số ngày của năm. Người vào làm giữa năm (theo tỉ lệ tháng —
     BLLĐ Đ113.2), thâm niên (+1 ngày / 5 năm), chế độ riêng của công ty: điều chỉnh bằng "Cấp / điều chỉnh phép" (ngày vào làm nằm ở hồ sơ làm việc,

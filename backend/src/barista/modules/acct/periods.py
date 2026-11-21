@@ -173,7 +173,9 @@ class OpeningLine(Input):
     due_on: Day | None = field("Hạn", None, help="Phải thu: hạn gốc (bắt buộc)")
 
 
-@m.command("add_opening_line", resource="acct", action="manage", title="Nhập dòng số dư đầu kỳ", importable=True, agent="propose")
+@m.command("add_opening_line",
+           purpose="Nhập số dư đầu kỳ vào lô nháp để sổ cái bắt đầu từ số dư đúng — chưa ghi sổ.", reversible="Bỏ bản nháp lô đầu kỳ rồi nhập lại (dòng chưa ghi sổ)",
+           resource="acct", action="manage", title="Nhập dòng số dư đầu kỳ", importable=True, agent="propose")
 async def add_opening_line(ctx: Ctx, inp: OpeningLine) -> dict[str, Any]:
     """Thêm một dòng vào bản nháp của lô đầu kỳ (chưa ghi sổ). Nhập lại cùng file không thêm trùng (khoá theo nội dung dòng)."""
     batch = await _batch_code(ctx, inp.batch)

@@ -461,7 +461,9 @@ async def _payee(ctx: Ctx, party_id: UUID) -> dict[str, Any]:
     return party
 
 
-@m.command("set_terms", resource="hr.terms", action="manage", title="Ghi điều kiện trả theo hợp đồng", agent="deny", risk="money")
+@m.command("set_terms",
+           purpose="Ghi loại hợp đồng, lương đóng bảo hiểm và vùng của người lao động, để thuế và bảo hiểm trong phiếu lương tính đúng từ ngày hiệu lực.", reversible="Ghi điều kiện mới với ngày hiệu lực khác (điều kiện chỉ thêm, bản cũ giữ trong lịch sử)",
+           resource="hr.terms", action="manage", title="Ghi điều kiện trả theo hợp đồng", agent="deny", risk="money")
 async def set_terms(ctx: Ctx, inp: SetTerms) -> dict[str, Any]:
     """Loại hợp đồng quyết người đó bị khấu trừ thuế theo lần chi hay luỹ tiến, có đóng bảo hiểm không; lương đóng bảo hiểm và vùng quyết số bảo hiểm
     (0150 §6) ⇒ trợ lý không ghi; người ghi không ghi cho chính mình."""
@@ -540,7 +542,9 @@ class AddDependant(Input):
     note: str = field("Ghi chú", "", max_length=300, example="Đã nộp tờ khai đăng ký người phụ thuộc")
 
 
-@m.command("add_dependant", resource="hr.terms", action="manage", title="Đăng ký người phụ thuộc", agent="deny", risk="money")
+@m.command("add_dependant",
+           purpose="Đăng ký người phụ thuộc theo hồ sơ đã nộp, để thuế thu nhập cá nhân của người lao động được giảm trừ đúng.", reversible="Bấm Thôi đăng ký người phụ thuộc (kỳ đã giảm trừ giữ nguyên)",
+           resource="hr.terms", action="manage", title="Đăng ký người phụ thuộc", agent="deny", risk="money")
 async def add_dependant(ctx: Ctx, inp: AddDependant) -> dict[str, Any]:
     """Người phụ thuộc giảm trừ thuế TNCN (0150 §5) — đổi số thuế ⇒ trợ lý không ghi, người ghi không ghi cho chính mình."""
     party = await _payee(ctx, inp.party_id)
@@ -560,7 +564,9 @@ class EndDependant(Input):
     registered_to: Day = field("Thôi giảm trừ từ sau ngày", example="31/12/2026")
 
 
-@m.command("end_dependant", resource="hr.terms", action="manage", title="Thôi đăng ký người phụ thuộc", agent="deny", risk="money")
+@m.command("end_dependant",
+           purpose="Người phụ thuộc hết điều kiện giảm trừ, nên thôi tính giảm trừ từ ngày chọn để thuế không bị giảm sai.", irreversible=True, effect="Thôi giảm trừ thuế cho người phụ thuộc này sau ngày chọn; muốn giảm trừ tiếp phải đăng ký lại như người mới.",
+           resource="hr.terms", action="manage", title="Thôi đăng ký người phụ thuộc", agent="deny", risk="money")
 async def end_dependant(ctx: Ctx, inp: EndDependant) -> dict[str, Any]:
     row = await ctx.one("SELECT party_id,registered_from,registered_to FROM hr.dependants WHERE id=%s", (inp.dependant_id,))
     if not row:

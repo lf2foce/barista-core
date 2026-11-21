@@ -246,7 +246,9 @@ async def _supplier(ctx: Ctx, inp: RecordExpense) -> dict[str, Any] | None:
     return {**party, "key": f"{name_key(party['display_name'])}:{party['kind']}"}
 
 
-@m.command("record_expense", resource="acct", title="Ghi phiếu chi phí / hoá đơn mua vào", importable=True, agent="propose", risk="money")
+@m.command("record_expense",
+           purpose="Ghi nhận một chi phí vận hành để sổ chi phí, thuế đầu vào và công nợ nhà cung cấp đúng chứng từ.", reversible="Huỷ phiếu chi phí — bút toán đảo, cần duyệt",
+           resource="acct", title="Ghi phiếu chi phí / hoá đơn mua vào", importable=True, agent="propose", risk="money")
 async def record_expense(ctx: Ctx, inp: RecordExpense) -> dict[str, Any]:
     """Một chi phí vận hành của công ty (thuê văn phòng, quảng cáo, điện nước, dịch vụ mua ngoài…): Nợ chi phí theo khoản mục / Có tiền (đã trả ngay) hoặc Có
     phải trả bên bán (ghi nợ — chi sau qua Đề nghị chi ở Phải trả & ứng). Thuế GTGT trên hoá đơn mua vào ghi vào thuế đầu vào chỉ khi công ty bật thuế GTGT
@@ -346,7 +348,7 @@ async def _record(ctx: Ctx, inp: RecordExpense, transferred_from: UUID | None) -
             [(bid, x["no"], x["category"], x["account"], x["amount"], x["bps"], x["vat"], x["input"], x["expense"], x["offering"], x["team_id"],
               x["cost_object"], x["memo"]) for x in lines])
     return {"bill_id": bid, "journal_id": jid, "payable_id": payable_id, "total_vnd": total, "vat_vnd": vat_total, "input_vnd": sum(x["input"] for x in lines),
-            "vat_treatment": treatment, "vat_note": note, "created": True,
+            "vat_treatment": treatment, "vat_note": note, "created": True, "subject": {"label": label, "open": None},
             "summary": f"Chi phí {_vnd(total)}: {label}" + (" — ghi nợ bên bán, chi ở Phải trả & ứng" if payable_id else "")
             + (f" · {note}" if note else "")}
 
@@ -359,7 +361,9 @@ class CancelExpense(Input):
     cancelled_on: Day | None = field("Ngày huỷ", None, placeholder="Hôm nay", help="Không trước ngày chứng từ")
 
 
-@m.command("cancel_expense", resource="acct", title="Huỷ phiếu chi phí", agent="propose", risk="money")
+@m.command("cancel_expense",
+           purpose="Phiếu chi phí ghi sai hoặc ghi trùng — đảo để chi phí, thuế đầu vào và tiền / công nợ đúng như trước khi ghi.", irreversible=True, effect="Phiếu bị huỷ bằng bút toán đảo và không mở lại được; muốn ghi lại phải lập phiếu mới.",
+           resource="acct", title="Huỷ phiếu chi phí", agent="propose", risk="money")
 async def cancel_expense(ctx: Ctx, inp: CancelExpense) -> dict[str, Any]:
     """Phiếu ghi sai / ghi trùng ⇒ bút toán ĐẢO đúng bút toán của phiếu (chi phí, thuế đầu vào, tiền / phải trả), phiếu giữ nguyên và ghi ngày + lý do huỷ.
     Ghi nợ nhà cung cấp mà đã có lệnh chi (kể cả đang chờ chuyển) ⇒ không huỷ được ở đây."""
@@ -392,7 +396,8 @@ async def cancel_expense(ctx: Ctx, inp: CancelExpense) -> dict[str, Any]:
                        (b["payable_id"], b["total_vnd"], f"cancel:{b['id']}", inp.reason.strip(), cj))
     await ctx.exec("UPDATE acct.bills SET cancelled_on = %s, cancelled_by = core.me(), cancel_reason = %s, cancel_journal_id = %s WHERE id = %s",
                    (on, inp.reason.strip(), cj, b["id"]))
-    return {"bill_id": b["id"], "journal_id": cj, "created": True, "summary": f"Huỷ phiếu chi phí {_vnd(b['total_vnd'])}: {b['memo']}"}
+    return {"bill_id": b["id"], "journal_id": cj, "created": True, "subject": {"label": b["memo"] or f"Phiếu chi phí {_vnd(b['total_vnd'])}", "open": None},
+            "summary": f"Huỷ phiếu chi phí {_vnd(b['total_vnd'])}: {b['memo']}"}
 
 
 _RATE_OF: dict[int, Literal["", "0", "5", "8", "10"]] = {0: "0", 500: "5", 800: "8", 1000: "10"}
@@ -408,7 +413,9 @@ class TransferExpense(Input):
     repost_on: Day | None = field("Ngày ghi ở pháp nhân mới", None, placeholder="Ngày chứng từ gốc", help="Kỳ của pháp nhân mới phải còn mở", group="Thêm chi tiết")
 
 
-@m.command("transfer_expense_entity", resource="acct", title="Chuyển phiếu chi phí sang pháp nhân khác", agent="propose", risk="money")
+@m.command("transfer_expense_entity",
+           purpose="Phiếu ghi nhầm pháp nhân — chuyển sang đúng pháp nhân để chi phí tính đúng công ty.", reversible="Chuyển ngược về pháp nhân cũ bằng chính lệnh này",
+           resource="acct", title="Chuyển phiếu chi phí sang pháp nhân khác", agent="propose", risk="money")
 async def transfer_expense_entity(ctx: Ctx, inp: TransferExpense) -> dict[str, Any]:
     """Phiếu ghi nhầm pháp nhân ⇒ bút toán ĐẢO ở pháp nhân cũ (phiếu cũ giữ nguyên, ghi huỷ + lý do) rồi GHI LẠI cùng nội dung ở pháp nhân mới (phiếu mới trỏ phiếu cũ).
     Tiền đi ngược ⇒ chuỗi duyệt ``receivable_correction``. Không chuyển được: phiếu đã huỷ; phiếu trả từ tài khoản ngân hàng của pháp nhân cũ (tiền đã ra khỏi tài khoản đó);
@@ -442,7 +449,8 @@ async def transfer_expense_entity(ctx: Ctx, inp: TransferExpense) -> dict[str, A
                            vat_vnd=x["vat_vnd"], offering_code=x["offering_code"], team_code=x["team_code"] or "", cost_object=x["cost_object"], memo=x["memo"])
                for x in lines])
     new = await _record(ctx, again, b["id"])
-    return {"bill_id": new["bill_id"], "from_bill_id": b["id"], "created": True, "summary": f"Chuyển phiếu {_vnd(b['total_vnd'])} sang pháp nhân {inp.entity_code}: {note}"}
+    return {"bill_id": new["bill_id"], "from_bill_id": b["id"], "created": True, "subject": {"label": b["memo"] or f"Phiếu chi phí {_vnd(b['total_vnd'])}", "open": None},
+            "changes": [{"label": "Pháp nhân", "before": "", "after": inp.entity_code}], "summary": f"Chuyển phiếu {_vnd(b['total_vnd'])} sang pháp nhân {inp.entity_code}: {note}"}
 
 
 # ── Danh sách phiếu ──

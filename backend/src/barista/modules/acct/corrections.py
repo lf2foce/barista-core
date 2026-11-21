@@ -37,7 +37,7 @@ from barista.api import (
 from barista.kernel import ledger
 from barista.modules.acct import m
 from barista.modules.acct.cash_in import _accept
-from barista.modules.acct.common import _vnd, locked_message
+from barista.modules.acct.common import _vnd, locked_message, receivable_subject
 from barista.modules.acct.receivables import _target, void_books
 
 # ── Danh mục khoản thu / chi ──
@@ -264,7 +264,9 @@ async def _reverse_basis(ctx: Ctx, inp: ReverseReceipt) -> dict[str, str]:
     return {"Khoản phải thu": t["code"]}
 
 
-@m.command("reverse_receipt", resource="acct", title="Đảo phiếu thu về tiền chưa phân bổ", importable=True, agent="propose", risk="money",
+@m.command("reverse_receipt",
+           purpose="Phiếu thu ghi nhầm khoản hoặc nhầm số — đảo để số phải thu và sổ cái đúng như trước khi thu.", reversible="Ghi lại phiếu thu đúng bằng “Ghi tiền khách trả” hoặc phân bổ tiền chưa phân bổ vào khoản đúng",
+           resource="acct", title="Đảo phiếu thu về tiền chưa phân bổ", importable=True, agent="propose", risk="money",
            basis=_reverse_basis)
 async def reverse_receipt(ctx: Ctx, inp: ReverseReceipt) -> dict[str, Any]:
     """Phiếu thu ghi sai (nhầm khoản, nhầm số, dòng âm của hệ cũ) ⇒ đảo một phần / toàn bộ — không sửa, không xoá phiếu gốc. Tiền vẫn nằm trong tài
@@ -282,8 +284,10 @@ async def reverse_receipt(ctx: Ctx, inp: ReverseReceipt) -> dict[str, Any]:
     if not inp.reason.strip():
         raise Invalid("Cần lý do đảo")
     on = _day(inp.reversed_on, t["issued_on"], "đảo")
+    paid_before = t["paid_vnd"]
     await release(ctx, t, inp.amount_vnd, reason=inp.reason.strip(), corrects=inp.corrects.strip(), on=on, guard=True)
-    return {"code": t["code"], "reversed_vnd": inp.amount_vnd, "paid_vnd": t["paid_vnd"], "created": True,
+    return {"code": t["code"], "reversed_vnd": inp.amount_vnd, "paid_vnd": t["paid_vnd"], "created": True, "subject": receivable_subject(t),
+            "changes": [{"label": "Đã thu", "before": _vnd(paid_before), "after": _vnd(t["paid_vnd"])}],
             "summary": f"Đảo {_vnd(inp.amount_vnd)} của {t['code']} — tiền nằm ở tiền về chưa phân bổ, phân bổ lại ở Đối soát sao kê"}
 
 
@@ -298,7 +302,9 @@ class CreditNote(Input):
     credited_on: Day | None = field("Ngày ghi", None, placeholder="Hôm nay")
 
 
-@m.command("credit_receivable", resource="acct", title="Giảm phải thu (giấy báo có)", importable=True, agent="propose", risk="money")
+@m.command("credit_receivable",
+           purpose="Bên trả được giảm hoặc thu hồi một phần, hoặc khoản lập sai số — giảm số phải thu để doanh thu và công nợ đúng thực tế.", irreversible=True, effect="Giảm số phải thu và doanh thu bằng bút toán sổ cái; không sửa lại được, muốn tăng lại phải lập khoản phải thu mới.",
+           resource="acct", title="Giảm phải thu (giấy báo có)", importable=True, agent="propose", risk="money")
 async def credit_receivable(ctx: Ctx, inp: CreditNote) -> dict[str, Any]:
     """Giảm số phải thu của một khoản doanh thu: bên trả được giảm / thu hồi một phần, hoặc lập sai số. Nợ doanh thu / Có phải thu, một dòng
     ``acct.receivable_credits`` (số dương + lý do + chứng từ). Đã thu nhiều hơn số mới ⇒ phần thừa tự đảo về tiền về chưa phân bổ. Giảm hết ⇒ khoản
@@ -328,6 +334,7 @@ async def credit_receivable(ctx: Ctx, inp: CreditNote) -> dict[str, Any]:
                                   memo=f"Giảm phải thu {t['code']}: {inp.reason.strip()}")
     over = out["released_vnd"]
     return {"code": t["code"], "credited_vnd": inp.amount_vnd, "amount_vnd": out["amount_vnd"], "status": out["status"], "released_vnd": over, "created": True,
+            "subject": receivable_subject(t), "changes": [{"label": "Số phải thu", "before": _vnd(t["amount_vnd"]), "after": _vnd(out["amount_vnd"])}],
             "summary": f"Giảm {_vnd(inp.amount_vnd)} phải thu {t['code']}" + (f" · {_vnd(over)} đã thu thừa về tiền chưa phân bổ" if over > 0 else "")}
 
 
@@ -366,7 +373,9 @@ class Unapplied(Input):
     entity_code: str = field("Pháp nhân nhận tiền", "", options_query="admin.entity_options", placeholder="Pháp nhân mặc định", group="Thêm chi tiết")
 
 
-@m.command("record_unapplied", resource="acct", title="Ghi tiền về chưa phân bổ", importable=True, agent="propose", risk="money")
+@m.command("record_unapplied",
+           purpose="Tiền đã vào tài khoản công ty nhưng chưa có khoản phải thu để ghi — ghi nhận để sổ tiền gửi đúng, chờ phân bổ sau.", reversible="Phân bổ vào khoản phải thu đúng ở Đối soát sao kê, hoặc hoàn lại bên chuyển",
+           resource="acct", title="Ghi tiền về chưa phân bổ", importable=True, agent="propose", risk="money")
 async def record_unapplied(ctx: Ctx, inp: Unapplied) -> dict[str, Any]:
     """Tiền ĐÃ vào tài khoản công ty nhưng chưa có khoản phải thu để ghi vào (vd bên trả chuyển tiền phí khi giao dịch mới đặt cọc — phí chỉ thành khoản
     phải thu lúc ký): ghi sổ ngay (tiền gửi / tiền về chưa phân bổ), dòng nằm ở Đối soát sao kê tới khi phân bổ. Không tự tạo khoản phải thu, không đoán."""

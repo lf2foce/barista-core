@@ -203,13 +203,16 @@ class MemoryRef(Input):
     memory_id: UUID = field("Mục nhớ", hidden=True)
 
 
-@m.command("forget", resource=None, title="Bỏ một điều đã nhớ")
+@m.command("forget",
+           purpose="Một điều đã nhớ bị sai, hết đúng hoặc không muốn bị nhớ nữa.", irreversible=True, effect="Mục của bạn bị xoá hẳn; mục gắn đối tượng hoặc cả công ty được giữ để tra nguồn nhưng không còn được gợi lại.",
+           resource=None, title="Bỏ một điều đã nhớ")
 async def forget(ctx: Ctx, inp: MemoryRef) -> dict[str, Any]:
     """Thôi dùng một mục nhớ (sai, hết đúng, không muốn bị nhớ). Mục của tôi: xoá hẳn. Mục gắn đối tượng / cả công ty: giữ lại để tra nguồn,
     không còn được gợi lại — người ghi hoặc người quản lý tri thức bỏ."""
     r = await _change(ctx, inp.memory_id)
     await _retire(ctx, r)
-    return {"memory_id": inp.memory_id, "summary": f"Đã {'xoá' if r['scope'] == 'person' else 'bỏ'}: {r['text'][:80]}"}
+    return {"memory_id": inp.memory_id, "summary": f"Đã {'xoá' if r['scope'] == 'person' else 'bỏ'}: {r['text'][:80]}",
+            "subject": {"label": f"Điều đã nhớ: {r['text'][:80]}", "open": None}}
 
 
 class KeepIn(Input):

@@ -280,7 +280,9 @@ async def _proof(ctx: Ctx, chosen: list[str]) -> list[str]:
     return ["any"] if "any" in chosen else sorted(set(chosen))
 
 
-@m.command("set_rule", resource="leadflow", action="manage", title="Thêm luật chia lead", category="setup", agent="propose", risk="authority")
+@m.command("set_rule",
+           purpose="Đặt luật chia lead: ai nhận khách, giờ làm việc và hạn gọi lần đầu, để lead mới vào đúng tay và được gọi kịp.", reversible="Thêm luật mới với giá trị cũ (luật có ngày hiệu lực, luật cũ vẫn giữ trong lịch sử)",
+           resource="leadflow", action="manage", title="Thêm luật chia lead", category="setup", agent="propose", risk="authority")
 async def set_rule(ctx: Ctx, inp: SetRule) -> dict[str, Any]:
     """Luật CHIA LEAD: lead mới VÀO TAY ai — người nhận, giờ, hạn gọi lần đầu, thế nào là đã liên hệ, nhắc / báo trưởng nhóm / ân hạn, ngoài giờ.
     KHÔNG dùng cho "nếu … thì báo / nhắc / tạo việc cho ai" (đó là flow__save_automation). Trợ lý được SOẠN luật (thẻ đề xuất kèm câu mô tả +
@@ -502,7 +504,9 @@ class SetMember(Input):
                                 "khi luật của kế hoạch chọn người nhận \"Thành viên\" (0204)")
 
 
-@m.command("set_member", resource="leadflow", action="manage", title="Thêm / sửa thành viên [[offering|l]]", category="setup", importable=True,
+@m.command("set_member",
+           purpose="Khai ai tham gia bán và hạng, trọng số khi chia lead, để lead được chia đúng người và đúng tỷ lệ.", reversible="Chạy lại lệnh với giá trị cũ hoặc tắt thành viên",
+           resource="leadflow", action="manage", title="Thêm / sửa thành viên [[offering|l]]", category="setup", importable=True,
            agent="propose", risk="authority")
 async def set_member(ctx: Ctx, inp: SetMember) -> dict[str, Any]:
     """Ai tham gia bán [[offering|l]] nào, hạng + trọng số khi chia lead (luật chọn người nhận "Thành viên"). Khi công tắc "chỉ thành viên" bật thì danh

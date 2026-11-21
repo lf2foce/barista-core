@@ -391,12 +391,14 @@ async def rename(ctx: Ctx, inp: RenameIn) -> dict[str, Any]:
     return {"document_id": d["id"], "summary": "Đã đổi tên"}
 
 
-@m.command("archive", resource=None, title="Cất văn bản", agent="deny")
+@m.command("archive",
+           purpose="Văn bản không còn cần ở danh sách — cất đi cho gọn.", irreversible=True, effect="Cất văn bản khỏi danh sách; phiên bản và tệp vẫn còn trong kho theo thời hạn lưu nhưng không có nút mở lại.",
+           resource=None, title="Cất văn bản", agent="deny")
 async def archive(ctx: Ctx, inp: DocIn) -> dict[str, Any]:
     """Cất khỏi danh sách (không xoá: phiên bản và file còn nguyên trong kho theo thời hạn lưu của công ty)."""
     d = await _doc(ctx, inp.document_id, lock=True)
     await ctx.exec("UPDATE word.documents SET archived_at = now() WHERE id = %s AND archived_at IS NULL", (d["id"],))
-    return {"document_id": d["id"], "summary": f"Đã cất “{d['title']}”"}
+    return {"document_id": d["id"], "summary": f"Đã cất “{d['title']}”", "subject": {"label": f"Văn bản “{d['title']}”", "open": None}}
 
 
 # ── File để tải / xem bản in ──

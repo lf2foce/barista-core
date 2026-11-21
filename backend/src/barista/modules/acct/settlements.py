@@ -971,7 +971,9 @@ class RequestPayment(Input):
     reason: str = field("Lý do chi", max_length=300, example="Chi đợt 1")
 
 
-@m.command("request_payment", resource="acct", title="Đề nghị chi nghĩa vụ", agent="propose")
+@m.command("request_payment",
+           purpose="Nghĩa vụ phải trả đến hạn — gửi phiếu duyệt chi để kế toán chuyển tiền cho bên nhận.", reversible="Từ chối phiếu duyệt trước khi duyệt; đã duyệt thì huỷ lệnh chi chưa chuyển",
+           resource="acct", title="Đề nghị chi nghĩa vụ", agent="propose")
 async def request_payment(ctx: Ctx, inp: RequestPayment) -> dict[str, Any]:
     if not ctx.p.has_scope("acct", "all") or ctx.p.user_id is None:
         raise Denied("Cần quyền kế toán cả công ty")
@@ -1179,7 +1181,9 @@ async def recovery_line_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
     return [{"value": str(r["id"]), "label": f"{r['received_on']:%d/%m/%Y} — còn {money(r['rest'])} — {r['memo'][:60]}"} for r in rows]
 
 
-@m.command("recover_payment", resource="acct", title="Ghi nhận hoàn tiền ứng / thu hồi", agent="propose")
+@m.command("recover_payment",
+           purpose="Bên nhận hoàn lại tiền ứng hoặc thu hồi — ghi nhận khoản tiền về để công nợ ứng giảm đúng.", irreversible=True, effect="Ghi giảm khoản ứng / thu hồi và phân bổ phần sao kê vào sổ cái; không sửa lại được.",
+           resource="acct", title="Ghi nhận hoàn tiền ứng / thu hồi", agent="propose")
 async def recover_payment(ctx: Ctx, inp: RecoveryReceipt) -> dict[str, Any]:
     from barista.modules.acct.cash_in import _accept
 

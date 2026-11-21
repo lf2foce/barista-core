@@ -21,7 +21,7 @@ from barista.api import (
 )
 from barista.kernel import ledger
 from barista.modules.acct import m
-from barista.modules.acct.common import _vnd, locked_message
+from barista.modules.acct.common import _vnd, locked_message, receivable_subject
 from barista.modules.acct.receivables import AR_STATUS, _rest, _target
 
 # ── Tiền vào: một giao dịch ngân hàng = một dòng; phiếu thu = phần phân bổ của dòng (quyết định 0057) ──
@@ -171,7 +171,9 @@ async def _statement_rows(ctx: Ctx, grid: list[list[Any]]) -> list[dict[str, Any
     return await statement_rows(ctx, grid)
 
 
-@m.command("add_statement_line", resource="acct", title="Nạp dòng sao kê", importable=True, agent="propose", import_rows=_statement_rows)
+@m.command("add_statement_line",
+           purpose="Đưa dòng tiền ngân hàng vào hàng chờ đối soát để kế toán khớp với khoản phải thu — chưa ghi sổ cái.", reversible="Bấm Bỏ qua dòng ở Đối soát sao kê (dòng chưa ghi sổ)",
+           resource="acct", title="Nạp dòng sao kê", importable=True, agent="propose", import_rows=_statement_rows)
 async def add_statement_line(ctx: Ctx, inp: StatementLine) -> dict[str, Any]:
     """Nạp một dòng sao kê để đối soát (chưa ghi sổ cái — chỉ là hàng chờ, nên trợ lý nạp thẳng được từ ảnh sao kê). Tiền VÀO ⇒ hàng chờ đối soát
     khoản phải thu; tiền RA ⇒ dòng đối chiếu với lệnh chi đã ghi (0151). Không có tiền ⇒ bỏ qua; cùng mã giao dịch đã nạp ⇒ bỏ qua (nhập lại
@@ -212,7 +214,9 @@ class Payment(Input):
                                    "Không chọn ⇒ số vượt bị từ chối (chặn gõ nhầm)", group="Thêm chi tiết")
 
 
-@m.command("record_payment", resource="acct", title="Ghi tiền khách trả", importable=True)
+@m.command("record_payment",
+           purpose="Ghi nhận khách đã trả tiền để số còn phải thu và sổ cái khớp với tiền thực về.", reversible="Lập phiếu đảo ở “Đảo phiếu thu” — tiền về lại tiền chưa phân bổ",
+           resource="acct", title="Ghi tiền khách trả", importable=True)
 async def record_payment(ctx: Ctx, inp: Payment) -> dict[str, Any]:
     """Phiếu thu vào một khoản phải thu, ghi sổ theo BẢN CHẤT tiền: doanh thu ⇒ giảm phải thu khách; thu hộ ⇒ phần phí của mình (theo tỷ lệ đã
     thu luỹ kế) là doanh thu, phần còn lại là nợ phải trả người nhận (held:…); cọc ⇒ nợ phải hoàn của đúng người đó (deposit:…).
@@ -228,11 +232,13 @@ async def record_payment(ctx: Ctx, inp: Payment) -> dict[str, Any]:
                             memo=f"Thu {t['code']}", entity=t["entity_id"])
     _payer_gate(line, t, inp.confirm_payer)   # dòng tiền đã nạp có ghi bên chuyển ⇒ phải là bên trả của khoản (0156)
     take = min(inp.amount_vnd, _rest(t))
+    paid_before = t["paid_vnd"]
     out = await _allocate(ctx, line, t["code"], take) if take > 0 else None
     excess = inp.amount_vnd - take
     if excess:
         await _accept(ctx, line)   # tiền đã vào tài khoản: cả dòng vào sổ, phần thừa nằm ở "tiền về chưa phân bổ"
     return {"payment_id": out["payment_id"] if out else None, "status": out["status"] if out else t["status"], "fee_vnd": out["fee_vnd"] if out else 0,
-            "applied_vnd": take, "unapplied_vnd": excess, "line_id": line["id"],
+            "applied_vnd": take, "unapplied_vnd": excess, "line_id": line["id"], "subject": receivable_subject(t),
+            "changes": [{"label": "Đã thu", "before": _vnd(paid_before), "after": _vnd(paid_before + take)}] if take else [],
             "summary": (f"Ghi {_vnd(take)} vào {t['code']}" if take else f"{t['code']} đã thu đủ")
                        + (f" · thừa {_vnd(excess)} nằm ở tiền về chưa phân bổ (Đối soát sao kê)" if excess else "")}

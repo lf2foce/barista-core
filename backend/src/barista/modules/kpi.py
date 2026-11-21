@@ -157,7 +157,9 @@ class SetTarget(Input):
     target: Money = field("Chỉ tiêu", example=3, help="Số theo đơn vị của chỉ số (hợp đồng, cuộc gọi, đồng…)")
 
 
-@m.command("set_target", resource="kpi", title="Đặt chỉ tiêu KPI", importable=True, agent="propose")
+@m.command("set_target",
+           purpose="Đặt chỉ tiêu tháng cho một người hoặc một đội để theo dõi kết quả với con số rõ ràng.", reversible="Chạy lại lệnh với chỉ tiêu cũ",
+           resource="kpi", title="Đặt chỉ tiêu KPI", importable=True, agent="propose")
 async def set_target(ctx: Ctx, inp: SetTarget) -> dict[str, Any]:
     """Đặt / sửa chỉ tiêu tháng cho MỘT người hoặc MỘT đội trên một chỉ số. Trưởng đội đặt được cho người / đội trong cây mình quản lý (phạm vi
     đội); cả công ty cần phạm vi cả công ty. Trợ lý chỉ đề xuất — người có quyền bấm áp dụng."""
@@ -171,6 +173,7 @@ async def set_target(ctx: Ctx, inp: SetTarget) -> dict[str, Any]:
                                WHERE lower(u.email) = lower(%s) AND mb.active""", (inp.user_email.strip(),))
         if uid is None:
             raise NotFound(f"Không có người {inp.user_email} trong công ty")
+        was = await ctx.val("SELECT target FROM kpi.targets WHERE period = %s AND metric = %s AND user_id = %s", (p, mt.key, uid))
         row = await ctx.one("""INSERT INTO kpi.targets (period, metric, user_id, team_id, target, set_by)
                                VALUES (%s, %s, %s, %s, %s, core.me())
                                ON CONFLICT (tenant_id, period, metric, user_id) WHERE user_id IS NOT NULL
@@ -181,13 +184,16 @@ async def set_target(ctx: Ctx, inp: SetTarget) -> dict[str, Any]:
         tid = await ctx.val("SELECT id FROM core.teams WHERE upper(code) = upper(%s)", (inp.team_code.strip(),))
         if tid is None:
             raise NotFound(f"Không có đội {inp.team_code}")
+        was = await ctx.val("SELECT target FROM kpi.targets WHERE period = %s AND metric = %s AND team_id = %s AND user_id IS NULL", (p, mt.key, tid))
         row = await ctx.one("""INSERT INTO kpi.targets (period, metric, team_id, target, set_by) VALUES (%s, %s, %s, %s, core.me())
                                ON CONFLICT (tenant_id, period, metric, team_id) WHERE user_id IS NULL
                                DO UPDATE SET target = EXCLUDED.target, set_by = core.me(), updated_at = now() RETURNING id""",
                             (p, mt.key, tid, inp.target))
         who = inp.team_code.strip().upper()
     assert row is not None
-    return {"target_id": row["id"], "summary": f"Chỉ tiêu {p:%m/%Y} · {who} · {mt.label}: {_fmt(float(inp.target), mt.unit)}"}
+    return {"target_id": row["id"], "summary": f"Chỉ tiêu {p:%m/%Y} · {who} · {mt.label}: {_fmt(float(inp.target), mt.unit)}",
+            "subject": {"label": f"{who} · {mt.label} · tháng {p:%m/%Y}", "open": None},
+            "changes": [{"label": "Chỉ tiêu", "before": _fmt(float(was), mt.unit) if was is not None else "Chưa đặt", "after": _fmt(float(inp.target), mt.unit)}]}
 
 
 class CopyTargets(Input):

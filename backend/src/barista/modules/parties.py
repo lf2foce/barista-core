@@ -837,7 +837,9 @@ class RemoveIdentifier(Input):
     value: str = field("Giá trị", hidden=True)
 
 
-@m.command("remove_identifier", resource="parties.contacts", action="manage", title="Bỏ liên hệ", agent="propose")
+@m.command("remove_identifier",
+           purpose="Bỏ một cách liên hệ đã sai hoặc không còn dùng khỏi hồ sơ người đó.", reversible="Thêm lại liên hệ bằng “Thêm liên hệ”",
+           resource="parties.contacts", action="manage", title="Bỏ liên hệ", agent="propose")
 async def remove_identifier(ctx: Ctx, inp: RemoveIdentifier) -> dict[str, Any]:
     n = await ctx.exec("DELETE FROM parties.identifiers WHERE party_id = %s AND kind = %s AND value = %s", (inp.party_id, inp.kind, inp.value))
     if not n:
@@ -1030,7 +1032,9 @@ class Unmerge(Input):
     party_id: UUID = field("Người bị gộp", hidden=True)
 
 
-@m.command("unmerge", resource="parties.contacts", action="manage", title="Tách định danh đã gộp", agent="propose")
+@m.command("unmerge",
+           purpose="Tách hai định danh đã gộp nhầm để tiền và lịch sử trở về đúng từng người.", reversible="Gộp lại bằng “Gộp hai định danh là một người”",
+           resource="parties.contacts", action="manage", title="Tách định danh đã gộp", agent="propose")
 async def unmerge(ctx: Ctx, inp: Unmerge) -> dict[str, Any]:
     if not ctx.p.has_scope("parties.contacts", "all"):
         raise Denied("Cần phạm vi cả công ty")
@@ -1046,7 +1050,9 @@ class CandidateRef(Input):
     candidate_id: UUID = field("Cặp nghi trùng", hidden=True)
 
 
-@m.command("dismiss_candidate", resource="parties.contacts", action="manage", title="Không phải cùng một người", agent="propose")
+@m.command("dismiss_candidate",
+           purpose="Xác nhận hai người nghi trùng không phải cùng một người để hệ thống không gợi ý gộp nữa.", reversible="Vẫn gộp được bằng “Gộp hai định danh là một người” nếu sau này thấy là cùng một người",
+           resource="parties.contacts", action="manage", title="Không phải cùng một người", agent="propose")
 async def dismiss_candidate(ctx: Ctx, inp: CandidateRef) -> dict[str, Any]:
     n = await ctx.exec("UPDATE parties.merge_candidates SET status = 'dismissed', decided_by = %s, decided_at = now() WHERE id = %s AND status = 'open'",
                        (ctx.p.user_id, inp.candidate_id))

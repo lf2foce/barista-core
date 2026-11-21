@@ -245,6 +245,18 @@ def describe(t: dict[str, Any], action: str, before: dict[str, Any], after: dict
     return f"Đã {'tạm dừng' if action == 'pause' else 'bật lại'} {_label(t)}{where}"
 
 
+def _brief(t: dict[str, Any], action: str, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """Phần người duyệt đọc ở thẻ (ADR 0253): đối tượng nào trên kênh nào + cũ → mới — số lấy từ dữ liệu như ``describe``."""
+    subject = {"label": f"{_label(t).capitalize()}" + (f" · {t['channel_label']}" if t.get("channel_label") else ""), "open": None}
+    if action == "set_budget":
+        ccy, unit = t["currency"], t["unit"]
+        return {"subject": subject, "changes": [{"label": "Ngân sách ngày", "before": money_text(major(before.get("daily_budget"), unit), ccy),
+                                                 "after": money_text(major(after["daily_budget"], unit), ccy)}]}
+    names = {"active": "Đang chạy", "paused": "Tạm dừng"}
+    return {"subject": subject, "changes": [{"label": "Trạng thái", "before": names.get(before.get("status"), str(before.get("status") or "")),
+                                             "after": names.get(after.get("status"), str(after.get("status") or ""))}]}
+
+
 async def _finding(ctx: Ctx, finding_id: UUID | None) -> dict[str, Any] | None:
     if finding_id is None:
         return None
@@ -337,23 +349,27 @@ async def _change(ctx: Ctx, inp: StatusIn | BudgetIn) -> dict[str, Any]:
     action, before, after = _wanted(t, inp)
     finding = await _finding(ctx, inp.finding_id)
     text = describe(t, action, before, after)
+    brief = _brief(t, action, before, after)
     if ctx.preview:   # thẻ đề xuất: chưa gọi kênh; số của phát hiện (nếu có) đi kèm thẻ
         return {"summary": text, "before": before, "after": after, "figures": finding["figures"] if finding else None,
-                "finding": finding and finding["title"]}
+                "finding": finding and finding["title"], **brief}
     if not t["channel"]:
         raise Invalid("Chưa nối kênh quảng cáo cho đối tượng này — đổi trong trình quản lý quảng cáo rồi bấm “Đã làm tay”")
     got = ctx.prepared
     if got is None:   # sau phiếu duyệt (giao dịch của người duyệt) / gọi lồng: không gọi mạng ở đây ⇒ hàng đợi của vòng gửi
         cid = await _record(ctx, t, action, before, after, inp, state="queued")
-        return {"change_id": cid, "state": "queued", "summary": f"{text.replace('Đã ', 'Đã duyệt — sẽ ', 1)} (vòng gửi chạy trong vài phút)"}
+        return {"change_id": cid, "state": "queued", "summary": f"{text.replace('Đã ', 'Đã duyệt — sẽ ', 1)} (vòng gửi chạy trong vài phút)", **brief}
     real = {k: got["before"].get(k) for k in before}
     cid = await _record(ctx, t, action, real, after, inp, state="sent", response={**(got.get("response") or {}), "at": got["at"]})
     ctx.emit("mkt.ad_changed", channel=t["channel"], level=t["level"], ref=t["ref"], after=after)
     already = bool(got.get("already"))
-    return {"change_id": cid, "state": "sent", "already": already, "summary": text + (" (kênh đã ở đúng giá trị này — không ghi lại)" if already else "")}
+    return {"change_id": cid, "state": "sent", "already": already, "summary": text + (" (kênh đã ở đúng giá trị này — không ghi lại)" if already else ""),
+            **brief}
 
 
-@m.command("set_ad_status", resource="mkt.ad_control", title="Tạm dừng / bật lại quảng cáo trên kênh", agent="propose", risk="authority",
+@m.command("set_ad_status",
+           purpose="Tạm dừng hoặc bật lại quảng cáo trên kênh để cắt chi tiêu kém hiệu quả hoặc chạy tiếp khi đã ổn.", reversible="Chạy lại lệnh với trạng thái ngược lại (tạm dừng ↔ bật lại)",
+           resource="mkt.ad_control", title="Tạm dừng / bật lại quảng cáo trên kênh", agent="propose", risk="authority",
            prepare=_apply_live, sensitive=sensitive, basis=basis)
 async def set_ad_status(ctx: Ctx, inp: StatusIn) -> dict[str, Any]:
     """Tạm dừng hoặc bật lại MỘT chiến dịch / nhóm quảng cáo / quảng cáo trên kênh đã nối. Trợ lý chỉ soạn thẻ; người bấm mới gọi kênh. Bật lại có thể phải
@@ -361,7 +377,9 @@ async def set_ad_status(ctx: Ctx, inp: StatusIn) -> dict[str, Any]:
     return await _change(ctx, inp)
 
 
-@m.command("set_ad_budget", resource="mkt.ad_control", title="Đổi ngân sách ngày trên kênh", agent="propose", risk="authority",
+@m.command("set_ad_budget",
+           purpose="Đổi ngân sách ngày của chiến dịch hoặc nhóm quảng cáo trên kênh để chi tiêu đúng mức công ty cho phép.", reversible="Đặt lại ngân sách cũ bằng chính lệnh này (đổi vượt ngưỡng của công ty thì cần duyệt)",
+           resource="mkt.ad_control", title="Đổi ngân sách ngày trên kênh", agent="propose", risk="authority",
            prepare=_apply_live, sensitive=sensitive, basis=basis)
 async def set_ad_budget(ctx: Ctx, inp: BudgetIn) -> dict[str, Any]:
     """Đổi ngân sách NGÀY của một chiến dịch hoặc nhóm quảng cáo trên kênh đã nối. Quá ngưỡng của công ty (% hoặc số đồng / ngày) ⇒ phiếu duyệt."""
@@ -825,7 +843,9 @@ class PolicyIn(Input):
                     help="Mỗi dòng “USD = 26.280” — quy chi phí ra đồng và tính ngưỡng duyệt")
 
 
-@m.command("set_ad_policy", resource="mkt.ad_policy", action="manage", title="Chính sách quảng cáo", agent="propose", risk="authority")
+@m.command("set_ad_policy",
+           purpose="Đặt ngưỡng theo dõi, ngưỡng phải duyệt và tỷ giá cho quảng cáo, để tác nhân theo dõi và người duyệt cùng một luật.", reversible="Chạy lại lệnh với ngưỡng cũ",
+           resource="mkt.ad_policy", action="manage", title="Chính sách quảng cáo", agent="propose", risk="authority")
 async def set_ad_policy(ctx: Ctx, inp: PolicyIn) -> dict[str, Any]:
     """Ngưỡng của tác nhân theo dõi + ngưỡng phải duyệt + tỷ giá + công tắc gửi chuyển đổi — DỮ LIỆU của công ty (bất biến 5); người duyệt là chuỗi
     "mkt_ad_change". Lưu lần đầu ⇒ tác nhân theo dõi bắt đầu chạy mỗi ngày (nếu bật)."""

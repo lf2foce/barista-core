@@ -345,7 +345,9 @@ class Attach(CredentialRef):
     data_b64: str = field("Nội dung (base64)", max_length=14_000_000, audit=False, hidden=True)   # app đọc file được chọn — không ai gõ
 
 
-@m.command("attach_credential_file", resource="hr.credential_private", title="Lưu bản scan chứng chỉ", agent="deny")
+@m.command("attach_credential_file",
+           purpose="Lưu bản scan hoặc ảnh chứng chỉ vào hồ sơ để có bằng chứng kèm theo.", reversible="Tải lại bản scan đúng (bản cũ chờ vòng dọn theo thời hạn lưu của công ty)",
+           resource="hr.credential_private", title="Lưu bản scan chứng chỉ", agent="deny")
 async def attach_credential_file(ctx: Ctx, inp: Attach) -> dict[str, Any]:
     """Bản scan / ảnh chụp (PDF, PNG, JPEG ≤ 10 MB) vào kho tệp (0122); thay bản thì bản cũ chờ vòng dọn theo thời hạn lưu của công ty."""
     _need_all(ctx)

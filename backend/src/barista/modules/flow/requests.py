@@ -155,7 +155,9 @@ class RequestVendor(Input):
     plan_id: UUID | None = field("Kế hoạch", None, hidden=True)
 
 
-@m.command("request_vendor", resource="flow", title="Thuê ngoài")
+@m.command("request_vendor",
+           purpose="Xin duyệt thuê một bên ngoài làm việc, để cam kết chi được người có thẩm quyền duyệt trước khi giao việc.", irreversible=True, effect="Gửi cam kết chi thuê ngoài lên người duyệt; sau khi duyệt, hệ thống mở yêu cầu thuê và giao việc cho người liên quan ngay, không rút lại được.",
+           resource="flow", title="Thuê ngoài")
 async def request_vendor(ctx: Ctx, inp: RequestVendor) -> dict[str, Any]:
     """Thuê ngoài (0074 C): là CAM KẾT CHI ⇒ đi qua chuỗi duyệt công ty đặt cho lệnh này (mặc định giám đốc). Chạy (sau duyệt) ⇒ ghi yêu cầu +
     sinh các việc của quy trình thuê cho người xin, rải tới hạn bàn giao. Tiền không ghi ở đây — chỉ ghi qua sổ cái khi có hoá đơn / nghiệm thu."""

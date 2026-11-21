@@ -24,6 +24,12 @@ async def locked_message(ctx: Ctx, entity: UUID | None, on: date) -> str:
     return ""
 
 
+def receivable_subject(t: dict[str, Any]) -> dict[str, Any]:
+    """Hồ sơ cho bản chạy thử chuẩn (ADR 0253): bên trả · diễn giải (mã) của MỘT khoản phải thu đã nạp — không thêm truy vấn."""
+    label = " · ".join(x for x in (t.get("party"), t.get("label")) if x) or t["code"]
+    return {"label": label if t["code"] in label else f"{label} ({t['code']})", "open": None}
+
+
 _locked_told: dict[tuple[str, str], date] = {}   # (công ty, việc) → ngày đã giao — vòng quét chạy lại không giao trùng trong ngày
 
 

@@ -402,15 +402,18 @@ class DocRef(Input):
     page: int | None = field("Trang", None, ge=1, hidden=True, help="Mở bản gốc ở trang này")
 
 
-@m.command("delete_document", resource="kb.common", action="manage", title="Xoá tài liệu", agent="deny")
+@m.command("delete_document",
+           purpose="Tài liệu sai, hết hạn hoặc không nên lưu — xoá khỏi kho.", irreversible=True, effect="Xoá tài liệu và tệp gốc khỏi kho tri thức; trợ lý không còn trích được và không khôi phục được.",
+           resource="kb.common", action="manage", title="Xoá tài liệu", agent="deny")
 async def delete_document(ctx: Ctx, inp: DocRef) -> dict[str, Any]:
     if not await ctx.val("SELECT 1 FROM kb.documents WHERE id = %s", (inp.document_id,)):   # RLS: không đọc được kệ ⇒ không thấy
         raise NotFound("Không thấy tài liệu")
+    title = await ctx.val("SELECT title FROM kb.documents WHERE id = %s", (inp.document_id,))
     original = await ctx.val("SELECT file_id FROM kb.files WHERE document_id = %s", (inp.document_id,))
     await ctx.exec("DELETE FROM kb.documents WHERE id = %s", (inp.document_id,))   # kb.files xoá theo dây chuyền
     if original is not None:
         await files.release(ctx, original)   # mục mất hẳn ⇒ tệp chờ vòng dọn theo thời hạn lưu (0122 §5)
-    return {"document_id": inp.document_id}
+    return {"document_id": inp.document_id, "subject": {"label": f"Tài liệu “{title}”", "open": None}}
 
 
 @m.query("context_options", resource="kb.common", title="Phạm vi tài liệu bạn đọc được")
@@ -968,7 +971,9 @@ async def _shelf_access(ctx: Ctx, inp: SaveShelf) -> str | None:
     return f"kệ “{cur['name']}” [{key}]: thêm người đọc — {', '.join(added)}" if added else None
 
 
-@m.command("save_shelf", resource="kb.common", action="manage", title="Tạo / sửa kệ tài liệu", agent="propose", category="setup",
+@m.command("save_shelf",
+           purpose="Quyết định ai được đọc tài liệu trên kệ: cả công ty, đội, vai hay người cụ thể.", reversible="Chạy lại lệnh với danh sách người đọc cũ",
+           resource="kb.common", action="manage", title="Tạo / sửa kệ tài liệu", agent="propose", category="setup",
            sensitive=_shelf_access)
 async def save_shelf(ctx: Ctx, inp: SaveShelf) -> dict[str, Any]:
     """Ai đọc được kệ: cả công ty, đội (tính cả đội con), vai, người cụ thể — có hiệu lực ngay cho cả người lẫn trợ lý."""
@@ -992,6 +997,11 @@ async def save_shelf(ctx: Ctx, inp: SaveShelf) -> dict[str, Any]:
     if not (inp.everyone or team_ids or inp.roles or user_ids):
         raise Invalid("Chọn ít nhất một đội / vai / người, hoặc để cả công ty đọc")
     key = inp.key.strip()
+    prior = None
+    if key:
+        prior = await ctx.one("SELECT key, name, everyone, team_ids, roles, user_ids FROM kb.shelves WHERE key = %s", (key,))
+        if prior is not None:
+            await _audience(ctx, [prior])
     if key:
         if key == "common" and not inp.everyone:
             raise Invalid("Kệ Chung luôn để cả công ty đọc — tạo kệ riêng cho tài liệu hạn chế")
@@ -1010,7 +1020,8 @@ async def save_shelf(ctx: Ctx, inp: SaveShelf) -> dict[str, Any]:
     row = await ctx.one("SELECT key, name, everyone, team_ids, roles, user_ids FROM kb.shelves WHERE key = %s", (key,))
     assert row is not None
     await _audience(ctx, [row])
-    return {"key": key, "summary": f"Kệ “{name}”: {row['audience']}"}
+    return {"key": key, "summary": f"Kệ “{name}”: {row['audience']}", "subject": {"label": f"Kệ tài liệu “{name}”", "open": None},
+            "changes": [{"label": "Ai được đọc", "before": prior["audience"], "after": row["audience"]}] if prior is not None and prior["audience"] != row["audience"] else []}
 
 
 # ── Kệ của đội (0128 §3): như thư mục tệp của từng team — tạo / đổi tên đội ⇒ kệ "Tài liệu <tên đội>", đội đọc (gồm đội con) ──

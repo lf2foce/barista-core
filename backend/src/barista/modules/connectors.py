@@ -502,23 +502,29 @@ class ModeIn(Input):
                                                  help="Chỉ ghi nhận: dữ liệu vào đủ nhưng không chia việc, không báo — khi công ty còn chạy song song hệ khác")
 
 
-@m.command("set_mode", resource="connectors", action="manage", title="Đổi chế độ kết nối", agent="propose", risk="authority", category="setup")   # sang "chạy thật" = bắt đầu chia việc / báo người — luôn có người bấm
+@m.command("set_mode",
+           purpose="Chuyển kết nối giữa Chỉ ghi nhận và Chạy thật khi công ty sẵn sàng để dữ liệu vào bắt đầu chia việc.", irreversible=True, effect="Sang Chạy thật: dữ liệu vào từ đây bắt đầu chia việc và báo người; việc và tin đã tạo không thu lại được khi đổi về Chỉ ghi nhận.",
+           resource="connectors", action="manage", title="Đổi chế độ kết nối", agent="propose", risk="authority", category="setup")   # sang "chạy thật" = bắt đầu chia việc / báo người — luôn có người bấm
 async def set_mode(ctx: Ctx, inp: ModeIn) -> dict[str, Any]:
-    kind = await ctx.val("SELECT kind FROM connectors.connections WHERE id = %s", (inp.connection_id,))
+    was = await ctx.one("SELECT kind, mode FROM connectors.connections WHERE id = %s", (inp.connection_id,))
+    kind = was["kind"] if was else None
     k = kc.KINDS.get(kind or "")
     if k and k.cls.mode_command:   # gói có luật riêng khi chuyển sang chạy thật (vd không để hai đường cùng chia lead) — đổi ở lệnh của gói
         raise Invalid(f"Kết nối {k.cls.label} đổi chế độ ở lệnh của gói ({k.cls.mode_command}) — gói kiểm luật riêng trước khi chuyển")
     n = await ctx.val("UPDATE connectors.connections SET mode = %s, updated_at = now() WHERE id = %s RETURNING label", (inp.mode, inp.connection_id))
     if n is None:
         raise NotFound("Không có kết nối này")
-    return {"summary": f"{n}: {MODE[inp.mode].lower()}"}
+    return {"summary": f"{n}: {MODE[inp.mode].lower()}", "subject": {"label": f"Kết nối {n}", "open": None},
+            "changes": [{"label": "Chế độ", "before": MODE[was["mode"]], "after": MODE[inp.mode]}] if was and was["mode"] != inp.mode else []}
 
 
 class RefIn(Input):
     connection_id: UUID = field("Kết nối", hidden=True)
 
 
-@m.command("sync_now", resource="connectors", title="Đồng bộ ngay", agent="propose", risk="low", category="setup")
+@m.command("sync_now",
+           purpose="Kéo dữ liệu mới từ hệ ngoài ngay, không đợi lượt đồng bộ định kỳ.", reversible="Chạy lại được bất kỳ lúc nào; chỉ kéo dữ liệu mới của hệ ngoài vào",
+           resource="connectors", title="Đồng bộ ngay", agent="propose", risk="low", category="setup")
 async def sync_now(ctx: Ctx, inp: RefIn) -> dict[str, Any]:
     n = await ctx.val("""UPDATE connectors.connections SET next_try_at = now(), updated_at = now() WHERE id = %s AND status = 'active' RETURNING label""",
                       (inp.connection_id,))
@@ -526,16 +532,18 @@ async def sync_now(ctx: Ctx, inp: RefIn) -> dict[str, Any]:
         raise Invalid("Kết nối không có hoặc đang tạm dừng")
     # mục bị bỏ được thử lại TỪ ĐẦU (đủ lượt) — người bấm "Đồng bộ ngay" sau khi sửa nguyên nhân
     await ctx.exec("UPDATE connectors.pending SET state = 'retry', attempts = 0, next_try_at = now() WHERE connection_id = %s", (inp.connection_id,))
-    return {"summary": f"{n}: sẽ đồng bộ trong vòng một phút"}
+    return {"summary": f"{n}: sẽ đồng bộ trong vòng một phút", "subject": {"label": f"Kết nối {n}", "open": None}}
 
 
-@m.command("remove", resource="connectors", action="manage", title="Gỡ kết nối", agent="deny", category="setup")
+@m.command("remove",
+           purpose="Hệ ngoài không còn dùng — gỡ kết nối.", irreversible=True, effect="Xoá kết nối, khoá, hàng chờ và nhật ký đồng bộ; dữ liệu đã nhận vào Barista giữ nguyên. Muốn nối lại phải tạo kết nối mới.",
+           resource="connectors", action="manage", title="Gỡ kết nối", agent="deny", category="setup")
 async def remove(ctx: Ctx, inp: RefIn) -> dict[str, Any]:
     """Xoá kết nối + khoá + hàng chờ + nhật ký đồng bộ. Dữ liệu đã nhận vào Barista (lead, đơn…) GIỮ NGUYÊN — thuộc module sở hữu."""
     n = await ctx.val("DELETE FROM connectors.connections WHERE id = %s RETURNING label", (inp.connection_id,))
     if n is None:
         raise NotFound("Không có kết nối này")
-    return {"summary": f"Đã gỡ kết nối {n} (dữ liệu đã nhận vào Barista giữ nguyên)"}
+    return {"summary": f"Đã gỡ kết nối {n} (dữ liệu đã nhận vào Barista giữ nguyên)", "subject": {"label": f"Kết nối {n}", "open": None}}
 
 
 async def _prepare_check(prep: Prep, inp: RefIn) -> dict[str, Any]:
@@ -552,7 +560,9 @@ async def _prepare_check(prep: Prep, inp: RefIn) -> dict[str, Any]:
         return {"ok": False, "kind": kind, "message": message}
 
 
-@m.command("check", resource="connectors", title="Thử kết nối", agent="propose", risk="low", category="setup", prepare=_prepare_check)
+@m.command("check",
+           purpose="Kiểm tra kết nối với hệ ngoài còn chạy được không.", reversible="Thử lại được bất kỳ lúc nào; chỉ kiểm tra, không đổi dữ liệu",
+           resource="connectors", title="Thử kết nối", agent="propose", risk="low", category="setup", prepare=_prepare_check)
 async def check(ctx: Ctx, inp: RefIn) -> dict[str, Any]:
     got = ctx.prepared
     if got is None:
@@ -563,7 +573,7 @@ async def check(ctx: Ctx, inp: RefIn) -> dict[str, Any]:
     await _run(ctx, row["id"], "check", got["ok"], 0, got.get("kind", ""), "" if got["ok"] else got["message"])
     if not got["ok"]:
         raise Invalid(f"Thử kết nối không đạt: {got['message']}")
-    return {"summary": f"{row['label']}: đạt — {got['message']}"}
+    return {"summary": f"{row['label']}: đạt — {got['message']}", "subject": {"label": f"Kết nối {row['label']}", "open": None}}
 
 
 class RunsIn(Input):

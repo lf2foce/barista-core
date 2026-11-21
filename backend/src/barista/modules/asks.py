@@ -217,13 +217,15 @@ async def _close(ctx: Ctx, rid: UUID) -> str | None:
     return title
 
 
-@m.command("close", resource="asks", title="Đóng yêu cầu", agent="deny")
+@m.command("close",
+           purpose="Yêu cầu đã xong việc hoặc không cần nữa — đóng và thu hồi link.", irreversible=True, effect="Đóng yêu cầu và thu hồi link: người nhận bấm link cũ sẽ báo hết hiệu lực, không mở lại được. Câu trả lời và tệp đã nhận giữ nguyên.",
+           resource="asks", title="Đóng yêu cầu", agent="deny")
 async def close(ctx: Ctx, inp: RequestRef) -> dict[str, Any]:
     """Đóng + thu hồi link (bấm link cũ ⇒ báo hết hiệu lực). Câu trả lời / file đã nhận giữ nguyên."""
     title = await _close(ctx, inp.request_id)
     if title is None:
         raise NotFound("Không thấy yêu cầu đang mở")
-    return {"request_id": inp.request_id, "summary": f"Đã đóng “{title}” và thu hồi link"}
+    return {"request_id": inp.request_id, "summary": f"Đã đóng “{title}” và thu hồi link", "subject": {"label": f"Yêu cầu “{title}”", "open": None}}
 
 
 class SubjectRef(Input):

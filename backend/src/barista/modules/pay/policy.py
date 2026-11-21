@@ -40,7 +40,9 @@ class UpsertComponent(Input):
     active: bool = field("Đang dùng", True)
 
 
-@m.command("upsert_component", resource="pay.policy", action="manage", title="Thêm / sửa khoản lương", agent="deny", risk="money")
+@m.command("upsert_component",
+           purpose="Thêm hoặc sửa khoản lương để phiếu lương có đúng các khoản thu nhập và khấu trừ của công ty.", reversible="Lưu lại phiên bản mới với giá trị cũ (bản cũ giữ trong lịch sử)",
+           resource="pay.policy", action="manage", title="Thêm / sửa khoản lương", agent="deny", risk="money")
 async def upsert_component(ctx: Ctx, inp: UpsertComponent) -> dict[str, Any]:
     _need_policy(ctx)
     if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,29}", inp.code) or inp.code in law_codes():
@@ -98,7 +100,9 @@ class SetRate(Input):
     note: str = field("Ghi chú", "", max_length=300)
 
 
-@m.command("set_rate", resource="pay.policy", action="manage", title="Đặt mức trả", agent="deny")
+@m.command("set_rate",
+           purpose="Đặt mức trả theo tháng hoặc theo công để phiếu lương tính đúng từ ngày hiệu lực.", reversible="Đặt lại mức cũ với ngày hiệu lực mới (mức chỉ thêm, lịch sử giữ nguyên)",
+           resource="pay.policy", action="manage", title="Đặt mức trả", agent="deny")
 async def set_rate(ctx: Ctx, inp: SetRate) -> dict[str, Any]:
     """Mức chỉ thêm (lịch sử giữ nguyên); áp dòng cụ thể nhất có hiệu lực vào ngày làm: riêng người > đúng loại việc > mức chung."""
     _need_policy(ctx)

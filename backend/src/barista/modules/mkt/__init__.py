@@ -34,6 +34,7 @@ from barista.api import (
     SearchIn,
     SearchTerms,
     Workspace,
+    dong,
     field,
     fold,
     today,
@@ -204,7 +205,9 @@ async def _campaigns_existing(ctx: Ctx, keys: list[tuple[str, ...]]) -> dict[tup
     return {(r["code"].lower(),): r for r in rows}
 
 
-@m.command("upsert_campaign", resource="mkt", title="Thêm / sửa chiến dịch", importable=True, import_key=ImportKey(("code",), _campaigns_existing, update="self"))
+@m.command("upsert_campaign",
+           purpose="Thêm hoặc sửa chiến dịch để chi phí và lead được tính đúng chiến dịch, đúng ngân sách và người chạy.", reversible="Chạy lại lệnh với giá trị cũ (tên, ngân sách, trạng thái)",
+           resource="mkt", title="Thêm / sửa chiến dịch", importable=True, import_key=ImportKey(("code",), _campaigns_existing, update="self"))
 async def upsert_campaign(ctx: Ctx, inp: UpsertCampaign) -> dict[str, Any]:
     """Tên chiến dịch đổi được (nền tảng cho đổi + tái dùng); TÊN GỐC giữ tên lần đầu hệ biết — sửa tên sau này không ghi đè (0195). Người chạy nêu
     bằng email; không nêu thì chiến dịch mới thuộc người tạo, chiến dịch đã có giữ người đang chạy."""
@@ -234,7 +237,7 @@ async def upsert_campaign(ctx: Ctx, inp: UpsertCampaign) -> dict[str, Any]:
          "ocode": offering["code"] if offering else "", "owner": owner or ctx.p.user_id, "team": team, "budget": inp.budget_vnd,
          "start": inp.start_on or today(), "end": inp.end_on, "status": inp.status, "orig": inp.original_name.strip(), "plan": inp.plan_code,
          "set_owner": owner is not None})
-    return {"campaign_id": cid, "code": code}
+    return {"campaign_id": cid, "code": code, "subject": {"label": f"{inp.name} ({code})", "open": None}}
 
 
 class Spend(Input):
@@ -254,7 +257,9 @@ class Spend(Input):
     fx_source: str = field("Nguồn tỷ giá", "", max_length=120, example="Tỷ giá hệ thống quảng cáo ngày 05/11/2026", group="Tiền gốc & tỷ giá")
 
 
-@m.command("record_spend", resource="mkt", title="Nhập chi phí ngày", importable=True)
+@m.command("record_spend",
+           purpose="Ghi chi phí quảng cáo của một ngày để chi phí mỗi lead và báo cáo marketing đúng số nền tảng đã tính.", reversible="Nhập lại số đúng cho cùng chiến dịch và ngày (ghi đè)",
+           resource="mkt", title="Nhập chi phí ngày", importable=True)
 async def record_spend(ctx: Ctx, inp: Spend) -> dict[str, Any]:
     """Một dòng / chiến dịch / ngày — nhập lại cùng ngày thì GHI ĐÈ (file xuất của nền tảng hay cập nhật số trễ). Tiền gốc + tỷ giá giữ lại để đối
     soát tuyệt đối với nền tảng (0195); số đo lượt hiển thị / nhấp trống nghĩa là "không đo", không phải 0. Ngày đã có số theo từng quảng cáo (0198) thì
@@ -265,6 +270,7 @@ async def record_spend(ctx: Ctx, inp: Spend) -> dict[str, Any]:
         raise NotFound(f"Không có chiến dịch {inp.campaign_code}")
     if await ctx.val("SELECT 1 FROM mkt.ad_days d JOIN mkt.ads a ON a.id = d.ad_id WHERE a.campaign_id = %s AND d.day = %s LIMIT 1", (cid, inp.day)):
         raise Invalid("Ngày này đã có số theo từng quảng cáo — chi phí chiến dịch là tổng của chúng, nhập theo quảng cáo (Nhập số quảng cáo theo ngày)")
+    before = await ctx.val("SELECT amount_vnd FROM mkt.spend WHERE campaign_id = %s AND day = %s", (cid, inp.day))   # ghi đè ⇒ người duyệt thấy số cũ
     await ctx.exec(
         """INSERT INTO mkt.spend (campaign_id, day, amount_vnd, leads_platform, impressions, clicks, amount_native, currency_native, fx_rate, fx_source)
            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -273,7 +279,9 @@ async def record_spend(ctx: Ctx, inp: Spend) -> dict[str, Any]:
                currency_native = EXCLUDED.currency_native, fx_rate = EXCLUDED.fx_rate, fx_source = EXCLUDED.fx_source""",
         (cid, inp.day, inp.amount_vnd, inp.leads_platform, inp.impressions, inp.clicks, inp.amount_native, ccy or None, inp.fx_rate,
          inp.fx_source.strip()))
-    return {"campaign_code": inp.campaign_code.upper(), "day": inp.day}
+    return {"campaign_code": inp.campaign_code.upper(), "day": inp.day,
+            "subject": {"label": f"Chiến dịch {inp.campaign_code.upper()} · {inp.day:%d/%m/%Y}", "open": None},
+            "changes": [{"label": "Chi phí ngày", "before": dong(before) if before is not None else "", "after": dong(inp.amount_vnd)}]}
 
 
 def _native(amount: Decimal | None, currency: str, fx: Decimal | None) -> str:

@@ -131,7 +131,9 @@ async def _leads_existing(ctx: Ctx, keys: list[tuple[str, ...]]) -> dict[tuple[s
     return {(r["phone"].lower(), r["offering_code"].lower()): {"name": r["name"]} for r in rows}
 
 
-@m.command("create_lead", resource="crm", title="Thêm khách / lead", importable=True, import_key=ImportKey(("phone", "offering_code"), _leads_existing),
+@m.command("create_lead",
+           purpose="Đưa một khách mới vào danh sách chăm sóc, có người phụ trách rõ ràng, để không bỏ sót khách đã hỏi.", reversible="Chuyển khách sang chặng Mất nếu thêm nhầm (lead không xoá hẳn được)",
+           resource="crm", title="Thêm khách / lead", importable=True, import_key=ImportKey(("phone", "offering_code"), _leads_existing),
            extra="lead")
 async def create_lead(ctx: Ctx, inp: CreateLead) -> dict[str, Any]:
     owner = ctx.p.user_id
@@ -178,7 +180,9 @@ async def create_lead(ctx: Ctx, inp: CreateLead) -> dict[str, Any]:
     await _stage_event(ctx, lead_id, "created", None, "lead", data={"source": inp.source})
     ctx.emit("crm.lead_created", lead_id=lead_id, campaign_id=campaign and campaign["id"], source=inp.source,
              offering_code=offering["code"] if offering else "")
-    return {"lead_id": lead_id, "customer_id": customer_id}
+    return {"lead_id": lead_id, "customer_id": customer_id,
+            "subject": {"label": f"{inp.name} · {offering['code'] if offering else 'chưa chọn [[offering|l]]'}",
+                        "open": {"query": "crm.journey", "input": {"lead_id": str(lead_id)}}}}
 
 
 WHO_FILTERS = "Theo đội / người"   # gấp sẵn: sale chỉ thấy khách của mình, không cần; trưởng nhóm mở ra để xem từng người
@@ -301,7 +305,9 @@ class UpdateInterest(Input):
                         help="Điều khách nói về nhu cầu")
 
 
-@m.command("update_interest", resource="crm", title="Cập nhật nhu cầu khách", agent="propose")
+@m.command("update_interest",
+           subject=("crm.lead", "lead_id"), purpose="Ghi lại nhu cầu mới khách vừa nói sau buổi gặp hoặc cuộc gọi, để người chăm tiếp thấy đúng nhu cầu hiện tại.", reversible="Chạy lại lệnh với nhu cầu cũ (dòng thời gian của khách ghi trước → sau)",
+           resource="crm", title="Cập nhật nhu cầu khách", agent="propose")
 async def update_interest(ctx: Ctx, inp: UpdateInterest) -> dict[str, Any]:
     """Sau buổi gặp / cuộc gọi: nhu cầu MỚI khách nói. Ô để trống = giữ nguyên. Ghi "trước → sau" vào dòng thời gian của khách để biết
     nhu cầu đã đổi thế nào."""
@@ -322,7 +328,8 @@ async def _merge_interest(ctx: Ctx, lead_id: UUID, patch: dict[str, Any]) -> dic
     before, after = interest_text(old) or "chưa ghi", interest_text(new)
     await ctx.exec("INSERT INTO crm.activities (lead_id, kind, note, by_user) VALUES (%s, 'note', %s, %s)",
                    (lead_id, f"Nhu cầu: {before} → {after}", ctx.p.user_id))
-    return {"lead_id": lead_id, "summary": f"Nhu cầu {lead['name']}: {after}"}
+    changes = [{"label": "Mong muốn", "before": str(old.get("wishes") or ""), "after": str(new["wishes"])}] if new.get("wishes") != old.get("wishes") else []
+    return {"lead_id": lead_id, "summary": f"Nhu cầu {lead['name']}: {after}", "changes": changes}
 
 
 class SetLeadFields(Input):
@@ -330,7 +337,9 @@ class SetLeadFields(Input):
     extra: dict[str, Any] = field("Thông tin riêng của công ty", {}, hidden=True, agent=False)
 
 
-@m.command("set_lead_fields", resource="crm", title="Cập nhật thông tin riêng của khách", agent="propose", extra="lead")
+@m.command("set_lead_fields",
+           subject=("crm.lead", "lead_id"), purpose="Cập nhật các thông tin riêng mà công ty theo dõi cho khách, để hồ sơ khách đủ và đúng.", reversible="Chạy lại lệnh với giá trị cũ",
+           resource="crm", title="Cập nhật thông tin riêng của khách", agent="propose", extra="lead")
 async def set_lead_fields(ctx: Ctx, inp: SetLeadFields) -> dict[str, Any]:
     """Ghi các trường RIÊNG công ty tự thêm cho khách (Quản trị › Trường riêng của công ty). Ô để trống = giữ nguyên. Ghi "trường: giá trị" vào dòng
     thời gian của khách."""
