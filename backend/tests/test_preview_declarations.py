@@ -18,9 +18,7 @@ PENDING_MODULES = {
     "papers": "ADR 0251 đang làm ở phiên khác — gộp sau",
     "compose": "ADR 0252 đang làm ở phiên khác — gộp sau",
 }
-PENDING_KERNEL = {   # lệnh của lõi ở kernel/ (phiên khác đang sửa kernel) — khai khi kernel gộp xong
-    "core.delete_import_mapping", "core.read_notifications", "core.remove_file", "core.reset_role_hint",
-}
+PENDING_KERNEL: set[str] = set()   # lệnh của lõi ở kernel/ chưa khai (đã khai xong hết — giữ tập để ngoại lệ mới phải ghi lý do)
 
 
 def _public() -> list[registry.Op]:

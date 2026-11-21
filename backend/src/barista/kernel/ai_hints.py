@@ -198,7 +198,8 @@ class HintKey(Input):
     key: str = field("Câu", max_length=200, hidden=True)
 
 
-@m.command("reset_role_hint", resource=RESOURCE, title="Câu gợi ý về mặc định / xoá câu riêng", category="setup", risk="low")
+@m.command("reset_role_hint", resource=RESOURCE, title="Câu gợi ý về mặc định / xoá câu riêng", category="setup", risk="low",
+           irreversible=True, effect="Xoá phần công ty đã sửa cho câu gợi ý này — câu quay về mặc định của gói, chữ đã sửa không khôi phục được.")
 async def reset_role_hint(ctx: Ctx, inp: HintKey) -> dict[str, Any]:
     role = await _role(ctx, inp.role.strip())
     n = await ctx.exec("DELETE FROM core.role_hints WHERE role = %s AND key = %s", (role, inp.key.strip()))

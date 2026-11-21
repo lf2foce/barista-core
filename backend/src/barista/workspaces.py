@@ -18,6 +18,7 @@ from barista.kernel.attention import Line, kpi, line, num
 from barista.kernel.executor import can_run
 from barista.kernel.fields import DEFAULT_COUNTRY, NATIONAL
 from barista.kernel.forms import field_specs
+from barista.kernel.preview import action_rule
 from barista.kernel.principal import Principal, system_principal
 from barista.kernel.screens import Action, Desk, Open, Screen, Workspace
 from barista.kernel.text import fold
@@ -74,7 +75,8 @@ def _action(p: Principal, a: Action) -> dict[str, Any] | None:
         return None
     op = registry.OPS[a.command]
     return {"command": a.command, "title": a.title or op.title, "bind": a.bind, "prefill": a.prefill, "preset": a.preset, "when": a.when,
-            "style": a.style, "importable": op.importable and op.import_table is None, **({"import_only": True} if op.import_table is not None else {})}
+            "style": a.style, "importable": op.importable and op.import_table is None,
+            **({"import_only": True} if op.import_table is not None else action_rule(op, {*a.bind, *a.preset}))}   # luật xác nhận một chỗ (ADR 0253)
 
 
 PRIMARY_DEFAULT = 2

@@ -50,6 +50,16 @@ def confirm_rule(op: registry.Op) -> tuple[str, str]:
     return "consequence", op.effect or f"Làm “{op.title}” ngay bây giờ."
 
 
+def action_rule(op: registry.Op, fixed: set[str]) -> dict[str, Any]:
+    """Luật xác nhận áp cho MỘT NÚT (``fixed`` = ô nút đã cố định bằng ``bind`` / ``preset``): còn ô để điền ⇒ {} (form như thường); không còn ô nào ⇒
+    ``{"instant": True}`` (đảo được: chạm là chạy, báo kết quả kèm Hoàn tác nếu có) hoặc ``{"confirm": hệ quả}`` (hộp nói hệ quả). Một chỗ cho nút của màn
+    (``workspaces._action``) lẫn nút của thẻ (``ui.act``) — app chỉ vẽ."""
+    if [f for f in field_specs(op) if not f["hidden"] and f["key"] not in fixed]:
+        return {}
+    kind, text = confirm_rule(op)
+    return {"instant": True} if kind == "none" else {"confirm": text}
+
+
 async def build(ctx: Ctx, op: registry.Op, payload: dict[str, Any], out: Any, *, reason: str = "") -> dict[str, Any]:
     """Bản chạy thử chuẩn của MỘT lần chạy thử (``ctx`` = ngữ cảnh đã chạy handler trong điểm lưu, còn thấy dữ liệu chưa hoàn)."""
     from barista.kernel import history  # nạp muộn: history cần executor

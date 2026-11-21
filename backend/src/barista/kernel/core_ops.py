@@ -502,7 +502,8 @@ class MarkRead(Input):
     ids: list[int] = field("Thông báo", [], hidden=True, help="Trống = đánh dấu đã đọc tất cả")
 
 
-@m.command("read_notifications", resource=None, title="Đánh dấu thông báo đã đọc", agent="deny")
+@m.command("read_notifications", resource=None, title="Đánh dấu thông báo đã đọc", agent="deny",
+           reversible="Thông báo vẫn nằm trong danh sách; chỉ mất dấu chưa đọc")
 async def read_notifications(ctx: Ctx, inp: MarkRead) -> dict[str, int]:
     """Đã đọc là việc của người — trợ lý không đánh dấu thay (thông báo có thể bị bỏ sót)."""
     n = await ctx.exec("UPDATE core.notifications SET read_at = now() WHERE read_at IS NULL AND (cardinality(%s::bigint[]) = 0 OR id = ANY(%s))",

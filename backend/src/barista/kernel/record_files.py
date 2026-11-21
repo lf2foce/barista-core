@@ -162,7 +162,8 @@ def _may_remove(ctx: Ctx, r: dict[str, Any], subj: dict[str, Any]) -> bool:
     return ctx.p.user_id in (r["added_by"], subj.get("owner_id"))
 
 
-@m.command("remove_file", resource=None, title="Gỡ tệp khỏi hồ sơ", agent="deny", category="core")
+@m.command("remove_file", resource=None, title="Gỡ tệp khỏi hồ sơ", agent="deny", category="core",
+           reversible="Tệp gốc còn trong kho — gắn lại vào hồ sơ bất kỳ lúc nào")
 async def remove_file(ctx: Ctx, inp: RecordFileRef) -> dict[str, Any]:
     """Gỡ = đánh dấu (không xoá): tệp biến khỏi hồ sơ với mọi người; nhật ký thao tác giữ ai gỡ, lúc nào. Chỉ người đã gắn tệp hoặc người phụ trách hồ sơ."""
     r, subj = await _one(ctx, inp.record_file_id)
