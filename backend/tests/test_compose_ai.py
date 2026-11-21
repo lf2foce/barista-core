@@ -92,6 +92,51 @@ async def test_a_bad_query_input_gets_the_schema_back_and_a_retried_step_is_not_
         {"title": "B", "status": "error"}, {"title": "A", "status": "ok"}]                 # lỗi chưa gỡ được vẫn giữ
 
 
+async def test_asking_the_same_thing_twice_in_one_turn_runs_it_once_and_shows_one_step(who: Who, monkeypatch: Any) -> None:
+    """Gốc của "Đã chạy 11 bước" lặp tên: model hay gọi lại ĐÚNG truy vấn + đầu vào đã có kết quả (song song hoặc ở vòng sau). Lần lặp không chạy lại
+    truy vấn, không thêm một bước vào nhật ký, không thêm khối số liệu trùng — trả lại mã cũ. Đầu vào KHÁC vẫn chạy bình thường."""
+    from pydantic_ai.messages import ToolReturnPart
+
+    sale = await who("sale1")
+    ran: list[str] = []
+    real = executor.query
+
+    async def counting(p: Any, name: str, inp: Any, **kw: Any) -> Any:
+        ran.append(name)
+        return await real(p, name, inp, **kw)
+
+    monkeypatch.setattr(executor, "query", counting)
+    fetch = {"query": "crm.leads", "title": "Khách", "input": {}}
+    returned: list[Any] = []
+
+    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        back = [part.content for m in messages for part in getattr(m, "parts", []) if isinstance(part, ToolReturnPart)]
+        n = len([m for m in messages if isinstance(m, ModelResponse)])
+        returned.append(back)
+        if n == 0:   # hai lời gọi song song cùng đầu vào + hai lần tìm tài liệu cùng câu hỏi
+            return ModelResponse(parts=[ToolCallPart("fetch_data", fetch, tool_call_id="c1"), ToolCallPart("fetch_data", dict(fetch), tool_call_id="c2"),
+                                        ToolCallPart("search_docs", {"q": "chính sách bán hàng"}, tool_call_id="s1"),
+                                        ToolCallPart("search_docs", {"q": "chính sách bán hàng"}, tool_call_id="s2")])
+        if n == 1:   # vòng sau: lại đúng truy vấn đó (đầu vào thêm trường null = vẫn là cùng đầu vào) + một câu tìm KHÁC
+            return ModelResponse(parts=[ToolCallPart("fetch_data", {**fetch, "input": {"stage": None}}, tool_call_id="c3"),
+                                        ToolCallPart("search_docs", {"q": "bảng giá"}, tool_call_id="s3")])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, _draft("Như bảng dưới."), tool_call_id="o")])
+
+    compose.MODEL = FunctionModel(reply, model_name="compose-fake")
+    try:
+        out = await ok(sale, "compose.start", kind="post", brief="Báo cáo khách đang theo")
+    finally:
+        compose.MODEL = None
+    assert ran.count("crm.leads") == 1 and ran.count("kb.search") == 2, ran            # chạy một lần mỗi (truy vấn, đầu vào) khác nhau
+    refs = [r["ref"] for back in returned for r in back if isinstance(r, dict) and "ref" in r]
+    assert refs and len(set(refs)) == 1, refs                                            # cả ba lời gọi fetch_data nhận CÙNG một mã
+    comp = (await q(sale, "compose.view", session_id=out["session_id"]))["blocks"][0]
+    assert comp["status"] == "ready", comp["error"]
+    steps = [s["title"] for turn in comp["turns"] if turn.get("role") == "assistant" for s in turn.get("steps") or []]
+    assert len(steps) == 3 and steps.count("Tìm trong tài liệu công ty") == 2, steps     # 1 truy vấn + 2 câu tìm khác nhau — không còn dòng lặp
+    assert comp["stats"]["data"] == 1                                                    # một khối số liệu, không phải ba
+
+
 async def test_agent_modes(who: Who) -> None:
     sale = await who("sale1")
     out, _ = await _start(sale.as_agent(), [_draft("Như bảng dưới.")])

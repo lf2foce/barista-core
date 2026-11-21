@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyComposeEvent, liveTurn, retryTarget, splitPlaceholders } from "../composer";
+import { applyComposeEvent, groupSteps, liveTurn, retryTarget, splitPlaceholders } from "../composer";
 import { decodePage } from "../decode";
 
 describe("composer", () => {
@@ -177,5 +177,19 @@ describe("composer", () => {
       { type: "step", title: "Tổng hợp lead", status: "running" }, { type: "step", title: "Tổng hợp lead", status: "ok" },
     ]) t = applyComposeEvent(t, ev as never);
     expect(t.steps).toEqual([{ title: "Doanh số", status: "error", reason: "chưa có quyền" }, { title: "Tổng hợp lead", status: "ok" }]);
+  });
+});
+
+describe("groupSteps", () => {
+  it("gộp bước giống hệt thành một dòng có số lần, giữ thứ tự lần đầu; khác trạng thái / lý do thì tách; bước đang chạy giữ riêng", () => {
+    const s = (title: string, status: string, reason?: string) => ({ title, status, ...(reason ? { reason } : {}) });
+    const out = groupSteps([
+      s("Tìm trong tài liệu công ty", "ok"), s("Doanh thu theo dự án", "ok"), s("Tìm trong tài liệu công ty", "ok"), s("Tìm trong tài liệu công ty", "ok"),
+      s("Doanh thu theo dự án", "error", "không tìm thấy dữ liệu"), s("Doanh thu theo dự án", "running"), s("Doanh thu theo dự án", "running"),
+    ]);
+    expect(out.map((x) => [x.title, x.status, x.count])).toEqual([
+      ["Tìm trong tài liệu công ty", "ok", 3], ["Doanh thu theo dự án", "ok", 1], ["Doanh thu theo dự án", "error", 1],
+      ["Doanh thu theo dự án", "running", 1], ["Doanh thu theo dự án", "running", 1],
+    ]);
   });
 });

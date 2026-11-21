@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  ArrowUp, Check, ChevronLeft, ChevronRight, CircleAlert, Copy, Download, FileDown, FileSpreadsheet, FileText, History, Layers, Link2, MessageSquarePlus, RefreshCw,
+  ArrowUp, Check, ChevronRight, CircleAlert, Copy, Download, FileDown, FileSpreadsheet, FileText, History, Link2, MessageSquarePlus, RefreshCw,
   RotateCcw, Sparkles, Square, Trash2, X,
 } from "lucide-react";
 import { api, composeStream, type ComposeTurnBody } from "@/lib/api";
 import { saveBlob } from "@/lib/download";
 import { newKey } from "@/lib/idempotency";
-import { applyComposeEvent, liveTurn, retryTarget, splitPlaceholders, type LiveStep, type LiveTurn } from "@/lib/composer";
+import { applyComposeEvent, groupSteps, liveTurn, retryTarget, splitPlaceholders, type LiveStep, type LiveTurn } from "@/lib/composer";
 import { datetime } from "@/lib/format";
 import { documentFileUrl } from "@/lib/links";
 import type { ComposerData, ComposerItem, ComposerSection, ComposerTurn, Input, Option } from "@/lib/types";
@@ -74,7 +74,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
   const [kind, setKind] = useState(block.kind || "brochure");
   const [stopping, setStopping] = useState(false);
   const [draftOpen, setDraftOpen] = useState(block.blocks.length > 0);   // rộng: ngăn bản soạn bên phải mở / đóng
-  const [view, setView] = useState<"chat" | "draft">("chat");           // hẹp: một ngăn một lúc, chuyển bằng hai thẻ
+  const [view, setView] = useState<"chat" | "draft">(block.blocks.length > 0 ? "draft" : "chat");   // hẹp: một ngăn một lúc, hai thẻ "Trò chuyện | Bản soạn" luôn hiện; có bản soạn ⇒ mở thẳng bản soạn
   const [pct, setPct] = useState(56);                                    // rộng: bề ngang ngăn bản soạn (% khung), kéo đổi được
   const row = useRef<HTMLDivElement>(null);
   const full = useFullFrame();   // màn chiếm trọn khung (phân hệ một màn) ⇒ có nút ẩn / hiện thanh bên trái như đầu ngăn trợ lý
@@ -101,6 +101,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
   if (sess !== doc.session_id) {
     setSess(doc.session_id);
     setDraftOpen(hasDraft);
+    setView(hasDraft ? "draft" : "chat");   // mở lại / vừa dựng một ấn phẩm có nội dung ⇒ hẹp cũng thấy bản soạn ngay, không phải bấm tìm
   }
 
   const reload = useCallback(async (sid: string) => {
@@ -143,6 +144,10 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
       turn = { ...turn, done: true, error: e instanceof Error ? e.message : "Không soạn được — thử lại" };
     }
     if (turn.sessionId) await reload(turn.sessionId);   // server đã nhận lượt: lời người nói + kết quả (kể cả lỗi) đã lưu
+    if (turn.blocks?.length && !turn.error) {   // soạn xong có kết quả ⇒ hẹp: chuyển sang "Bản soạn" (rộng: ngăn bản soạn vốn đã hiện)
+      setDraftOpen(true);
+      setView("draft");
+    }
     else setLocal({ user: turn, error: turn.error || "Không soạn được — thử lại" });   // bị từ chối trước khi bắt đầu (vd công ty đang soạn 2 bản)
     setLive(null);
   }
@@ -234,7 +239,10 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
     setDoc((d) => ({ ...d, history: d.history.filter((h) => h.id !== id) }));
   }
 
+  const recipe = useRecipe(doc, kind, !!live, (sid) => void reload(sid));
   const panes = hasDraft && draftOpen;
+  const showDraft = () => { setView("draft"); setDraftOpen(true); };
+  const tabs = hasDraft ? <ViewTabs view={view} onView={(v) => (v === "draft" ? showDraft() : setView("chat"))} fresh={!!live && live.data.length > 0 && !live.blocks} /> : null;
   // "Tài liệu đã soạn" thuộc phần CHÍNH (khung bản soạn); chưa mở bản soạn nào ⇒ nằm ở màn bắt đầu của trò chuyện. Đầu ngăn trò chuyện chỉ có những gì
   // đầu ngăn Trợ lý có.
   const docs = <HistoryMenu doc={doc} disabled={!!live} onOpen={open} onNew={fresh} onDelete={remove} />;
@@ -270,17 +278,12 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
           </HeaderGroup>
           {frameActions}
         </header>
-        <Conversation doc={doc} live={live} local={local} docs={docs} onRetry={(t, retry) => void send(t.text, { block: t.block, mode: t.mode, retry })}
+        {tabs}
+        <Conversation doc={doc} live={live} local={local} docs={docs} showDraft={hasDraft ? showDraft : undefined} draftOpen={draftOpen} onRetry={(t, retry) => void send(t.text, { block: t.block, mode: t.mode, retry })}
                       onExample={(t) => void send(t)} onContinue={() => void send(CONTINUE)}
-                      fromRecord={<FromRecord doc={doc} kind={kind} disabled={!!live} onBuilt={(sid) => void reload(sid)} />} />
-        <ChatInput doc={doc} hasDraft={hasDraft} kind={kind} setKind={setKind} running={!!live} stopping={stopping} canStop={!!live?.sessionId}
+                      fromRecord={<FromRecord r={recipe} />} kinds={doc.kinds} kind={kind} setKind={setKind} />
+        <ChatInput doc={doc} hasDraft={hasDraft} recipe={recipe} running={!!live} stopping={stopping} canStop={!!live?.sessionId}
                    onSend={(t) => void send(t)} onStop={() => void stop()} />
-        {hasDraft ? (
-          <button type="button" onClick={() => { setView("draft"); setDraftOpen(true); }}
-                  className="t14m absolute right-4 bottom-[76px] z-10 inline-flex items-center gap-2 rounded-full bg-primary px-3.5 py-2.5 text-white shadow-lg @3xl:hidden">
-            <Layers className="size-4" aria-hidden /> Ấn phẩm
-          </button>
-        ) : null}
       </section>
 
       {hasDraft ? (
@@ -302,10 +305,6 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
           <section className={cn("min-h-0 min-w-0 flex-1 flex-col bg-canvas", view === "draft" ? "flex" : "hidden", panes ? "@3xl:flex" : "@3xl:hidden")}
                    aria-label="Khung làm việc — ấn phẩm">
             <header className={cn(PANE_HEADER, "px-3 @3xl:px-6")}>
-              <button type="button" onClick={() => setView("chat")} aria-label="Về trò chuyện" title="Về trò chuyện"
-                      className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-surface hover:bg-accent @3xl:hidden">
-                <ChevronLeft className="size-4" />
-              </button>
               <div className="min-w-0 flex-1">
                 <h2 className="t16 truncate">{title}</h2>
                 <p className="t12 truncate text-muted-foreground">
@@ -313,11 +312,13 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
                 </p>
               </div>
               {docs}
+              <span className="contents @3xl:hidden">{frameActions}</span>   {/* hẹp: ngăn trò chuyện (có nút của khung) đang ẩn ⇒ nút khung đi theo ngăn đang thấy */}
               <button type="button" onClick={() => { setDraftOpen(false); setView("chat"); }} aria-label="Đóng ấn phẩm" title="Đóng ấn phẩm (chỉ ẩn ngăn — bản vẫn được lưu)"
                       className="hidden size-8 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring @3xl:grid">
                 <X className="size-4" />
               </button>
             </header>
+            {tabs}
             <div className="flex min-h-0 flex-1 flex-col p-3 @3xl:p-4">
               <DocumentPanel doc={doc} live={live} busy={busy}
                              onRevise={(b, instruction, mode) => { setView("chat"); void send(instruction, { block: b, mode }); }}
@@ -537,10 +538,11 @@ function HistoryMenu({ doc, disabled, onOpen, onNew, onDelete }: {
 const SELECT = "t14 h-9 w-full rounded-lg border border-border bg-surface px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60";
 
 /**
- * Làm ấn phẩm TỪ HỒ SƠ (ADR 0249): chọn công thức (theo loại đang chọn) → chọn hồ sơ trong danh sách server trả theo quyền → khách (tuỳ chọn) → "Thêm ý" (tuỳ chọn).
- * Số lấy từ hồ sơ, AI chỉ viết chữ. Danh sách / lệnh đều do server nêu (`commands.recipe` · `subjects` · `customers`) — web chỉ vẽ ô chọn.
+ * Làm ấn phẩm TỪ HỒ SƠ (ADR 0249): công thức (theo loại đang chọn) → hồ sơ trong danh sách server trả theo quyền → khách (tuỳ chọn). "Thêm ý" CHÍNH LÀ ô trò chuyện:
+ * đã chọn đủ hồ sơ thì Enter ở ô chat = dựng (chữ gõ vào thành ý thêm, bỏ trống cũng dựng được). Số lấy từ hồ sơ, AI chỉ viết chữ. Danh sách / lệnh đều do server nêu
+ * (`commands.recipe` · `subjects` · `customers`) — web chỉ vẽ ô chọn. Trạng thái nằm ở đây để hai nơi (hàng chọn trong hội thoại, ô chat) dùng chung.
  */
-function FromRecord({ doc, kind, disabled, onBuilt }: { doc: ComposerData; kind: string; disabled: boolean; onBuilt: (sessionId: string) => void }) {
+function useRecipe(doc: ComposerData, kind: string, disabled: boolean, onBuilt: (sessionId: string) => void) {
   const desk = useDesk();
   const c = doc.commands;
   const recipes = doc.recipes.filter((r) => r.piece === kind);
@@ -548,7 +550,6 @@ function FromRecord({ doc, kind, disabled, onBuilt }: { doc: ComposerData; kind:
   const recipe = recipes.find((r) => r.key === picked) ?? recipes[0];
   const [subject, setSubject] = useState("");
   const [customer, setCustomer] = useState("");
-  const [extra, setExtra] = useState("");
   const [subjects, setSubjects] = useState<Option[] | null>(null);
   const [customers, setCustomers] = useState<Option[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -571,9 +572,9 @@ function FromRecord({ doc, kind, disabled, onBuilt }: { doc: ComposerData; kind:
     if (!takesCustomer || !c.customers || customers) return;
     api.options(c.customers).then(setCustomers, () => setCustomers([]));
   }, [takesCustomer, c.customers, customers]);
-  if (!recipe || !c.recipe) return null;
-  const ready = !needs || !!subject;
-  async function build() {
+  const available = !!recipe && !!c.recipe;
+  const ready = available && (!needs || !!subject) && !disabled && !busy;
+  async function build(extra = "") {
     if (!recipe || !c.recipe || !ready) return;
     setBusy(true);
     try {
@@ -587,51 +588,71 @@ function FromRecord({ doc, kind, disabled, onBuilt }: { doc: ComposerData; kind:
       setBusy(false);
     }
   }
+  return { available, ready, busy, recipes, recipe, needs, takesCustomer, subject, setSubject, subjects, customer, setCustomer, customers, setPicked, build };
+}
+type Recipe = ReturnType<typeof useRecipe>;
+
+/** Hàng "làm từ hồ sơ" trong hội thoại (như câu hỏi của trợ lý): chip công thức, ô chọn hồ sơ / khách; dựng bằng Enter ở ô chat (thêm ý nếu muốn). */
+function FromRecord({ r }: { r: Recipe }) {
+  if (!r.available || !r.recipe) return null;
+  const dis = r.busy;
   return (
-    <section className="flex flex-col gap-2 rounded-[18px] border border-hairline bg-surface p-3" aria-label="Làm từ hồ sơ">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="t14m">Làm từ hồ sơ</h3>
-        <span className="t12 text-muted-foreground">số lấy từ hồ sơ, AI chỉ viết chữ</span>
-      </div>
-      {recipes.length > 1 ? (
-        <label className="t12 flex flex-col gap-1">Công thức
-          <select value={recipe.key} disabled={disabled || busy} className={SELECT}
-                  onChange={(e) => setPicked(e.target.value)}>
-            {recipes.map((r) => <option key={r.key} value={r.key} title={r.about}>{r.label}</option>)}
+    <div className="flex flex-col gap-2" role="group" aria-label="Làm từ hồ sơ">
+      <p className="t12m text-muted-foreground">Làm từ hồ sơ — số lấy từ hồ sơ, AI chỉ viết chữ</p>
+      {r.recipes.length > 1 ? (
+        <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Công thức">
+          {r.recipes.map((x) => (
+            <button key={x.key} type="button" role="radio" aria-checked={r.recipe?.key === x.key} disabled={dis} title={x.about} onClick={() => r.setPicked(x.key)}
+                    className={cn("t12 rounded-full border px-2.5 py-1.5", r.recipe?.key === x.key ? "border-primary bg-primary text-white" : "border-border bg-surface hover:bg-accent")}>
+              {x.label}
+            </button>
+          ))}
+        </div>
+      ) : <p className="t14">{r.recipe.label}{r.recipe.about ? <span className="t12 text-muted-foreground"> · {r.recipe.about}</span> : null}</p>}
+      <div className="flex flex-wrap gap-2">
+        {r.needs ? (
+          <select value={r.subject} disabled={dis || r.subjects === null} onChange={(e) => r.setSubject(e.target.value)} aria-label="Hồ sơ" className={cn(SELECT, "min-w-0 flex-1 basis-52")}>
+            <option value="">{r.subjects === null ? "Đang tải…" : r.subjects.length ? "Chọn hồ sơ" : "Chưa có hồ sơ nào bạn được xem"}</option>
+            {(r.subjects ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-        </label>
-      ) : <p className="t14">{recipe.label}{recipe.about ? <span className="t12 text-muted-foreground"> · {recipe.about}</span> : null}</p>}
-      {needs ? (
-        <label className="t12 flex flex-col gap-1">Hồ sơ
-          <select value={subject} disabled={disabled || busy || subjects === null} onChange={(e) => setSubject(e.target.value)} className={SELECT}>
-            <option value="">{subjects === null ? "Đang tải…" : subjects.length ? "Chọn hồ sơ" : "Chưa có hồ sơ nào bạn được xem"}</option>
-            {(subjects ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </label>
-      ) : null}
-      {takesCustomer ? (
-        <label className="t12 flex flex-col gap-1">Cho khách (không bắt buộc)
-          <select value={customer} disabled={disabled || busy} onChange={(e) => setCustomer(e.target.value)} className={SELECT}>
+        ) : null}
+        {r.takesCustomer ? (
+          <select value={r.customer} disabled={dis} onChange={(e) => r.setCustomer(e.target.value)} aria-label="Cho khách (không bắt buộc)" className={cn(SELECT, "min-w-0 flex-1 basis-52")}>
             <option value="">Không riêng khách nào</option>
-            {(customers ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {(r.customers ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-        </label>
-      ) : null}
-      <label className="t12 flex flex-col gap-1">Thêm ý (không bắt buộc)
-        <input value={extra} maxLength={1000} disabled={disabled || busy} onChange={(e) => setExtra(e.target.value)} placeholder="Vd: nhấn mạnh ưu đãi tháng này"
-               className="t14 h-9 rounded-lg border border-border bg-surface px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-      </label>
-      <button type="button" disabled={disabled || busy || !ready} onClick={() => void build()} className={cn(actionClass("primary"), "h-9 self-start")}>
-        <Sparkles className="size-4" aria-hidden /> {busy ? "Đang dựng…" : "Dựng ấn phẩm"}
-      </button>
-    </section>
+        ) : null}
+      </div>
+      <p className="t12 text-muted-foreground">
+        {r.busy ? "Đang dựng…" : r.ready ? "Gõ thêm ý rồi Enter (hoặc bấm gửi để dựng luôn)" : r.needs ? "Chọn hồ sơ để dựng" : ""}
+      </p>
+    </div>
   );
 }
 
-function Conversation({ doc, live, local, docs, onRetry, onExample, onContinue, fromRecord }: {
+/** Hẹp (< @3xl): một ngăn một lúc — hai thẻ luôn nhìn thấy, không nút nổi che nội dung. Rộng: ẩn (hai ngăn cạnh nhau). */
+function ViewTabs({ view, onView, fresh }: { view: "chat" | "draft"; onView: (v: "chat" | "draft") => void; fresh: boolean }) {
+  const tab = (v: "chat" | "draft", label: string) => (
+    <button type="button" role="tab" aria-selected={view === v} onClick={() => onView(v)}
+            className={cn("t14m relative inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          view === v ? "bg-surface text-foreground" : "text-muted-foreground hover:text-foreground")}>
+      {label}
+      {v === "draft" && fresh && view !== "draft" ? <span className="size-1.5 rounded-full bg-primary" aria-label="đang có số liệu mới" /> : null}
+    </button>
+  );
+  return (
+    <div role="tablist" aria-label="Trò chuyện hoặc bản soạn" className="mx-3 mb-2 flex shrink-0 gap-0.5 rounded-full bg-surface2 p-0.5 @3xl:hidden">
+      {tab("chat", "Trò chuyện")}
+      {tab("draft", "Bản soạn")}
+    </div>
+  );
+}
+
+function Conversation({ doc, live, local, docs, showDraft, draftOpen, onRetry, onExample, onContinue, fromRecord, kinds, kind, setKind }: {
   doc: ComposerData; live: LiveTurn | null; local: { user: LiveTurn; error: string } | null; docs: React.ReactNode;
+  showDraft?: () => void; draftOpen: boolean;   // có bản soạn ⇒ lượt xong có nút "Xem bản soạn" khi bản soạn đang ẩn (hẹp: ở thẻ Trò chuyện · rộng: ngăn đã đóng)
   onRetry: (t: { text: string; block: string; mode: string }, retry: boolean) => void; onExample: (text: string) => void; onContinue: () => void;
-  fromRecord: React.ReactNode;
+  fromRecord: React.ReactNode; kinds: ComposerData["kinds"]; kind: string; setKind: (k: string) => void;
 }) {
   const end = useRef<HTMLDivElement>(null);
   const retry = retryTarget(doc.turns);
@@ -651,6 +672,17 @@ function Conversation({ doc, live, local, docs, onRetry, onExample, onContinue, 
               <p className="t14 text-muted-foreground">
                 Tờ rơi, tờ giới thiệu, slide hay bài đăng. Chọn hồ sơ để làm từ dữ liệu thật — hoặc nói ngắn gọn cần gì. Ấn phẩm mở bên cạnh. Công văn, hợp đồng: dùng phân hệ Giấy tờ.
               </p>
+              <div className="flex flex-col gap-2">
+                <p className="t12m text-muted-foreground">Loại ấn phẩm</p>
+                <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Loại ấn phẩm">
+                  {kinds.map((k) => (
+                    <button key={k.key} type="button" role="radio" aria-checked={kind === k.key} onClick={() => setKind(k.key)}
+                            className={cn("t12 rounded-full border px-2.5 py-1.5", kind === k.key ? "border-primary bg-primary text-white" : "border-border bg-surface hover:bg-accent")}>
+                      {k.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {fromRecord}
               <div className="flex flex-col gap-2">
                 <p className="t12m text-muted-foreground">Hoặc nói AI cần gì</p>
@@ -667,7 +699,8 @@ function Conversation({ doc, live, local, docs, onRetry, onExample, onContinue, 
           ) : null}
           {doc.turns.map((t, i) => (
             <TurnBubble key={i} t={t} onRetry={i === doc.turns.length - 1 && retry && !live ? () => onRetry(retry, true) : undefined}
-                        onContinue={i === doc.turns.length - 1 && t.partial && !live ? onContinue : undefined} />
+                        onContinue={i === doc.turns.length - 1 && t.partial && !live ? onContinue : undefined}
+                        onShowDraft={i === doc.turns.length - 1 && t.version && showDraft ? showDraft : undefined} draftOpen={draftOpen} />
           ))}
           {doc.status === "drafting" && !live ? <Working status="Em đang soạn — tự cập nhật, không cần mở lại" steps={[]} /> : null}
           {local ? (
@@ -713,7 +746,9 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function TurnBubble({ t, onRetry, onContinue }: { t: ComposerTurn; onRetry?: () => void; onContinue?: () => void }) {
+function TurnBubble({ t, onRetry, onContinue, onShowDraft, draftOpen }: {
+  t: ComposerTurn; onRetry?: () => void; onContinue?: () => void; onShowDraft?: () => void; draftOpen?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   if (t.role === "user") return <UserBubble text={t.text} block={t.block} mode={t.mode} />;
   if (t.status === "failed") return <Failed text={t.text} steps={t.steps} onRetry={onRetry} />;
@@ -725,8 +760,14 @@ function TurnBubble({ t, onRetry, onContinue }: { t: ComposerTurn; onRetry?: () 
           : t.partial ? <CircleAlert className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden /> : <Check className="mt-0.5 size-4 shrink-0 text-ok" aria-hidden />}
         <span>{t.text}</span>
       </p>
-      {onContinue || onRetry ? (
+      {onContinue || onRetry || onShowDraft ? (
         <div className="ml-6 flex flex-wrap gap-2">
+          {onShowDraft ? (
+            // rộng + ngăn đang mở ⇒ bản soạn vốn nằm bên cạnh: nút chỉ hiện khi hẹp (bản soạn ở thẻ kia) hoặc ngăn đã đóng
+            <button type="button" onClick={onShowDraft} className={cn(actionClass(onContinue ? "default" : "primary"), "h-8 w-fit px-3", draftOpen && "@3xl:hidden")}>
+              <FileText className="size-3.5" aria-hidden /> Xem bản soạn
+            </button>
+          ) : null}
           {onContinue ? (
             <button type="button" onClick={onContinue} className={cn(actionClass("primary"), "h-8 w-fit px-3")}>
               <Sparkles className="size-3.5" aria-hidden /> Tiếp tục
@@ -774,11 +815,12 @@ function Failed({ text, steps = [], onRetry }: { text: string; steps?: { title: 
 function Steps({ steps, className }: { steps: (LiveStep | { title: string; status: string; reason?: string })[]; className?: string }) {
   return (
     <ul className={cn("flex flex-col gap-1", className)}>
-      {steps.map((s, i) => (
+      {groupSteps(steps).map((s, i) => (
         <li key={i} className="t12 flex items-center gap-1.5">
           {s.status === "running" ? <span className="block size-3 shrink-0 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" aria-hidden />
             : s.status === "ok" ? <Check className="size-3.5 shrink-0 text-primary" aria-hidden /> : <CircleAlert className="size-3.5 shrink-0 text-warn" aria-hidden />}
           <span className="truncate">{s.status === "running" ? `Đang lấy số liệu: ${s.title}…` : s.title}</span>
+          {s.count > 1 ? <span className="t12m shrink-0 text-muted-foreground">×{s.count}</span> : null}
           {s.status === "error" ? <span className="min-w-0 text-muted-foreground">· không lấy được{s.reason ? `: ${s.reason}` : ""}</span> : null}
         </li>
       ))}
@@ -800,8 +842,8 @@ function Working({ status, steps }: { status: string; steps: LiveStep[] }) {
   );
 }
 
-function ChatInput({ doc, hasDraft, kind, setKind, running, stopping, canStop, onSend, onStop }: {
-  doc: ComposerData; hasDraft: boolean; kind: string; setKind: (k: string) => void; running: boolean; stopping: boolean; canStop: boolean;
+function ChatInput({ doc, hasDraft, recipe, running, stopping, canStop, onSend, onStop }: {
+  doc: ComposerData; hasDraft: boolean; recipe: Recipe; running: boolean; stopping: boolean; canStop: boolean;
   onSend: (text: string) => void; onStop: () => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -813,25 +855,17 @@ function ChatInput({ doc, hasDraft, kind, setKind, running, stopping, canStop, o
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [draft]);
   const fresh = !doc.session_id;
-  const has = draft.trim().length > 0;
+  const fromRecord = fresh && recipe.ready;   // đã chọn đủ hồ sơ ⇒ ô chat là "Thêm ý": Enter dựng từ hồ sơ (bỏ trống cũng được)
+  const has = draft.trim().length > 0 || fromRecord;
   const submit = () => {
-    if (!has || running) return;
-    onSend(draft);
+    if (!has || running || recipe.busy) return;
+    if (fromRecord) void recipe.build(draft);
+    else onSend(draft);
     setDraft("");
   };
   return (
     <div className="flex flex-col gap-1.5 px-3 pt-1 pb-3">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5">
-        {fresh && !running ? (
-          <div className="no-scrollbar flex gap-1.5 overflow-x-auto" role="radiogroup" aria-label="Loại ấn phẩm">
-            {doc.kinds.map((k) => (
-              <button key={k.key} type="button" role="radio" aria-checked={kind === k.key} onClick={() => setKind(k.key)}
-                      className={cn("t12 shrink-0 rounded-full border px-2.5 py-1.5 whitespace-nowrap", kind === k.key ? "border-primary bg-primary text-white" : "border-border bg-surface hover:bg-accent")}>
-                {k.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
         <div className={cn(COMPOSER_PILL, "pl-3")}>
             <textarea ref={ta} value={draft} rows={1} autoFocus onChange={(e) => setDraft(e.target.value)}
                       onKeyDown={(e) => {
@@ -840,7 +874,7 @@ function ChatInput({ doc, hasDraft, kind, setKind, running, stopping, canStop, o
                           submit();
                         }
                       }}
-                      placeholder={hasDraft ? "Sửa ấn phẩm…" : "Mô tả ấn phẩm cần làm…"}   // ngắn như "Hỏi trợ lý…"; ví dụ dài nằm ở gợi ý màn bắt đầu
+                      placeholder={fromRecord ? "Thêm ý (không bắt buộc), Enter để dựng…" : hasDraft ? "Sửa ấn phẩm…" : "Mô tả ấn phẩm cần làm…"}   // ngắn như "Hỏi trợ lý…"; ví dụ dài nằm ở gợi ý màn bắt đầu
                       aria-label={fresh ? "Cần soạn gì" : "Muốn sửa gì"}
                       className={COMPOSER_TEXT} />
             {/* đọc chính tả như ô nhập của trợ lý: chữ chèn vào ô, người xem / sửa rồi tự gửi */}
@@ -1098,6 +1132,7 @@ function BlockRow({ b, color, busy, kind, onRevise, onEdit, onRemove, slots, onS
     else if (mode === "rewrite" || mode === "insert_after") onRevise(mode === "insert_after" ? `Chèn khối số liệu: ${text.trim()}` : text.trim(), mode);
     close();
   };
+  // tiêu đề trên dải màu thương hiệu tối (onDark): kế thừa chữ trắng của dải — tô màu thương hiệu lên nền chính nó thì chìm
   const slideBreak = kind === "slides" && b.type === "heading" && b.level === 1;
   const bar = "h-7 rounded-md px-2 t12m outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring";
   return (
@@ -1115,7 +1150,7 @@ function BlockRow({ b, color, busy, kind, onRevise, onEdit, onRemove, slots, onS
           ) : view ? (
             view
           ) : b.type === "heading" ? (
-            <h3 className={cn("select-text", b.level === 1 ? "t16" : "t14m")} style={{ color }}><Prose text={b.text} /></h3>
+            <h3 className={cn("select-text", b.level === 1 ? "t16" : "t14m")} style={onDark ? undefined : { color }}><Prose text={b.text} /></h3>
           ) : b.type === "paragraph" ? (
             <p className="t14 select-text leading-relaxed"><Prose text={b.text} /></p>
           ) : b.type === "quote" ? (

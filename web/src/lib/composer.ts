@@ -70,3 +70,19 @@ export function retryTarget(turns: ComposerTurn[]): ComposerTurn | null {
   for (let i = turns.length - 2; i >= 0; i--) if (turns[i].role === "user") return turns[i];
   return null;
 }
+
+/** Nhật ký bước: gộp các bước GIỐNG HỆT (cùng tên, cùng trạng thái, cùng lý do) thành một dòng "× n" — vị trí theo lần xuất hiện đầu. Bước đang chạy giữ riêng. */
+export function groupSteps<T extends { title: string; status: string; reason?: string }>(steps: T[]): (T & { count: number })[] {
+  const out: (T & { count: number })[] = [];
+  const at = new Map<string, number>();
+  for (const s of steps) {
+    const k = s.status === "running" ? "" : `${s.status}|${s.title}|${s.reason ?? ""}`;
+    const i = k ? at.get(k) : undefined;
+    if (i !== undefined) out[i] = { ...out[i], count: out[i].count + 1 };
+    else {
+      if (k) at.set(k, out.length);
+      out.push({ ...s, count: 1 });
+    }
+  }
+  return out;
+}
