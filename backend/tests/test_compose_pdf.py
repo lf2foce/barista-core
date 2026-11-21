@@ -197,20 +197,97 @@ def test_the_normal_samples_fit_every_page(name: str) -> None:
     assert asyncio.run(paged.overflow(htmlpage.page(title, blocks, S.BRAND, _images(blocks), {"template": name}))) == []
 
 
+def _para(bid: str, slot: str, words: int) -> dict[str, Any]:
+    text = " ".join(["Khu căn hộ nằm ven mặt nước, cách trung tâm hai mươi phút, đủ trường học, y tế và công viên trong bán kính hai ki-lô-mét."][:1] * (words // 22 + 1))
+    return {"id": bid, "type": "paragraph", "text": " ".join(text.split()[:words]), "level": 1, "origin": "ai", "flags": [], "slot": slot}
+
+
+def _with(blocks: list[dict[str, Any]], after: int, *extra: dict[str, Any]) -> list[dict[str, Any]]:
+    return [*blocks[:after], *extra, *blocks[after:]]
+
+
+def _table_rows(blocks: list[dict[str, Any]], title: str, n: int) -> None:
+    for b in blocks:
+        if b["type"] == "data" and b["data"].get("title") == title:
+            rows = b["data"]["rows"]
+            b["data"]["rows"] = [dict(rows[i % len(rows)]) for i in range(n)]
+
+
 @needs_chrome
-def test_a_long_page_is_reported_as_overflowing_and_the_export_guard_blocks_it() -> None:
+def test_a_long_page_is_reported_as_overflowing_and_the_export_guard_blocks_it_naming_page_and_block() -> None:
     from barista.api import Invalid
     from barista.modules import compose
-    from barista.modules.compose import paged
+    from barista.modules.compose import fit, paged
 
     title, blocks = S.memo10()
     long = " ".join(["Đoạn rất dài làm tràn khung trang hai của hồ sơ."] * 40)
-    blocks = [*blocks[:5], {"id": "b90", "type": "paragraph", "text": long, "level": 1, "origin": "ai", "flags": [], "slot": "p2"}, *blocks[5:]]
+    blocks = _with(blocks, 5, {"id": "b90", "type": "paragraph", "text": long, "level": 1, "origin": "ai", "flags": [], "slot": "p2"})
     page = htmlpage.page(title, blocks, S.BRAND, _images(blocks), {"template": "memo10"})
+    overs = asyncio.run(paged.measure(page))
+    assert [o.page for o in overs] == [2] and overs[0].px > 20 and "b90" in overs[0].blocks and overs[0].heights["b90"] > 300
     assert asyncio.run(paged.overflow(page)) == [2]
-    with pytest.raises(Invalid, match=r"Trang 2 tràn nội dung.*rút gọn"):
-        asyncio.run(compose._guard_overflow(layout.TEMPLATES["memo10"], page))
-    asyncio.run(compose._guard_overflow(layout.TEMPLATES["plain"], page))   # mẫu dòng chảy tự ngắt trang ⇒ không đo
+    with pytest.raises(Invalid) as e:
+        asyncio.run(compose._guard_overflow(layout.TEMPLATES["memo10"], page, "sid-1", blocks))
+    msg = str(e.value)
+    assert msg.startswith("Trang 2 tràn khung") and "Đoạn rất dài" in msg and "Rút gọn khối này" in msg and "Trang 2, " not in msg
+    asyncio.run(compose._guard_overflow(layout.TEMPLATES["plain"], page, "sid-1", blocks))   # mẫu dòng chảy tự ngắt trang ⇒ không đo
+    rep = fit.report("sid-1", overs, blocks)
+    act = next(b for b in rep[0]["blocks"] if b["id"] == "b90")["action"]
+    assert act["command"] == "compose.revise" and act["input"]["block"] == "b90" and act["input"]["session_id"] == "sid-1" and act["input"]["mode"] == "rewrite"
+
+
+@needs_chrome
+def test_a_page_that_fits_is_not_reported_whatever_the_window_and_only_the_page_that_does_not_fit_is() -> None:
+    """Báo tràn giả: phép đo ở cửa sổ mặc định (~800 px) bị trang thu nhỏ (zoom theo màn hình) làm tròn lệch ⇒ trang ảnh + bảng 7 dòng vẫn vừa bị báo tràn, người dùng thấy bản xem
+    trước bình thường. Giờ đo ở khổ in: cùng kết quả ở mọi cửa sổ; trang vừa không bị nêu, trang tràn thật bị nêu đúng số."""
+    title, blocks = S.memo10()
+    _table_rows(blocks, "Cơ cấu căn", 7)   # trang 6: hai ảnh + bảng 7 dòng — vừa (nhiều khoảng trắng bên dưới)
+    page = htmlpage.page(title, blocks, S.BRAND, _images(blocks), {"template": "memo10"})
+    for size in ((800, 600), (1400, 1000), (1920, 1200)):
+        assert [o.page for o in asyncio.run(_measure_at(page, size))] == [], size
+    blocks = _with(blocks, 14, _para("b91", "p5", 130), _para("b92", "p5", 130))   # trang 5: hai đoạn dài + bảng ⇒ chữ đè lên bảng thật
+    page = htmlpage.page(title, blocks, S.BRAND, _images(blocks), {"template": "memo10"})
+    for size in ((800, 600), (1400, 1000)):
+        got = asyncio.run(_measure_at(page, size))
+        assert [o.page for o in got] == [5] and {"b91", "b92"} <= set(got[0].blocks), size
+
+
+async def _measure_at(page: str, size: tuple[int, int]) -> list[Any]:
+    from barista.modules.compose import paged
+
+    return paged.parse(await convert.html_measure(page, paged.MEASURE_JS, "data-overflow", size=size))
+
+
+def _page(n: int, px: int, blocks: list[tuple[str, str, int, int, bool]], axis: str = "h") -> dict[str, Any]:
+    """(mã, loại, số từ, cao, gây tràn)"""
+    return {"page": n, "px": px, "lines": 1, "axis": axis, "blocks": [
+        {"id": i, "type": t, "kind": "đoạn" if t == "paragraph" else "bảng", "label": f"Khối {i}", "height": h, "culprit": c, "words": w, "action": {"label": "Rút gọn khối này"} if t == "paragraph" else None}
+        for i, t, w, h, c in blocks]}
+
+
+def test_the_fit_plan_shortens_only_long_paragraphs_of_pages_that_overflow_downwards_within_bounds() -> None:
+    from barista.modules.compose import fit
+
+    # tràn 60 px, hai đoạn (200 + 100 từ, cao 300 + 150): giữ lại (450 − 75 − 4) / 450 ≈ 0,82 ⇒ rút còn ~164 và ~82 từ; đoạn ngắn (10 từ) và bảng không đụng
+    plan = fit.plan([_page(3, 60, [("b1", "paragraph", 200, 300, True), ("b2", "paragraph", 100, 150, True), ("b3", "paragraph", 10, 30, False), ("b4", "data", 0, 200, False)])])
+    assert [b for b, _ in plan] == ["b1", "b2"] and 160 <= plan[0][1] <= 170 and 78 <= plan[1][1] <= 86
+    plan = fit.plan([_page(3, 4000, [("b1", "paragraph", 200, 300, True)])])   # vượt quá xa ⇒ không rút dưới ~35% (mất ý — để người quyết)
+    assert plan == [("b1", 70)]
+    assert fit.plan([_page(3, 60, [("b1", "paragraph", 200, 300, True)], axis="w")]) == []   # tràn ngang: không có gì để rút bằng chữ
+    assert fit.plan([_page(6, 160, [("b1", "data", 0, 400, True), ("b2", "image", 0, 200, True)])]) == []   # trang chỉ bảng + ảnh: không đoạn nào để rút
+    many = [_page(n, 60, [(f"b{n}{k}", "paragraph", 200, 300, True) for k in range(4)]) for n in (2, 3, 4)]
+    got = fit.plan(many)
+    assert len(got) == fit.MAX_TOTAL and sum(1 for b, _ in got if b.startswith("b2")) == fit.MAX_PER_PAGE   # trần mỗi trang + trần cả vòng
+
+
+def test_the_overflow_message_names_only_pages_that_overflow_and_says_what_to_click() -> None:
+    from barista.modules.compose import fit
+
+    text = fit.describe([_page(7, 60, [("b1", "paragraph", 200, 300, True)]), _page(8, 30, [("b2", "data", 0, 300, True)])])
+    assert text.count("Trang ") == 2 and text.startswith("Trang 7 tràn khung (khoảng")
+    assert "đoạn “Khối b1”" in text and "bấm “Rút gọn khối này”" in text and "bớt chữ / dòng hoặc chuyển bớt khối sang trang khác" in text
+    assert "Trang 9" not in text and fit.describe([]) == ""
+    assert "rộng quá khung" in fit.describe([_page(4, 20, [("b1", "data", 0, 300, True)], axis="w")])
 
 
 @needs_chrome

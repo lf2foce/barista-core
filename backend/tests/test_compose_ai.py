@@ -10,7 +10,7 @@ import pytest
 from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from barista.kernel import executor
+from barista.kernel import convert, executor
 from barista.modules import compose
 from barista.modules.compose import check
 from tests.conftest import Who, ok, q
@@ -255,3 +255,74 @@ async def test_new_marketing_kinds_are_stored_and_a_flyer_gets_its_one_page_layo
         assert comp["kind"] == kind and [k["key"] for k in comp["kinds"]] == ["flyer", "brochure", "slides", "post", "memo", "teaser"]
         assert comp["layout"]["template"] == ("flyer" if kind == "flyer" else "plain")   # loại quyết mẫu (kinds.py)
         assert [t["key"] for t in comp["layout"]["templates"]] == [comp["layout"]["template"]]   # chỉ mẫu hợp loại được mời chọn
+
+
+# ── Vòng vừa trang (ADR 0252): trang tràn sau lượt soạn ⇒ một vòng rút gọn đoạn chữ qua đường sửa khối, rồi đo lại ──
+
+needs_chrome = pytest.mark.skipif(convert.chrome_binary() is None, reason="máy chưa có trình duyệt không giao diện")
+SENTENCE = "Khu căn hộ nằm ven mặt nước, cách trung tâm hai mươi phút, đủ trường học, y tế và công viên trong bán kính hai ki-lô-mét."
+
+
+def _words(n: int) -> str:
+    return " ".join((SENTENCE.split() * (n // len(SENTENCE.split()) + 1))[:n])
+
+
+def _memo_draft(*texts: str) -> dict[str, Any]:
+    return {"title": "Hồ sơ chào bán", "blocks": [{"type": "heading", "text": "Dự án nằm đúng nơi nhu cầu ở thực đang tăng nhanh", "slot": "p3"},
+                                                   *({"type": "paragraph", "text": t, "slot": "p3"} for t in texts)]}
+
+
+def _rewrite(text: str) -> dict[str, Any]:
+    return {"title": "x", "blocks": [{"type": "paragraph", "text": text}]}
+
+
+async def _memo(who: Who, outputs: list[dict[str, Any]]) -> tuple[dict[str, Any], list[int], str]:
+    sale = await who("sale1")
+    model, calls = _model(outputs)
+    compose.MODEL = model
+    try:
+        out = await ok(sale, "compose.start", kind="memo", brief="Hồ sơ chào bán khu căn hộ")
+    finally:
+        compose.MODEL = None
+    comp = (await q(sale, "compose.view", session_id=out["session_id"]))["blocks"][0]
+    return comp, calls, str(out["session_id"])
+
+
+LONG = _words(230)[:1480]   # đoạn AI viết dài tới trần 1500 ký tự của khối — bốn đoạn như vậy trên một trang thì tràn khung
+
+
+@needs_chrome
+async def test_an_overflowing_page_is_shortened_once_by_the_block_revise_path_and_marked_ai(who: Who) -> None:
+    short = _words(100)
+    comp, calls, _ = await _memo(who, [_memo_draft(LONG, LONG, LONG, LONG), _rewrite(short), _rewrite(short), _rewrite(short)])
+    paras = [b for b in comp["blocks"] if b["type"] == "paragraph"]
+    assert len(calls) == 4 and comp["version"] == 2 and comp["status"] == "ready"   # một lượt soạn + đúng ba lượt rút gọn (trần mỗi trang), không vòng thứ hai
+    assert [b["text"] for b in paras].count(short) == 3 and paras[-1]["text"] == LONG   # đoạn không phải rút giữ nguyên
+    assert all(b["origin"] == "ai" and b["slot"] == "p3" for b in paras)   # giữ chỗ đứng, đánh dấu AI viết
+    last = comp["turns"][-1]
+    assert last["role"] == "assistant" and "rút gọn 3 đoạn" in last["text"] and last["version"] == 2 and "chưa vừa" not in last["text"]
+
+
+@needs_chrome
+async def test_still_overflowing_after_the_one_round_reports_page_and_block_and_does_not_loop(who: Who) -> None:
+    still = _words(200)
+    comp, calls, sid = await _memo(who, [_memo_draft(*[LONG] * 5), _rewrite(still), _rewrite(still), _rewrite(still)])
+    assert len(calls) == 4 and comp["version"] == 2   # không có vòng thứ hai
+    text = comp["turns"][-1]["text"]
+    assert text.count("Trang ") == 1 and "Rút gọn khối này" in text and "còn chưa vừa" in text and "Trang 3" not in text   # trang 3 của mẫu = trang 1 đang có nội dung
+    sale = await who("sale1")
+    rep = await q(sale, "compose.overflow", session_id=sid)
+    assert rep["measured"] and not rep["fits"] and [p["page"] for p in rep["pages"]] == [1]
+    top = rep["pages"][0]["blocks"][0]["action"]
+    assert top["command"] == "compose.revise" and top["input"]["session_id"] == sid and top["input"]["mode"] == "rewrite"
+    with pytest.raises(AssertionError, match="Trang 1 tràn khung"):   # xuất bị chặn bằng đúng lời báo cụ thể, không đoạn chữ chung
+        await ok(sale, "compose.export", session_id=sid, format="pdf")
+
+
+@needs_chrome
+async def test_a_rewrite_that_is_not_shorter_is_discarded_and_a_page_that_fits_triggers_nothing(who: Who) -> None:
+    comp, calls, _ = await _memo(who, [_memo_draft(*[LONG] * 4), _rewrite(LONG), _rewrite(LONG), _rewrite(LONG)])
+    assert len(calls) == 4 and comp["version"] == 1 and all(b["text"] == LONG for b in comp["blocks"] if b["type"] == "paragraph")   # giữ đoạn cũ
+    assert "Chưa vừa khung in" in comp["turns"][-1]["text"] and "Rút gọn khối này" in comp["turns"][-1]["text"]
+    comp, calls, _ = await _memo(who, [_memo_draft(_words(90))])
+    assert len(calls) == 1 and comp["version"] == 1 and "Xong bản 1" in comp["turns"][-1]["text"]   # vừa trang ⇒ không rút gọn, không lượt thêm

@@ -191,10 +191,12 @@ async def html_to_png(html: str, width: int, height: int) -> bytes:
     return await _chrome(html, ["--screenshot={out}", f"--window-size={width},{height}"], "out.png")
 
 
-async def html_measure(html: str, script: str, attr: str) -> str:
+async def html_measure(html: str, script: str, attr: str, *, size: tuple[int, int] | None = None) -> str:
     """Chạy MỘT đoạn script của máy chủ trong trang rồi đọc kết quả script ghi vào thuộc tính ``attr`` của thẻ ``<html>`` — để ĐO bố cục bằng chính trình duyệt sẽ in PDF
-    (vd trang nào tràn). Cùng hàng rào như ``html_to_pdf``; chỉ script này chạy được (nonce). Script không ghi ``attr`` ⇒ ``Unavailable`` (không coi là "đo xong, không sao")."""
-    dom = (await _chrome(html, ["--dump-dom", "--virtual-time-budget=8000"], "dom.html", script)).decode("utf-8", "replace")
+    (vd trang nào tràn). Cùng hàng rào như ``html_to_pdf``; chỉ script này chạy được (nonce). Script không ghi ``attr`` ⇒ ``Unavailable`` (không coi là "đo xong, không sao").
+    ``size`` = cửa sổ đo (rộng, cao) px: cửa sổ mặc định của trình duyệt (~800 px) làm trang web thu nhỏ theo màn hình (media query), số đo lệch so với lúc in — đo bố cục khổ in thì đặt đủ rộng."""
+    win = [f"--window-size={size[0]},{size[1]}"] if size else []
+    dom = (await _chrome(html, ["--dump-dom", "--virtual-time-budget=8000", *win], "dom.html", script)).decode("utf-8", "replace")
     m = re.search(rf'<html[^>]*\s{re.escape(attr)}="([^"]*)"', dom)
     if m is None:
         raise Unavailable("Không đo được bố cục trang (trình duyệt không trả kết quả) — thử lại, hoặc báo quản trị nếu lỗi lặp lại")
