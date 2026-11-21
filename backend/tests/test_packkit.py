@@ -157,3 +157,13 @@ def test_a_pack_using_a_name_marked_for_removal_is_told_what_to_use(made: Path) 
     surface = {"deprecated": {"fold": {"since": "1.70.0", "since_day": "2026-11-20", "use": "ui.fold", "remove_after": "2027-02-18", "remove_in": "2.0.0"}}}
     out = packkit.deprecated_names(made / "src/barista_pack_kho_lanh", surface)
     assert len(out) == 1 and "ui.fold" in out[0] and "2.0.0" in out[0]
+
+
+def test_seed_and_sample_files_are_dev_tools_and_not_checked(made: Path) -> None:
+    """Hồ sơ nạp mẫu (``seed_*.py``) / phần mẫu (``sample``) dùng dụng cụ dev của lõi — miễn như test cấu trúc, không báo vượt luật."""
+    pkg = made / "src/barista_pack_kho_lanh"
+    (pkg / "seed_demo.py").write_text("import importlib.resources\nfrom barista import seed\n", encoding="utf-8")
+    (pkg / "sample.py").write_text("import os\n", encoding="utf-8")
+    r = packkit.Report()
+    packkit.static_check(made, barista.api.__version__, r)
+    assert not r.fails, r.fails

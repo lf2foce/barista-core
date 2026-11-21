@@ -85,6 +85,11 @@ def _import_ok(name: str, pkg: str) -> bool:
     return top in (pkg, "barista") or top.startswith("barista_pack_") or any(name == ok or name.startswith(ok + ".") for ok in IMPORTS_OK)
 
 
+def _dev_tool(rel: Path) -> bool:
+    """Dụng cụ nạp mẫu của gói (``sample.py`` / ``sample/`` / ``seed_*.py``) — cùng quy tắc với ``tests/module_src.py`` của lõi."""
+    return rel.parts[0] in ("sample", "sample.py") or rel.parts[0].startswith("seed_")
+
+
 def code_permissions(src: Path, pkg: str) -> tuple[dict[str, set[str]], list[str], list[str]]:
     """Đọc mã chạy (``src/``): ``({quyền: {chỗ dùng}}, [vượt luật], [họ thao tác m.consumes])``. Chỗ dùng = ``file:dòng api.<phần>``."""
     used: dict[str, set[str]] = {}
@@ -97,6 +102,8 @@ def code_permissions(src: Path, pkg: str) -> tuple[dict[str, set[str]], list[str
 
     for f in sorted(src.rglob("*.py")):
         rel = f.relative_to(src.parent).as_posix()
+        if _dev_tool(f.relative_to(src)):
+            continue   # dụng cụ nạp mẫu (seed_*.py, sample) là công cụ dev — miễn như tests/module_src.py của lõi, không chạy trong lệnh nào
         try:
             tree = ast.parse(f.read_text(encoding="utf-8"))
         except SyntaxError as e:
