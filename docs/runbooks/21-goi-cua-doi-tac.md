@@ -40,17 +40,19 @@ bash scripts/pack.sh new kho_lanh ../goi-cua-toi/kho_lanh --title "Kho lạnh"
 
 ## 3. Thử trên máy
 
-Chạy một lệnh từ repo lõi (cài gói editable vào `backend/.venv`, chạy migration mới trên DB dev **không xoá dữ liệu hiện có**, bật gói cho công ty mẫu, in màn + URL và khởi động API có tự nạp lại khi sửa mã gói):
+Chạy một lệnh từ repo lõi (cài gói editable vào `backend/.venv`, chạy migration trên **DB thử riêng `barista_erp_packdev`** mặc định để không đụng DB dev chính, bật gói cho công ty mẫu `admin@sanmau.demo`, in màn + lệnh mở web khớp cổng và khởi động API tự nạp lại khi sửa mã gói):
 
 ```bash
 bash scripts/pack.sh dev ../goi-cua-toi/kho_lanh
 # Chỉ cài + chạy migration + bật gói (không mở uvicorn):
 bash scripts/pack.sh dev ../goi-cua-toi/kho_lanh --no-serve
+# Dùng DB dev đã có (chỉ nhận DB dev local, từ chối BARISTA_ENV=production):
+bash scripts/pack.sh dev ../goi-cua-toi/kho_lanh --db barista_erp
 # Kèm gói khác mà gói này cần:
 bash scripts/pack.sh dev ../goi-cua-toi/kho_lanh --with ../goi-khac/abc
 ```
 
-Mở web ở cửa sổ khác (`cd web && pnpm dev` → `http://localhost:3100`), đăng nhập dev bằng tài khoản lệnh vừa in ra và bấm vào màn của gói.
+Mở web ở cửa sổ khác theo đúng lệnh in ra ở cuối bước 2 (đã ghép sẵn `BARISTA_CORE_URL` khớp cổng API và `-p` khớp cổng web), đăng nhập dev bằng `admin@sanmau.demo` và bấm vào màn của gói.
 
 Lưu ý tránh mất gói / mất dữ liệu dev:
 - **Không** chạy lại `uv sync` sau khi đã cài gói (nó gỡ gói khỏi `backend/.venv`; nếu lỡ chạy thì chạy lại `pack.sh dev`).
@@ -58,7 +60,7 @@ Lưu ý tránh mất gói / mất dữ liệu dev:
 - Chạy nhanh bộ test của gói: `cd backend && .venv/bin/python -m pytest ../../goi-cua-toi/kho_lanh/tests`.
 - Gỡ gói khỏi môi trường lõi: `uv pip uninstall --python backend/.venv/bin/python barista-pack-kho-lanh` (lõi chạy tiếp như cũ, dữ liệu của gói vẫn nằm trong DB).
 
-Hướng dẫn rút gọn 3 bước `new → dev → check` cho agent: [`SKILL.md`](../../SKILL.md).
+Hướng dẫn rút gọn 3 bước `new → dev → check` (Codex / agent tự nhận diện): [`.agents/skills/barista-pack/SKILL.md`](../../.agents/skills/barista-pack/SKILL.md).
 
 ## 4. Tự kiểm trước khi gửi
 

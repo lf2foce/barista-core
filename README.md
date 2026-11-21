@@ -30,7 +30,7 @@ Mở http://localhost:3100, chọn một vai ở màn đăng nhập dev (ví d�
 - [Từ điển kiến trúc](docs/GLOSSARY.md): nguồn định nghĩa chung cho Pack, Workspace, Module, Screen, Tool, Skill và Workflow.
 - [Kiến trúc](docs/ARCHITECTURE.md): ranh giới và hợp đồng kỹ thuật.
 - [Runbook](docs/runbooks/README.md): cách chạy và vận hành.
-- [Làm gói riêng](docs/runbooks/21-goi-cua-doi-tac.md) ([`SKILL.md`](SKILL.md)): luồng 3 bước `scripts/pack.sh new` → `scripts/pack.sh dev` → `scripts/pack.sh check`. Gói chỉ dùng `barista.api` và có thể nằm repo riêng với giấy phép riêng.
+- [Làm gói riêng](docs/runbooks/21-goi-cua-doi-tac.md) ([skill `barista-pack`](.agents/skills/barista-pack/SKILL.md)): luồng 3 bước `scripts/pack.sh new` → `scripts/pack.sh dev` → `scripts/pack.sh check`. Gói chỉ dùng `barista.api` và có thể nằm repo riêng với giấy phép riêng.
 - [Quy tắc sửa repo](CLAUDE.md): các luật bất biến và kiểm tra trước khi hoàn tất. [Đóng góp](CONTRIBUTING.md).
 - Các quyết định thiết kế (ADR) được giữ ở một repo riêng; mã và tài liệu ở đây chỉ ghi số ADR ("ADR 0045"), phần lý do đã tóm trong tài liệu kiến trúc.
 

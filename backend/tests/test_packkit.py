@@ -187,13 +187,25 @@ def test_from_barista_import_api_mixed_with_internal_is_refused(made: Path) -> N
 
 
 def test_pack_skill_exists_and_names_the_three_step_loop() -> None:
-    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-    for needle in ("pack.sh new", "pack.sh dev", "pack.sh check", "12-them-mot-goi.md", "21-goi-cua-doi-tac.md"):
+    skill = (ROOT / ".agents/skills/barista-pack/SKILL.md").read_text(encoding="utf-8")
+    for needle in ("name: barista-pack", "description:", "pack.sh new", "pack.sh dev", "pack.sh check", "12-them-mot-goi.md", "21-goi-cua-doi-tac.md"):
         assert needle in skill, needle
 
 
+def test_pack_dev_refuses_production_and_unsafe_db_targets(made: Path) -> None:
+    """Hàng rào an toàn (rà Codex 21/11): ``pack.sh dev`` từ chối ``BARISTA_ENV=production``, DB ngoài danh sách thử và máy chủ không local."""
+    with pytest.raises(SystemExit):
+        packkit.dev(made, [], 8399, 3199, True, db_name="barista_erp_packdev", env_extra={"BARISTA_ENV": "production"})
+    with pytest.raises(SystemExit):
+        packkit.dev(made, [], 8399, 3199, True, db_name="barista_prod")
+    with pytest.raises(SystemExit):
+        packkit.dev(made, [], 8399, 3199, True, db_name="",
+                    env_extra={"BARISTA_DATABASE_URL": "postgresql://barista_app:x@db.example.com:5432/barista_erp_packdev",
+                               "BARISTA_OWNER_DATABASE_URL": "postgresql://barista_owner:x@db.example.com:5432/barista_erp_packdev"})
+
+
 async def test_pack_dev_installs_migrates_enables_and_preserves_existing_db_data(made: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """``pack.sh dev --no-serve``: cài gói vào môi trường riêng, chạy migration + bật cho công ty mẫu mà KHÔNG xoá dữ liệu đang có, và chạy lại được."""
+    """``pack.sh dev --no-serve``: cài gói vào môi trường riêng, chạy migration + bật cho công ty mẫu mà KHÔNG xoá dữ liệu đang có, in đúng lệnh mở web theo cổng và chạy lại được."""
     import os
     import sys
     import uuid
@@ -229,11 +241,16 @@ async def test_pack_dev_installs_migrates_enables_and_preserves_existing_db_data
             tid = (await (await conn.execute("UPDATE core.tenants SET name = 'Công ty giữ dữ liệu' RETURNING id")).fetchone() or (None,))[0]
             assert tid is not None
 
-        rc1 = packkit.dev(made, [], 8399, 3199, True, env_extra=env_extra, vpy_override=vpy)
+        # Không tự chọn công ty khác nếu không khớp email quản trị chỉ định
+        with pytest.raises(SystemExit):
+            packkit.dev(made, [], 8399, 3199, True, db_name=dbname, admin_email="khongco@example.demo", env_extra=env_extra, vpy_override=vpy)
+        capsys.readouterr()
+
+        rc1 = packkit.dev(made, [], 8399, 3199, True, db_name=dbname, env_extra=env_extra, vpy_override=vpy)
         out1 = capsys.readouterr().out
         assert rc1 == 0, out1
         assert "Công ty giữ dữ liệu" in out1 and "vừa bật" in out1 and "http://localhost:3199" in out1 and "http://127.0.0.1:8399/docs" in out1
-        assert "kho_lanh" in out1
+        assert "BARISTA_CORE_URL=http://127.0.0.1:8399 pnpm exec next dev -p 3199" in out1 and "kho_lanh" in out1
 
         async with await AsyncConnection.connect(owner_url, autocommit=True) as conn:
             assert (await (await conn.execute("SELECT name FROM core.tenants WHERE id = %s", (tid,))).fetchone()) == ("Công ty giữ dữ liệu",)
@@ -241,7 +258,7 @@ async def test_pack_dev_installs_migrates_enables_and_preserves_existing_db_data
             assert (await (await conn.execute("SELECT to_regnamespace('kho_lanh') IS NOT NULL")).fetchone()) == (True,)
 
         # Chạy lại lần 2: idempotent, không chạy lại migration, vẫn giữ nguyên dữ liệu
-        rc2 = packkit.dev(made, [], 8399, 3199, True, env_extra=env_extra, vpy_override=vpy)
+        rc2 = packkit.dev(made, [], 8399, 3199, True, db_name=dbname, env_extra=env_extra, vpy_override=vpy)
         out2 = capsys.readouterr().out
         assert rc2 == 0 and "đã bật sẵn" in out2 and "không có migration mới" in out2
     finally:

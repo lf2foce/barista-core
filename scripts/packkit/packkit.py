@@ -537,9 +537,11 @@ from barista.db import db
 from barista.kernel import auth, executor, loader, packs, registry, screens
 from barista.kernel.migrate import migrate
 
-key = sys.argv[1]
+key, target_email = sys.argv[1], sys.argv[2]
 
 async def run():
+    if (settings.env or "").strip().lower() == "production":
+        raise SystemExit("DỪNG: BARISTA_ENV=production — pack.sh dev chỉ chạy trên môi trường dev cục bộ")
     loader.load()
     if key not in registry.PACKS:
         raise SystemExit(f"Không nạp được gói {key!r} — kiểm tra entry point barista.packs trong pyproject.toml")
@@ -547,18 +549,24 @@ async def run():
     await db.open(settings.database_url, settings.owner_database_url)
     try:
         async with db.owner.connection() as conn:
+            any_tenant = await (await conn.execute("SELECT count(*) AS n FROM core.tenants")).fetchone()
+            has_tenants = bool(any_tenant and any_tenant["n"])
             t_row = await (await conn.execute(
                 "SELECT t.id, t.name, u.email FROM core.tenants t "
                 "JOIN core.memberships m ON m.tenant_id = t.id AND m.active "
                 "JOIN core.users u ON u.id = m.user_id "
-                "WHERE m.role = 'admin' "
-                "ORDER BY (u.email = %s) DESC, t.created_at LIMIT 1",
-                (f"admin@{seed.DOMAIN}",),
+                "WHERE m.role = 'admin' AND lower(u.email) = lower(%s) LIMIT 1",
+                (target_email,),
             )).fetchone()
-        if t_row is None:
+        if not has_tenants:
             tid = await seed.sample_company(seed.TENANT, "sample", (key,))
             t_name, login_email = seed.TENANT, f"admin@{seed.DOMAIN}"
             enabled_now = True
+        elif t_row is None:
+            raise SystemExit(
+                f"DỪNG: DB đã có công ty nhưng không thấy quản trị mẫu {target_email!r} — "
+                "không tự chọn công ty khác; dùng DB thử riêng (--db barista_erp_packdev) hoặc nêu rõ --admin <email>"
+            )
         else:
             tid, t_name, login_email = t_row["id"], t_row["name"], t_row["email"]
             async with db.owner.connection() as conn:
@@ -603,6 +611,56 @@ async def run():
 asyncio.run(run())
 """
 
+DEV_DB_DEFAULT = "barista_erp_packdev"
+DEV_DB_RE = re.compile(r"^(barista_erp|barista_erp_dev[a-z0-9_]*|barista_erp_packdev[a-z0-9_]*)\Z")
+LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
+
+
+def _dotenv(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not path.is_file():
+        return out
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        out[k.strip()] = v.strip().strip("'\"")
+    return out
+
+
+def _check_dev_url(url: str, label: str) -> str:
+    from urllib.parse import urlparse
+
+    u = urlparse(url)
+    host = (u.hostname or "").lower()
+    dbname = u.path.lstrip("/")
+    if host not in LOCAL_HOSTS:
+        die(f"{label} trỏ máy chủ ngoài ({host!r}) — pack.sh dev chỉ chạy trên Postgres local")
+    if not DEV_DB_RE.fullmatch(dbname):
+        die(f"{label} trỏ DB {dbname!r} không thuộc danh sách DB thử (barista_erp / barista_erp_dev* / barista_erp_packdev*) — từ chối ghi")
+    return dbname
+
+
+def _replace_db_name(url: str, dbname: str) -> str:
+    from urllib.parse import urlparse, urlunparse
+
+    u = urlparse(url)
+    return urlunparse(u._replace(path="/" + dbname))
+
+
+def _ensure_local_db(admin_url: str, dbname: str) -> None:
+    if shutil.which("psql") is None:
+        return
+    code, out = run(["psql", admin_url, "-Atc", f"SELECT 1 FROM pg_database WHERE datname = '{dbname}'"])
+    if code != 0:
+        die(f"không nối được Postgres local ({admin_url}):\n{out[-1000:]}")
+    if out.strip() == "1":
+        return
+    code, out = run(["psql", admin_url, "-qc", f'CREATE DATABASE "{dbname}" OWNER barista_owner'])
+    if code != 0:
+        die(f"không tạo được DB thử {dbname!r} (chạy `bash backend/scripts/dev-db.sh` một lần để tạo role barista_owner):\n{out[-1000:]}")
+
 
 def _pack_key(pack: Path) -> str:
     py = pack / "pyproject.toml"
@@ -616,48 +674,75 @@ def _pack_key(pack: Path) -> str:
 
 
 def dev(pack: Path, extra: list[Path], port: int, web_port: int, no_serve: bool,
+        db_name: str = DEV_DB_DEFAULT, admin_email: str = "admin@sanmau.demo",
         env_extra: dict[str, str] | None = None, vpy_override: Path | None = None) -> int:
-    """Chạy thử một gói trên DB dev hiện có — KHÔNG chạy `uv sync` xoá gói, KHÔNG `seed --reset` xoá dữ liệu dev."""
+    """Chạy thử một gói trên DB thử local — từ chối BARISTA_ENV=production, từ chối DB ngoài danh sách dev, không `uv sync` xoá gói, không `seed --reset`."""
     pack = pack.resolve()
     key = _pack_key(pack)
     for other in extra:
         _pack_key(other.resolve())
-    for tool in ("uv",):
-        if shutil.which(tool) is None:
-            die(f"thiếu {tool}")
+    if shutil.which("uv") is None:
+        die("thiếu uv")
     core_be = CORE / "backend"
     vpy = vpy_override or (core_be / ".venv" / "bin" / "python")
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
     if env_extra:
         env.update(env_extra)
+    dot = _dotenv(core_be / ".env")
+    eff_env = (env.get("BARISTA_ENV") or dot.get("BARISTA_ENV") or "").strip().lower()
+    if eff_env == "production":
+        die("BARISTA_ENV=production — pack.sh dev chỉ chạy trên môi trường dev cục bộ")
 
-    step(f"1. Chuẩn bị môi trường lõi & cài gói {key}")
+    # Chốt đích DB TRƯỚC mọi thao tác ghi: mặc định dùng DB thử riêng `barista_erp_packdev` (trừ khi biến môi trường đã đặt sẵn URL hợp lệ)
+    base_app = env.get("BARISTA_DATABASE_URL") or dot.get("BARISTA_DATABASE_URL") or "postgresql://barista_app:barista_app@localhost:5432/barista_erp"
+    base_owner = env.get("BARISTA_OWNER_DATABASE_URL") or dot.get("BARISTA_OWNER_DATABASE_URL") or "postgresql://barista_owner:barista_owner@localhost:5432/barista_erp"
+    if db_name:
+        if not DEV_DB_RE.fullmatch(db_name):
+            die(f"--db {db_name!r} không thuộc danh sách DB thử (barista_erp / barista_erp_dev* / barista_erp_packdev*)")
+        app_url = _replace_db_name(base_app, db_name)
+        owner_url = _replace_db_name(base_owner, db_name)
+    else:
+        app_url, owner_url = base_app, base_owner
+    app_db = _check_dev_url(app_url, "BARISTA_DATABASE_URL")
+    owner_db = _check_dev_url(owner_url, "BARISTA_OWNER_DATABASE_URL")
+    if app_db != owner_db:
+        die(f"BARISTA_DATABASE_URL ({app_db}) và BARISTA_OWNER_DATABASE_URL ({owner_db}) phải trỏ cùng một DB thử")
+    env["BARISTA_DATABASE_URL"] = app_url
+    env["BARISTA_OWNER_DATABASE_URL"] = owner_url
+    env["BARISTA_DBOS_DATABASE_URL"] = owner_url
+
+    step(f"1. Chuẩn bị môi trường lõi & cài gói {key} (đích DB: {owner_db}, quản trị: {admin_email})")
     if vpy_override is None and not vpy.is_file():
         code, out = run(["uv", "sync", "--frozen", "-q"], cwd=core_be, env=env)
         if code:
             die(f"uv sync --frozen của lõi lỗi:\n{out[-2000:]}")
-    if not (core_be / ".env").is_file() and not env.get("BARISTA_DATABASE_URL"):
+    if not (core_be / ".env").is_file() and not env.get("BARISTA_FILES_DIR"):
         code, out = run(["bash", str(core_be / "scripts" / "dev-db.sh")], cwd=CORE, env=env)
         if code:
             die(f"dev-db.sh lỗi:\n{out[-2000:]}")
+    admin_url = env.get("BARISTA_TEST_ADMIN_URL", "postgresql://localhost:5432/postgres")
+    _ensure_local_db(admin_url, owner_db)
     for p in [*extra, pack]:
         code, out = run(["uv", "pip", "install", "-q", "--python", str(vpy), "--no-deps", "-e", str(p.resolve())], cwd=CORE, env=env)
         if code:
             die(f"không cài được gói {p}:\n{out[-2000:]}")
     print(f"  OK: đã cài editable {pack.name} vào {vpy}")
 
-    step("2. Chạy migration & bật gói trên DB dev (giữ nguyên dữ liệu hiện có)")
-    code, out = run([str(vpy), "-c", DEV_SETUP, key], cwd=core_be, env=env)
+    step(f"2. Chạy migration & bật gói trên DB thử {owner_db} (giữ nguyên dữ liệu hiện có)")
+    code, out = run([str(vpy), "-c", DEV_SETUP, key, admin_email], cwd=core_be, env=env)
     if code:
         die(f"chuẩn bị DB cho gói {key} lỗi:\n{out[-2000:]}")
     info = json.loads(out.strip().splitlines()[-1])
     mig_note = f"{len(info['migrations'])} migration mới" if info["migrations"] else "không có migration mới"
+    print(f"  DB thử      : {owner_db}")
     print(f"  Công ty thử : {info['tenant']} (đăng nhập dev: {info['login']})")
     print(f"  Gói         : {info['title']} ({info['pack']}) — {'vừa bật' if info['newly_enabled'] else 'đã bật sẵn'} · {mig_note}")
     if info["screens"]:
         for sc in info["screens"]:
             print(f"  Màn         : {sc['workspace']} › {sc['title']} ({sc['key']})")
-    print(f"\n  Web : http://localhost:{web_port}   (chưa chạy web ⇒ cd web && pnpm dev)")
+    web_cmd = f"cd web && BARISTA_CORE_URL=http://127.0.0.1:{port} pnpm exec next dev -p {web_port}"
+    print(f"\n  Web : http://localhost:{web_port}")
+    print(f"  Mở  : {web_cmd}")
     print(f"  API : http://127.0.0.1:{port}/docs")
     print(f"  Kiểm: bash scripts/pack.sh check {pack} --worktree")
     print(f"  Gỡ  : uv pip uninstall --python backend/.venv/bin/python barista-pack-{key.replace('_', '-')}")
@@ -665,7 +750,7 @@ def dev(pack: Path, extra: list[Path], port: int, web_port: int, no_serve: bool,
     if no_serve:
         return 0
 
-    step(f"3. Khởi động API dev ở cổng {port} (tự nạp lại khi sửa {pack / 'src'})")
+    step(f"3. Khởi động API dev ở cổng {port} trên DB {owner_db} (tự nạp lại khi sửa {pack / 'src'})")
     env["BARISTA_DEV_AUTH"] = "1"
     uv_bin = core_be / ".venv" / "bin" / "uvicorn"
     cmd = [str(uv_bin), "barista.main:app", "--host", "127.0.0.1", "--port", str(port), "--reload", "--reload-dir", str(pack / "src")]
@@ -683,11 +768,13 @@ def main(argv: list[str]) -> int:
     a.add_argument("dest", type=Path)
     a.add_argument("--title", default="")
     a.add_argument("--connector", action="store_true", help="gói KẾT NỐI ra hệ ngoài (khung kết nối chung của lõi, ADR 0244): bộ nối + lệnh nhận + form kết nối")
-    d = sub.add_parser("dev", help="cài gói vào môi trường dev, chạy migration, bật cho công ty mẫu (giữ dữ liệu) và chạy API")
+    d = sub.add_parser("dev", help="cài gói vào môi trường dev, chạy migration trên DB thử riêng, bật cho công ty mẫu và chạy API")
     d.add_argument("pack", type=Path)
+    d.add_argument("--db", default=DEV_DB_DEFAULT, help=f"DB thử local đích (mặc định {DEV_DB_DEFAULT}; chỉ nhận barista_erp / barista_erp_dev* / barista_erp_packdev*)")
+    d.add_argument("--admin", default="admin@sanmau.demo", help="email quản trị của công ty đích để bật gói (mặc định admin@sanmau.demo)")
     d.add_argument("--with", dest="extra", action="append", type=Path, default=[], help="gói khác cần cài kèm (lặp được)")
     d.add_argument("--port", type=int, default=8300, help="cổng API dev (mặc định 8300)")
-    d.add_argument("--web-port", type=int, default=3100, help="cổng web để in địa chỉ mở màn (mặc định 3100)")
+    d.add_argument("--web-port", type=int, default=3100, help="cổng web để in địa chỉ + lệnh mở màn (mặc định 3100)")
     d.add_argument("--no-serve", action="store_true", help="chỉ cài gói + migration + bật gói và in URL, không giữ tiến trình uvicorn")
     b = sub.add_parser("check", help="tự kiểm một gói trên lõi sạch")
     b.add_argument("pack", type=Path)
@@ -700,7 +787,7 @@ def main(argv: list[str]) -> int:
         new(args.key, args.dest, args.title.strip() or args.key.replace("_", " ").capitalize(), "connector" if args.connector else "plain")
         return 0
     if args.cmd == "dev":
-        return dev(args.pack, args.extra, args.port, args.web_port, args.no_serve)
+        return dev(args.pack, args.extra, args.port, args.web_port, args.no_serve, db_name=args.db, admin_email=args.admin)
     return check(args.pack, args.core_ref, args.worktree, args.extra, args.keep)
 
 
