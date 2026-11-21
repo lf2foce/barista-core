@@ -211,41 +211,61 @@ async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str,
     """Xác nhận ⇒ chạy bằng quyền NGƯỜI bấm (không phải trợ lý), căn cứ đổi so với lúc soạn ⇒ không chạy (0071); Bỏ ⇒ ghi lại, không hỏi lại
     trong ngày (cùng khoá).
 
-    MỖI ĐỀ XUẤT CHỈ CHẠY ĐÚNG MỘT LẦN (ADR 0253) và DÙNG ĐÚNG MỘT KẾT NỐI POOL (rà Codex 21/11): khoá dòng ``FOR UPDATE`` và đóng thẻ nằm trong
-    CÙNG giao dịch với lệnh (qua ``executor.run(..., claim=, on_done=)``) — không giữ kết nối 1 rồi mượn kết nối 2, nên 10+ lượt xác nhận đồng thời
-    không bao giờ tắc bể kết nối. Khoá thực thi cố định ``proposal:<id>`` vẫn giữ an toàn nếu lệnh từng commit riêng trước đó."""
+    MỖI ĐỀ XUẤT CHỈ CHẠY ĐÚNG MỘT LẦN (ADR 0253) và DÙNG ĐÚNG MỘT KẾT NỐI POOL (rà Codex 21/11):
+    - Lệnh thường: khoá dòng ``FOR UPDATE`` + chạy lệnh + đóng thẻ trong CÙNG giao dịch / MỘT kết nối (``executor.run(..., claim=, on_done=)``).
+    - Lệnh có ``op.prepare`` gọi hệ ngoài: ``on_prepare`` chuyển thẻ sang ``running`` và commit TRƯỚC khi nhả kết nối gọi mạng (chặn Bỏ và
+      Xác nhận thứ hai chen vào lúc đang gọi ngoài); gọi xong thì Pass 2 chốt ``done``, lỗi thì ``on_fail`` chốt ``failed`` (bấm lại không gọi thêm)."""
     if decision != "confirm":
         async with db.tenant_tx(p) as conn:
-            cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s AND status = 'open' FOR UPDATE", (proposal_id,))
+            cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s FOR UPDATE", (proposal_id,))
             row = await cur.fetchone()
-            if row is None:
+            if row is None or row["status"] not in ("open", "running"):
                 return _result("not_found", GONE)
+            if row["status"] == "running":
+                return _result("conflict", RUNNING)
             with executor.tracing(_trace(row["user_id"], row["day"], row["key"])):   # cùng vết với lúc soạn: "trợ lý soạn → người quyết"
                 await executor.record_dismissed(p, row["command"], row["input"], conn=conn)   # tín hiệu "bỏ" (0091) — dùng chung kết nối
                 await _close(conn, proposal_id, "dismissed", None)
         return _result("dismissed")
 
     async with db.tenant_tx(p, read_only=True) as conn:
-        cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s AND status = 'open'", (proposal_id,))
+        cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s", (proposal_id,))
         row = await cur.fetchone()
-    if row is None:
+    if row is None or row["status"] not in ("open", "running"):
         return _result("not_found", GONE)
+    if row["status"] == "running":
+        return _result("conflict", RUNNING)
     inp: dict[str, Any] = data if isinstance(data, dict) and data else row["input"]
 
-    async def _claim(conn: Conn) -> executor.Result | None:
-        cur = await conn.execute("SELECT 1 FROM core.proposals WHERE id = %s AND status = 'open' FOR UPDATE", (proposal_id,))
-        return None if await cur.fetchone() is not None else executor.Result("not_found", error=GONE)
+    async def _claim(conn: Conn, prepared: bool) -> executor.Result | None:
+        cur = await conn.execute("SELECT status FROM core.proposals WHERE id = %s FOR UPDATE", (proposal_id,))
+        got = await cur.fetchone()
+        if prepared:
+            return None if got is not None and got["status"] == "running" else executor.Result("not_found", error=GONE)
+        if got is None:
+            return executor.Result("not_found", error=GONE)
+        if got["status"] == "running":
+            return executor.Result("conflict", error=RUNNING)
+        return None if got["status"] == "open" else executor.Result("not_found", error=GONE)
+
+    async def _on_prepare(conn: Conn) -> None:
+        await conn.execute("UPDATE core.proposals SET status = 'running', decided_at = now() WHERE id = %s AND status = 'open'", (proposal_id,))
 
     async def _on_done(conn: Conn, r: executor.Result) -> None:
         await _close(conn, proposal_id, "done", executor.jsonable(r.output))
 
+    async def _on_fail(conn: Conn, r: executor.Result) -> None:
+        await conn.execute("UPDATE core.proposals SET status = 'failed', result = %s, decided_at = now() WHERE id = %s AND status = 'running'",
+                           (Jsonb({"status": r.status, "error": r.error or ""}), proposal_id))
+
     with executor.tracing(_trace(row["user_id"], row["day"], row["key"])):
         r = await executor.run(p, row["command"], inp, key=f"proposal:{proposal_id}", expect_basis=row["basis"],
-                               edited=inp != row["input"], claim=_claim, on_done=_on_done)
+                               edited=inp != row["input"], claim=_claim, on_prepare=_on_prepare, on_done=_on_done, on_fail=_on_fail)
     return _result(r.status, r.error or "", executor.jsonable(r.output), r.approval_id)
 
 
 GONE = "Đề xuất này đã được xử lý (hoặc hết hạn, hoặc không phải của bạn)"
+RUNNING = "Đề xuất này đang được thực hiện — không thể bỏ hoặc chạy lại"
 
 
 def _result(status: str, error: str = "", output: Any = None, approval_id: str | None = None) -> dict[str, Any]:
@@ -254,7 +274,7 @@ def _result(status: str, error: str = "", output: Any = None, approval_id: str |
 
 
 async def _close(conn: Conn, proposal_id: UUID, status: str, result: Any) -> None:
-    await conn.execute("UPDATE core.proposals SET status = %s, result = %s, decided_at = now() WHERE id = %s AND status = 'open'",
+    await conn.execute("UPDATE core.proposals SET status = %s, result = %s, decided_at = now() WHERE id = %s AND status IN ('open', 'running')",
                        (status, Jsonb(result) if result is not None else None, proposal_id))
 
 

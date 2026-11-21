@@ -107,7 +107,7 @@ def _title(op: registry.Op, payload: dict[str, Any], given: dict[str, Any], subj
 
 def state_of(status: str, approval_id: Any = None) -> dict[str, Any]:
     """TRẠNG THÁI "đã quyết" của một thẻ đề xuất, đọc từ SERVER (không giữ ở trình duyệt) — một từ vựng cho thẻ chat lẫn thẻ sáng: ``proposed`` (chờ) ·
-    ``executed`` (đã làm) · ``sent`` (đã gửi duyệt — kèm ``approval_id`` để mở ĐÚNG phiếu) · ``dismissed`` · ``expired``."""
+    ``running`` (đang gọi hệ ngoài) · ``executed`` (đã làm) · ``sent`` (đã gửi duyệt — kèm ``approval_id`` để mở ĐÚNG phiếu) · ``dismissed`` · ``expired`` · ``failed``."""
     if status == "done" and approval_id:
         return {"state": "sent", "approval_id": str(approval_id)}
-    return {"state": {"open": "proposed", "done": "executed", "dismissed": "dismissed", "expired": "expired"}.get(status, status)}
+    return {"state": {"open": "proposed", "running": "running", "done": "executed", "dismissed": "dismissed", "expired": "expired", "failed": "failed"}.get(status, status)}

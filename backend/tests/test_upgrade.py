@@ -76,6 +76,7 @@ NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | {"word/001_documents.sql",   # 0227
                                               "base/092_task_plan_ref.sql",   # 0222 §15/11: cột plan_ref (mã STT / WBS của dòng trong file kế hoạch, trống được) + chỉ mục — chỉ THÊM, bản cũ không đọc / ghi cột này ⇒ không bảo trì
                                               "base/091_import_mappings.sql",   # 0226: bảng mới core.import_mappings (ánh xạ cột nhập Excel nhớ theo công ty) — chỉ THÊM ⇒ không bảo trì
                                               "base/109_decision_preview.sql",   # 0253: cột preview (trống được) của core.proposals / core.approvals — chỉ THÊM cột ⇒ không bảo trì
+                                              "base/110_proposal_running.sql",   # nới CHECK trạng thái core.proposals thêm 'running' / 'failed' cho lệnh op.prepare gọi ngoài ⇒ không bảo trì
                                               "base/108_papers_live.sql",   # 0251: bảng mới papers.entries, cột authority (có mặc định), chính sách đọc papers.documents viết lại, thêm dòng quyền papers.office — chỉ THÊM; bản cũ ghi giấy với authority mặc định, đọc / ghi dòng của chính mình ⇒ không bảo trì
                                               "base/107_company_brand.sql",   # 0249 lát 2: schema + bảng mới admin.brand (nhận diện thương hiệu của công ty) — chỉ THÊM ⇒ không bảo trì
                                               "base/058_kinds_off.sql",   # 058: gói bật tính một lần mỗi câu, không bảo trì
