@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response, Streami
 
 import barista.modules  # noqa: F401  — đăng ký mọi module
 from barista import mcp_server, production, sweeps, work_runtime
-from barista.agent import chat, desk, field_note, morning, turns, voice
+from barista.agent import chat, decisions, desk, field_note, morning, turns, voice
 from barista.agent import usage as metering
 from barista.agent.llm import AIDisabled
 from barista.config import settings
@@ -50,6 +50,7 @@ from barista.kernel import (
     web,
     webhooks,
 )
+from barista.kernel.errors import Invalid
 from barista.kernel.fields import company_country
 from barista.kernel.forms import form_spec
 from barista.kernel.migrate import migrate
@@ -915,7 +916,7 @@ async def thread(thread_id: UUID, request: Request, x_dev_user: DevUser = None, 
     if t is None:
         raise HTTPException(404, "Không thấy cuộc trò chuyện")
     # lịch sử nguyên văn cho model (lời gọi + kết quả công cụ) không gửi về app — app chỉ vẽ chữ, thẻ, bước
-    t["turns"] = [{k: v for k, v in turn.items() if k != "messages"} for turn in t["turns"]]
+    t["turns"] = [{k: v for k, v in turn.items() if k != "messages"} for turn in chat.with_states(t["turns"])]
     return executor.jsonable(t)
 
 
@@ -961,6 +962,27 @@ async def assistant_morning(request: Request, x_dev_user: DevUser = None, x_tena
     """Đề xuất trợ lý soạn sẵn hôm nay cho người này (0074 A) — lệnh đã chạy thử, bấm Xác nhận mới ghi."""
     p = await current(x_dev_user, x_tenant_id, request)
     return executor.jsonable(await morning.cards(p))
+
+
+@app.get("/v1/assistant/to-decide")
+async def assistant_to_decide(request: Request, x_dev_user: DevUser = None, x_tenant_id: TenantId = None) -> list[dict[str, Any]]:
+    """"Chờ tôi duyệt" (ADR 0253): TỪNG việc người này phải quyết — đề xuất trợ lý soạn + phiếu duyệt — nhóm theo loại, cùng hợp đồng bản chạy thử."""
+    p = await current(x_dev_user, x_tenant_id, request)
+    return executor.jsonable(await decisions.waiting(p))
+
+
+@app.post("/v1/assistant/to-decide/decide")
+async def assistant_decide_many(request: Request, body: Annotated[dict[str, Any], Body()], x_dev_user: DevUser = None,
+                                x_tenant_id: TenantId = None) -> list[dict[str, Any]]:
+    """Duyệt NHIỀU việc cùng một loại trong một lần — lần lượt từng thẻ qua đúng đường quyết của nó (kiểm căn cứ, nhật ký từng thẻ)."""
+    p = await current(x_dev_user, x_tenant_id, request)
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        raise HTTPException(422, "Cần ids (danh sách mã việc)")
+    try:
+        return await decisions.decide_many(p, str(body.get("kind") or ""), ids, str(body.get("decision") or ""))
+    except (Invalid, ValueError) as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @app.post("/v1/assistant/morning/{proposal_id}/decide")

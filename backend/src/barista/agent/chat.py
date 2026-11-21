@@ -63,6 +63,7 @@ from barista.kernel import (
     executor,
     extra_fields,
     packs,
+    preview,
     registry,
     skill_specs,
     ui,
@@ -435,10 +436,9 @@ class ToolRun:
             status, error = r.status, r.error
             if r.status == "proposed":
                 card_id = uuid.uuid4().hex
-                preview = r.output.get("preview")
-                # lệnh có thể trả "summary" (câu người đọc được, tính lúc chạy thử) ⇒ nhiều đề xuất cùng loại vẫn phân biệt được
-                title = preview.get("summary") if isinstance(preview, dict) and preview.get("summary") else op.title
-                card = {"id": card_id, "kind": "proposal", "command": op.name, "title": title, "subtitle": hint,
+                brief = r.output["brief"]   # BẢN CHẠY THỬ CHUẨN (kernel/preview.py, ADR 0253): đúng việc + hồ sơ + số tiền · cũ → mới · vì sao · đảo được
+                title = brief["title"]
+                card = {"id": card_id, "kind": "proposal", "command": op.name, "title": title, "subtitle": hint, "brief": brief,
                         "input": r.output["input"], "basis": r.output.get("basis"), "fields": field_specs(op, self.terms, self.fields),
                         "state": "proposed", "state_label": outcome_of("proposed")["label"],   # chưa chạy gì — cùng nguồn với kết quả công cụ model đọc
                         **({"why": r.output["why"]} if r.output.get("why") else {}),   # vì sao chờ người (decide — 0144), thẻ hiện gọn
@@ -692,6 +692,22 @@ async def load_thread(p: Principal, thread_id: UUID) -> dict[str, Any] | None:
     async with db.tenant_tx(p, read_only=True) as conn:
         cur = await conn.execute("SELECT id, title, turns, updated_at, mode FROM core.chat_threads WHERE id = %s", (thread_id,))
         return await cur.fetchone()
+
+
+def with_states(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Gắn TRẠNG THÁI ĐÃ QUYẾT từ chính server vào thẻ đề xuất của cuộc trò chuyện (``state`` · ``approval_id`` — cùng từ vựng ``morning.state_of``): người
+    mở lại cuộc trò chuyện (hoặc mở từ máy khác) thấy đúng thẻ nào đã làm / đã bỏ / đã gửi duyệt — web không giữ trạng thái này trong trình duyệt."""
+    for t in turns:
+        known = {c.get("card_id"): c for c in [*((t.get("pending") or {}).get("calls") or {}).values(), *t.get("decided", []), *(t.get("asides") or {}).values()]}
+        for card in t.get("cards", []):
+            e = known.get(card.get("id"))
+            if card.get("kind") != "proposal" or e is None:
+                continue
+            status = {"waiting": "open", "ok": "done", "pending_approval": "done", "dismissed": "dismissed"}.get(e.get("status", ""), "open")
+            card.update(preview.state_of(status, e.get("approval_id")))
+            if e.get("message"):
+                card["state_label"] = e["message"]
+    return turns
 
 
 async def list_threads(p: Principal) -> list[dict[str, Any]]:
@@ -1162,48 +1178,55 @@ async def decide(p: Principal, card_id: str, decision: str, input: dict[str, Any
     if row is None or spot is None:
         await emit({"type": "error", "message": "Đề xuất này không còn chờ (cuộc trò chuyện đã cũ hoặc không phải của bạn)."})
         return
-    thread_id, (idx, call_id, entry) = row["id"], spot
-    if call_id is None or entry["status"] != "waiting":   # bấm lại / mạng chập: không chạy hai lần
-        await emit({"type": "decided", "card_id": card_id, "status": entry["status"], "message": entry.get("message", ""), "replayed": True})
-        await emit({"type": "done", "thread_id": str(thread_id)})
-        return
-    replayed = False
-    if decision == "confirm":
-        # Căn cứ lúc chạy thử phải còn nguyên (0071). Người đã sửa ô trên thẻ ⇒ chỉ so căn cứ cùng nhãn (đối tượng người tự chọn lại không tính).
-        edited = "input" in entry and entry["input"] != executor.jsonable(input)
-        with executor.tracing(f"chat:{row['turns'][idx].get('trace', '')}"):   # cùng vết với lượt đã soạn thẻ: "trợ lý soạn → ai xác nhận"
-            r = await executor.run(p, entry["command"], input, key=key, expect_basis=entry.get("basis"), edited=edited)   # quyền NGƯỜI bấm
-        if r.status not in ("ok", "pending_approval"):
-            await emit({"type": "rejected", "card_id": card_id, "status": r.status, "message": r.error})
-            return
-        replayed = r.replayed
-        summary = r.output.get("summary") if isinstance(r.output, dict) else None
-        secret_card = await _once_card(p, entry["command"], r.output)
-        outcome = {"status": r.status, "message": "Đã gửi phiếu duyệt" if r.status == "pending_approval" else f"Đã xong: {summary or entry['title']}",
-                   "result": {"status": r.status, **outcome_of(r.status), "output": executor.jsonable(executor.storable(r.output)), "error": r.error}}   # lịch sử chat: không once_*
-    else:
-        secret_card = None
-        outcome = {"status": "dismissed", "message": "Đã bỏ đề xuất", "result": None}
-        with executor.tracing(f"chat:{row['turns'][idx].get('trace', '')}"):   # tín hiệu "bỏ" cùng vết với lúc soạn (0091)
-            await executor.record_dismissed(p, entry["command"], entry.get("input") or {})
+    thread_id = row["id"]
     resume = False
-    async with db.tenant_tx(p) as conn:   # khoá cuộc trò chuyện: quyết cùng lúc nhiều thẻ ⇒ đúng MỘT lần chạy tiếp
+    # MỖI ĐỀ XUẤT CHỈ CHẠY ĐÚNG MỘT LẦN (ADR 0253): chiếm đề xuất NGUYÊN TỬ bằng khoá dòng cuộc trò chuyện TRƯỚC khi chạy lệnh, giữ tới khi ghi xong kết quả.
+    # Lượt quyết thứ hai (hai tab, bấm đôi, "Bỏ" cùng lúc "Xác nhận") chờ ở khoá, đọc lại thẻ đã quyết ⇒ nhận kết quả đã có, không chạy lại. Tiến trình chết
+    # giữa chừng ⇒ khoá tự nhả, thẻ còn chờ.
+    async with db.tenant_tx(p) as conn:
         cur = await conn.execute("SELECT turns FROM core.chat_threads WHERE id = %s FOR UPDATE", (thread_id,))
         locked = await cur.fetchone()
-        assert locked is not None
+        spot = _locate(locked["turns"], card_id) if locked else None
+        if locked is None or spot is None:
+            await emit({"type": "error", "message": "Đề xuất này không còn chờ (cuộc trò chuyện đã cũ hoặc không phải của bạn)."})
+            return
         turns = locked["turns"]
+        idx, call_id, entry = spot
+        if call_id is None or entry["status"] != "waiting":   # bấm lại / mạng chập / tab khác đã quyết: không chạy hai lần
+            await emit({"type": "decided", "card_id": card_id, "status": entry["status"], "message": entry.get("message", ""), "replayed": True,
+                        **({"approval_id": entry["approval_id"]} if entry.get("approval_id") else {})})
+            await emit({"type": "done", "thread_id": str(thread_id)})
+            return
+        replayed = False
+        if decision == "confirm":
+            # Căn cứ lúc chạy thử phải còn nguyên (0071). Người đã sửa ô trên thẻ ⇒ chỉ so căn cứ cùng nhãn (đối tượng người tự chọn lại không tính).
+            edited = "input" in entry and entry["input"] != executor.jsonable(input)
+            with executor.tracing(f"chat:{turns[idx].get('trace', '')}"):   # cùng vết với lượt đã soạn thẻ: "trợ lý soạn → ai xác nhận"
+                r = await executor.run(p, entry["command"], input, key=f"chat-card:{card_id}", expect_basis=entry.get("basis"), edited=edited)   # quyền NGƯỜI bấm; khoá cố định theo thẻ (ADR 0253)
+            if r.status not in ("ok", "pending_approval"):
+                await emit({"type": "rejected", "card_id": card_id, "status": r.status, "message": r.error})
+                return
+            replayed = r.replayed
+            summary = r.output.get("summary") if isinstance(r.output, dict) else None
+            secret_card = await _once_card(p, entry["command"], r.output)
+            outcome = {"status": r.status, "message": "Đã gửi duyệt" if r.status == "pending_approval" else f"Đã xong: {summary or entry['title']}",
+                       **({"approval_id": str(r.approval_id)} if r.approval_id else {}),
+                       "result": {"status": r.status, **outcome_of(r.status), "output": executor.jsonable(executor.storable(r.output)), "error": r.error}}   # lịch sử chat: không once_*
+        else:
+            secret_card = None
+            outcome = {"status": "dismissed", "message": "Đã bỏ đề xuất", "result": None}
+            with executor.tracing(f"chat:{turns[idx].get('trace', '')}"):   # tín hiệu "bỏ" cùng vết với lúc soạn (0091)
+                await executor.record_dismissed(p, entry["command"], entry.get("input") or {})
         if call_id == ASIDE:   # bên lề: ghi kết quả vào thẻ, không có lượt nào chờ ⇒ không chạy tiếp
-            box = turns[idx]["asides"][card_id]
-            if box["status"] == "waiting":
-                box.update(outcome)
-                await conn.execute("UPDATE core.chat_threads SET turns = %s, updated_at = now() WHERE id = %s", (Jsonb(turns), thread_id))
-        elif (pend := turns[idx]["pending"])["calls"][call_id]["status"] == "waiting":
+            turns[idx]["asides"][card_id].update(outcome)
+        else:
+            pend = turns[idx]["pending"]
             pend["calls"][call_id].update(outcome)
             if all(c["status"] != "waiting" for c in pend["calls"].values()) and idx == len(turns) - 1 and not pend.get("resumed"):
-                pend["resumed"] = resume = True
-            await conn.execute("UPDATE core.chat_threads SET turns = %s, updated_at = now() WHERE id = %s", (Jsonb(turns), thread_id))
+                pend["resumed"] = resume = True   # quyết xong thẻ cuối ⇒ đúng MỘT lần chạy tiếp
+        await conn.execute("UPDATE core.chat_threads SET turns = %s, updated_at = now() WHERE id = %s", (Jsonb(turns), thread_id))
     await emit({"type": "decided", "card_id": card_id, "status": outcome["status"], "message": outcome["message"], "replayed": replayed,
-                "resuming": resume})
+                "resuming": resume, **({"approval_id": outcome["approval_id"]} if outcome.get("approval_id") else {})})
     if secret_card is not None:   # thẻ có bí mật một lần (link gửi khách): CHỈ trên luồng trực tiếp — không vào lịch sử chat, không tới model
         await emit({"type": "card", "card": secret_card})
     if resume:

@@ -18,6 +18,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 import { PANE_HEADER, RailToggle } from "./column";
 import { screenItemId, useDesk, type CanvasItem } from "./desk-context";
 import { useChat } from "./chat-context";
+import { ProposalRow } from "./chat-cards";
+import { BriefView, SettledLine } from "./brief";
 import { FullFrameProvider } from "./full-frame";
 import { FrameHeadProvider, FrameShellProvider, useFrameHead } from "./frame-context";
 import { useSolo } from "./solo";
@@ -195,7 +197,7 @@ export function CardFrame({ item, onClose, closeLabel = "Đóng thẻ", inCanvas
     item.kind === "screen"
       ? [home?.title, item.spec.group].filter(Boolean).join(" · ")
       : item.card.kind === "proposal"
-        ? (desk.confirmed[item.card.id] ?? "Trợ lý soạn sẵn và đã chạy thử — chưa ghi gì cho tới khi bạn xác nhận")
+        ? (desk.settled(item.card)?.label ?? "Trợ lý soạn sẵn và đã chạy thử — chưa ghi gì cho tới khi bạn xác nhận")
         : item.card.id.startsWith("open:")
           ? "Mở từ tin nhắn / thông báo"
           : `Trợ lý mở${item.card.subtitle ? ` · ${item.card.subtitle}` : ""}${item.card.page?.kind === "table" ? ` → ${item.card.page.rows.length} dòng` : ""}`;
@@ -304,29 +306,24 @@ function StaticPage({ page }: { page: NonNullable<ChatCard["page"]> }) {
   );
 }
 
-/** Thẻ đề xuất: lệnh ghi trợ lý đã soạn (và CHẠY THỬ được ở server). Người xem lại, sửa nếu cần, bấm Xác nhận ⇒ gọi đúng lệnh đó bằng quyền NGƯỜI. */
+/**
+ * Thẻ đề xuất trên khung làm việc: bản chạy thử chuẩn trước (hồ sơ · cũ → mới · vì sao · đảo được) cùng nút Xác nhận / Xem, sửa / Bỏ — cùng hình với thẻ trong chat.
+ * "Xem, sửa" mới mở form đủ ô (thẻ không bày cả form lên màn). Đã quyết ⇒ server nói trạng thái (`state`), kèm đường mở đúng phiếu nếu thành "Đã gửi duyệt".
+ */
 function ProposalBody({ card }: { card: ChatCard }) {
   const desk = useDesk();
   const chat = useChat();
+  const [editing, setEditing] = useState(!card.brief || card.source !== "morning");
   const [dismissing, setDismissing] = useState(false);
-  const done = desk.confirmed[card.id];
+  const done = desk.settled(card);
   const resumable = card.resumable === true;
   const morning = card.source === "morning"; // đề xuất soạn sẵn buổi sáng (0074 A) — quyết qua morning/{id}/decide
-  if (done) {
-    const dismissed = done === "Đã bỏ đề xuất";
-    return (
-      <p className={cn("t16 flex items-center gap-2", dismissed ? "text-muted-foreground" : "text-ok")}>
-        {dismissed ? <XCircle className="size-5" aria-hidden /> : <SfIcon name="checkmark.seal.fill" className="size-5" />}
-        {done}
-      </p>
-    );
-  }
-  const finish = (message: string) => {
-    desk.setConfirmed(card.id, message);
+  if (done) return <SettledLine settled={done} className="t16" />;
+  const finish = (message: string, approvalId?: string) => {
+    desk.setConfirmed(card.id, message, approvalId);
     chat.addSystem(`✓ ${message}`);
     void desk.refreshInbox();
   };
-  // Bỏ: khoá mới mỗi lần bấm; thành công ⇒ thẻ "Đã bỏ đề xuất", trợ lý chạy tiếp (nếu đủ quyết định) biết người đã bỏ
   const dismiss = async () => {
     setDismissing(true);
     try {
@@ -339,11 +336,17 @@ function ProposalBody({ card }: { card: ChatCard }) {
       setDismissing(false);
     }
   };
+  if (!editing) {
+    return (
+      <ProposalRow card={card} onEdit={() => setEditing(true)} />
+    );
+  }
   return (
     <div className="flex flex-col gap-3">
+      {card.brief ? <BriefView brief={card.brief} className="rounded-xl bg-surface2 px-3 py-2.5" /> : null}
       <FormBody
         key={card.id}
-        action={{ command: card.command ?? "", title: `Xác nhận: ${card.title}`, style: "primary", bind: {}, preset: {}, when: {}, importable: false }}
+        action={{ command: card.command ?? "", title: "Xác nhận", style: "primary", bind: {}, preset: {}, when: {}, importable: false }}
         initial={desk.proposalEdits[card.id] ?? card.input ?? {}}
         prefetched={card.fields}
         embedded
@@ -360,13 +363,6 @@ function ProposalBody({ card }: { card: ChatCard }) {
             <XCircle className="size-3.5" aria-hidden />
             {dismissing ? "Đang bỏ…" : "Bỏ đề xuất"}
           </button>
-          <span className="t12 text-muted-foreground">
-            {morning
-              ? "Em soạn sẵn sáng nay — anh/chị bấm mới chạy, bỏ thì hôm nay em không nhắc lại."
-              : card.aside
-                ? "Gợi ý — ghi hay bỏ đều được, trợ lý không chờ."
-                : "Anh/chị quyết xong, trợ lý làm tiếp phần còn lại."}
-          </span>
         </div>
       ) : null}
     </div>

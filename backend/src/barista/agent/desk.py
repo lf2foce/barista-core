@@ -12,7 +12,7 @@ import logging
 from typing import Any
 
 from barista import workspaces
-from barista.agent import morning
+from barista.agent import decisions
 from barista.kernel import executor, registry
 from barista.kernel.principal import Principal
 from barista.kernel.screens import DESK_GROUPS, Desk, Line, Screen
@@ -143,7 +143,7 @@ async def desk(p: Principal) -> dict[str, Any]:
         secs.sort(key=lambda x: x.pop("_rank"))
     hot = sum(1 for secs in groups.values() for sec in secs if any(x["tone"] in TONES for x in sec["lines"]))
     unchecked = sum(1 for secs in groups.values() for sec in secs if sec["unchecked"]) + (waiting is None)
-    # ``count``: số MỤC cần để ý trên nút "Việc" (mục có tín hiệu đỏ / vàng + thẻ đề xuất sáng đang mở — không phải số việc); ``unchecked``: số mục
+    # ``count``: số trên nút "Việc" = mục có tín hiệu đỏ / vàng + SỐ VIỆC chờ quyết (đề xuất + phiếu duyệt, từng việc một — ADR 0253); ``unchecked``: số mục
     # chưa kiểm được (app hiện dấu trung tính, không để 0 trông như hết việc). App vẽ, không tự đếm chữ.
     return {"groups": [{"key": g, "title": DESK_GROUPS[g], "sections": secs} for g, secs in groups.items() if secs],
             "morning": waiting or 0, "morning_unchecked": waiting is None, "count": hot + (waiting or 0), "unchecked": unchecked}
@@ -154,7 +154,7 @@ async def _morning(p: Principal, deadline: float) -> int | None:
     None ("chưa đếm được" — khác với "không có đề xuất")."""
     try:
         async with asyncio.timeout_at(deadline):
-            return await morning.open_count(p)
+            return await decisions.count(p)
     except Exception:   # con số phụ trên bàn việc: lỗi / quá hạn ⇒ bỏ số đó, bàn việc vẫn mở — đã log.exception
         log.exception("đếm đề xuất sáng lỗi / quá hạn")
         return None

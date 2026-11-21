@@ -171,7 +171,9 @@ class ClosePeriod(Input):
     confirm_days: int = field("Số ngày để người lao động xác nhận", 3, ge=1, le=15)
 
 
-@m.command("close_period", resource="timekeeping", action="manage", title="Chốt bảng công tháng", agent="deny", risk="authority")
+@m.command("close_period",
+           purpose="Chốt bảng công tháng để đẩy công sang Lương và người lao động xác nhận số của mình.", irreversible=True, effect="Tổng công từng người được chốt (bất biến), đẩy sang Lương và gửi mời người lao động xác nhận; không mở lại được.",
+           resource="timekeeping", action="manage", title="Chốt bảng công tháng", agent="deny", risk="authority")
 async def close_period(ctx: Ctx, inp: ClosePeriod) -> dict[str, Any]:
     """Chốt tháng cho đội / công ty: ghi tổng từng người (bất biến), đẩy công sang Lương, mời người lao động xác nhận. Người còn việc mở (giờ có cờ
     chưa xét, ngày thiếu giờ chấm, đơn đang chờ) chưa chốt — báo tên + việc; người khác vẫn chốt (chốt lại sau cho người còn lại). Trưởng đội chốt đội mình (RLS chỉ

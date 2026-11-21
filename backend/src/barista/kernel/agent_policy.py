@@ -62,6 +62,12 @@ class Decision:
         return self.mode == "allow"
 
 
+def self_serve(op: registry.Op) -> bool:
+    """Lệnh khai ``agent="allow"``: việc ghi nhỏ trợ lý được tự làm — module cam kết nó vô hại / sửa lại được (0144). Chỉ để MÔ TẢ cho người đọc
+    (``kernel/preview.reversibility``); quyết định chế độ thật vẫn là ``decide``."""
+    return op.agent == "allow"
+
+
 def risk_of(op: registry.Op) -> str:
     """Mức rủi ro: khai tay (``risk=``) thắng; không khai thì SUY — truy vấn = read; module quản trị / lõi / app hoặc lệnh có ``sensitive=`` = authority;
     lệnh có ô tiền = money; còn lại = low. Suy diễn là bước chuyển (0144 mục 3) — ``test_permission_matrix`` liệt kê lệnh suy ra chọi với trần.

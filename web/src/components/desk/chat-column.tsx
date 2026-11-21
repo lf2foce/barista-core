@@ -1,5 +1,6 @@
 "use client";
 
+import { greetingOf } from "@/lib/to-decide";
 import { ArrowUp, Brain, Check, ChevronRight, CircleAlert, FileText, History, ImageIcon, ImagePlus, MessageSquarePlus, Play, Share2, Sparkles, TriangleAlert, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { confirmAll, waitingProposals } from "@/lib/confirm-all";
@@ -256,14 +257,22 @@ function Welcome() {
   const desk = useDesk();
   const chat = useChat();
   const first = desk.manifest?.user.name.trim().split(/\s+/).pop() ?? "bạn";
+  const waiting = chat.toDecide.length;
+  const one = waiting === 1 ? chat.toDecide[0] : null;
+  const greeting = greetingOf(chat.toDecide);
+  const openWaiting = () => {
+    if (one?.card) desk.openCard(one.card, true);
+    else if (one) void desk.openTarget("core.approval", { approval_id: one.id }, "Phiếu duyệt");
+    else desk.select({ kind: "desk" });
+  };
   return (
     <div className="flex flex-col gap-3.5 pt-2">
       <h2 className="t20">Chào {first} 👋</h2>
-      {chat.morning.length ? (
-        // thẻ đề xuất sáng ở BÀN VIỆC (nhóm "Cần tôi quyết", 0094) — lời chào chỉ dẫn sang, không làm chỗ thứ hai
-        <button type="button" onClick={() => desk.select({ kind: "desk" })} className="flex items-center gap-2.5 rounded-[14px] bg-primary/[0.07] px-3.5 py-2.5 text-left outline-none hover:bg-primary/[0.12] focus-visible:ring-2 focus-visible:ring-ring">
+      {waiting ? (
+        // MỘT nguồn: "Chờ tôi duyệt" ở bàn việc (0094 / ADR 0253) — lời chào chỉ dẫn sang, không làm chỗ thứ hai. Một việc ⇒ mở THẲNG thẻ / phiếu đó; nhiều ⇒ mở danh sách kèm số
+        <button type="button" onClick={openWaiting} className="flex items-center gap-2.5 rounded-[14px] bg-primary/[0.07] px-3.5 py-2.5 text-left outline-none hover:bg-primary/[0.12] focus-visible:ring-2 focus-visible:ring-ring">
           <Sparkles className="size-3.5 shrink-0 text-primary" aria-hidden />
-          <span className="t14m flex-1">Em soạn sẵn {chat.morning.length} đề xuất sáng nay — xem ở Việc</span>
+          <span className="t14m flex-1">{greeting}</span>
           <ChevronRight className="size-3 shrink-0 text-muted-foreground/70" aria-hidden />
         </button>
       ) : null}
@@ -371,7 +380,7 @@ function Bubble({ message }: { message: ChatMessage }) {
         (card) => desk.proposalEdits[card.id] ?? card.input ?? {},
         newKey,
         (card, o) => {
-          desk.setConfirmed(card.id, o.message);
+          desk.setConfirmed(card.id, o.message, o.approvalId);
           chat.addSystem(`✓ ${o.message}`);
         },
       );
@@ -498,7 +507,7 @@ function StepList({ steps, cards }: { steps: ChatMessage["steps"]; cards: ChatCa
 function PreviewRow({ card }: { card: ChatCard }) {
   const desk = useDesk();
   const proposal = card.kind === "proposal";
-  const done = desk.confirmed[card.id];
+  const done = desk.settled(card)?.label;
   const op = card.query ?? card.command ?? "";
   const sub = done
     ? done
@@ -527,7 +536,7 @@ function AsideRow({ card }: { card: ChatCard }) {
   const desk = useDesk();
   const chat = useChat();
   const [busy, setBusy] = useState<"confirm" | "dismiss" | null>(null);
-  const done = desk.confirmed[card.id];
+  const done = desk.settled(card)?.label;
   const decide = async (d: "confirm" | "dismiss") => {
     setBusy(d);
     try {

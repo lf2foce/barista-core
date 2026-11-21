@@ -405,7 +405,9 @@ async def ack(ctx: Ctx, inp: Ack) -> dict[str, Any]:
     return {"item_id": inp.item_id}
 
 
-@m.command("cancel", resource="work", title="Dừng theo dõi", agent="propose")
+@m.command("cancel",
+           purpose="Việc không cần trợ lý theo dõi tiếp — dừng theo dõi.", irreversible=True, effect="Dừng theo dõi và đóng việc này: trợ lý thôi kiểm tra và báo; muốn theo dõi tiếp phải mở việc mới.",
+           resource="work", title="Dừng theo dõi", agent="propose")
 async def cancel(ctx: Ctx, inp: ItemRef) -> dict[str, Any]:
     n = await ctx.exec("UPDATE work.items SET status = 'cancelled', closed_at = now(), updated_at = now()"
                        " WHERE id = %s AND status IN ('active', 'waiting')", (inp.item_id,))
@@ -413,7 +415,8 @@ async def cancel(ctx: Ctx, inp: ItemRef) -> dict[str, Any]:
         raise NotFound("Không thấy việc đang theo")
     await _event(ctx, inp.item_id, "cancelled", f"{ctx.p.name} dừng theo dõi.")
     _signal_wake(ctx, inp.item_id)
-    return {"item_id": inp.item_id}
+    title = await ctx.val("SELECT title FROM work.items WHERE id = %s", (inp.item_id,))
+    return {"item_id": inp.item_id, "subject": {"label": f"Việc theo dõi “{title}”", "open": None} if title else None}
 
 
 # ── Xem ──

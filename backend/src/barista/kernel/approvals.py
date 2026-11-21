@@ -95,8 +95,10 @@ async def tell_admins_self_approved(conn: Conn, p: Principal, what: str) -> None
 
 
 async def create(conn: Conn, p: Principal, *, chain: str, command: str, input: dict[str, Any], summary: str,
-                 run_as: str, on_reject: str | None = None, basis: dict[str, str] | None = None) -> UUID:
-    """``basis``: căn cứ của lệnh lúc xin (0071) — ``core.decide`` tính lại mỗi lần người đồng ý; khác ⇒ phiếu "Căn cứ đã đổi", không chạy."""
+                 run_as: str, on_reject: str | None = None, basis: dict[str, str] | None = None, preview: dict[str, Any] | None = None) -> UUID:
+    """``basis``: căn cứ của lệnh lúc xin (0071) — ``core.decide`` tính lại mỗi lần người đồng ý; khác ⇒ phiếu "Căn cứ đã đổi", không chạy.
+    ``summary``: đúng việc + hồ sơ + số tiền (không còn "<người>: <tên lệnh>" — người xin là cột riêng); ``preview``: bản chạy thử chuẩn của lệnh
+    (``kernel/preview.py``, ADR 0253) — hồ sơ · cũ → mới · vì sao · đảo được; thẻ phiếu vẽ đúng nó, như thẻ đề xuất."""
     if p.user_id is None:
         raise Invalid("Phiếu duyệt cần người xin")
     cur = await conn.execute("SELECT label, steps FROM core.approval_chains WHERE key = %s", (chain,))
@@ -112,13 +114,18 @@ async def create(conn: Conn, p: Principal, *, chain: str, command: str, input: d
     steps[0]["approver_ids"] = [str(i) for i in ids]
     cur = await conn.execute(
         """INSERT INTO core.approvals (chain, command, input, run_as, on_reject, summary, requested_by, steps, approver_ids,
-                                       participant_ids, basis)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                                       participant_ids, basis, preview)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
         (chain, command, Jsonb(input), run_as, on_reject, summary, p.user_id, Jsonb(steps), ids, ids,
-         None if basis is None else Jsonb(basis)),
+         None if basis is None else Jsonb(basis), None if preview is None else Jsonb(preview)),
     )
     created = await cur.fetchone()
     assert created is not None
-    await notify.send(conn, ids, kind="approval", title=f"Phiếu chờ anh/chị duyệt: {summary}", push="Có phiếu chờ anh/chị duyệt",
-                      open={"query": "core.approvals", "input": {}}, actor=p.user_id)
+    await notify.send(conn, ids, kind="approval", title=f"{p.name or p.email} xin duyệt: {summary}", body=(preview or {}).get("reason") or "",
+                      push="Có phiếu chờ anh/chị duyệt", open=open_of(created["id"]), actor=p.user_id)
     return created["id"]
+
+
+def open_of(approval_id: Any) -> dict[str, Any]:
+    """Đường mở ĐÚNG MỘT phiếu (thông báo, tin nhắn, "Đã gửi duyệt" trên thẻ) — không mở cả danh sách rồi bắt tìm (ADR 0253)."""
+    return {"query": "core.approval", "input": {"approval_id": str(approval_id)}}

@@ -151,7 +151,9 @@ async def _install_access(ctx: Ctx, inp: Install) -> str:
     return f"cài app “{inp.name}” · {_describe(_grants_text(inp.access, inp.grants), inp.events, inp.webhook_url)}"
 
 
-@m.command("install", resource="core.admin", action="manage", title="Cài ứng dụng kết nối", agent="deny", sensitive=_install_access)
+@m.command("install",
+           purpose="Cho một ứng dụng bên ngoài kết nối Barista với đúng quyền và sự kiện nó cần.", reversible="Thu hồi ứng dụng ở màn Ứng dụng kết nối",
+           resource="core.admin", action="manage", title="Cài ứng dụng kết nối", agent="deny", sensitive=_install_access)
 async def install(ctx: Ctx, inp: Install) -> dict[str, Any]:
     """Tạo app (client OAuth của công ty này). Chạy sau khi chủ tài khoản duyệt; người xin là người bảo lãnh và là người DUY NHẤT nhận khoá lần đầu."""
     await _rule_required(ctx, "connect.install")
@@ -164,7 +166,8 @@ async def install(ctx: Ctx, inp: Install) -> dict[str, Any]:
            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
         (app_id, client_id, inp.name.strip(), user_id, ctx.p.user_id, list(ctx.p.approved_by), inp.webhook_url.strip(), ctx.p.user_id))
     await _write_access(ctx, app_id, grants, events)
-    return {"app_id": app_id, "client_id": client_id}
+    return {"app_id": app_id, "client_id": client_id, "subject": {"label": f"Ứng dụng “{inp.name.strip()}”", "open": None},
+            "changes": [{"label": "Quyền của app", "before": "", "after": remote_apps.format_grants(grants) or "Không có"}]}
 
 
 # ── Đổi quyền / sự kiện / địa chỉ ──
@@ -201,18 +204,23 @@ async def _access_change(ctx: Ctx, inp: SetAccess) -> str:
             " · người xin thành người bảo lãnh")
 
 
-@m.command("set_access", resource="core.admin", action="manage", title="Đổi quyền ứng dụng kết nối", agent="deny", sensitive=_access_change)
+@m.command("set_access",
+           purpose="Đổi quyền, sự kiện hoặc địa chỉ nhận thông báo của ứng dụng kết nối cho khớp nhu cầu.", reversible="Chạy lại lệnh với quyền và sự kiện cũ",
+           resource="core.admin", action="manage", title="Đổi quyền ứng dụng kết nối", agent="deny", sensitive=_access_change)
 async def set_access(ctx: Ctx, inp: SetAccess) -> dict[str, Any]:
     """Thay toàn bộ quyền + sự kiện + địa chỉ webhook. Người xin (đã được duyệt) thành người bảo lãnh — quản trị rời công ty thì quản trị khác nhận
     bảo lãnh bằng lệnh này."""
     await _rule_required(ctx, "connect.set_access")
-    await _app(ctx, inp.app_id, lock=True)
+    app = await _app(ctx, inp.app_id, lock=True)
+    before = remote_apps.format_grants(await remote_apps.app_grants(ctx.conn, inp.app_id))
     grants, events = await _check(ctx, _grants_text(inp.access, inp.grants), inp.events, inp.webhook_url.strip())
     # người xin (đã được duyệt) nhận bảo lãnh — kể cả app nhà vận hành cài bảo lãnh bằng vai (0206): từ đây quyền app ≤ quyền người này
     await ctx.exec("UPDATE core.remote_apps SET webhook_url = %s, installed_by = %s, sponsor_role = NULL, approved_by = %s WHERE id = %s",
                    (inp.webhook_url.strip(), ctx.p.user_id, list(ctx.p.approved_by), inp.app_id))
     await _write_access(ctx, inp.app_id, grants, events)
-    return {"app_id": inp.app_id}
+    after = remote_apps.format_grants(grants)
+    return {"app_id": inp.app_id, "subject": {"label": f"Ứng dụng “{app['name']}”", "open": None},
+            "changes": [{"label": "Quyền của app", "before": before or "Không có", "after": after or "Không có"}] if before != after else []}
 
 
 # ── Khoá ──
@@ -226,16 +234,20 @@ async def _rotate_access(ctx: Ctx, inp: AppRef) -> str:
     return f"cấp khoá mới cho app “{name or inp.app_id}” (khoá cũ hết hiệu lực khi người xin nhận khoá mới)"
 
 
-@m.command("rotate_secret", resource="core.admin", action="manage", title="Xoay khoá ứng dụng", agent="deny", sensitive=_rotate_access)
+@m.command("rotate_secret",
+           purpose="Khoá của ứng dụng bị lộ hoặc đến hạn đổi — cấp khoá mới.", irreversible=True, effect="Cấp khoá mới cho ứng dụng: khoá cũ hết hiệu lực khi người xin nhận khoá mới, ứng dụng phải cập nhật khoá; không quay lại khoá cũ.",
+           resource="core.admin", action="manage", title="Xoay khoá ứng dụng", agent="deny", sensitive=_rotate_access)
 async def rotate_secret(ctx: Ctx, inp: AppRef) -> dict[str, Any]:
     """Sau duyệt: người xin được nhận MỘT khoá mới ("Nhận khoá"). Khoá cũ vẫn chạy tới lúc đó (đổi không gián đoạn); lộ khoá ⇒ thu hồi app."""
     await _rule_required(ctx, "connect.rotate_secret")
-    await _app(ctx, inp.app_id, lock=True)
+    app = await _app(ctx, inp.app_id, lock=True)
     await ctx.exec("UPDATE core.remote_apps SET secret_claim_by = %s WHERE id = %s", (ctx.p.user_id, inp.app_id))
-    return {"app_id": inp.app_id}
+    return {"app_id": inp.app_id, "subject": {"label": f"Ứng dụng “{app['name']}”", "open": None}}
 
 
-@m.command("claim_secret", resource="core.admin", action="manage", title="Nhận khoá ứng dụng", agent="deny")
+@m.command("claim_secret",
+           purpose="Nhận khoá của ứng dụng vừa cài hoặc vừa xoay để chép vào cấu hình ứng dụng.", irreversible=True, effect="Khoá chỉ hiện MỘT lần, Barista không giữ bản rõ; mất khoá thì phải xoay khoá.",
+           resource="core.admin", action="manage", title="Nhận khoá ứng dụng", agent="deny")
 async def claim_secret(ctx: Ctx, inp: AppRef) -> dict[str, Any]:
     """Chỉ người được duyệt cài / xoay khoá, một lần. Trả client_id + khoá app + khoá ký webhook — hiện MỘT lần, Barista không giữ bản rõ."""
     a = await _app(ctx, inp.app_id, lock=True)
@@ -256,20 +268,22 @@ class Revoke(Input):
     reason: str = field("Lý do", "", max_length=300)
 
 
-@m.command("revoke", resource="core.admin", action="manage", title="Thu hồi ứng dụng kết nối")
+@m.command("revoke",
+           purpose="Ứng dụng không còn dùng hoặc khoá đã lộ — cắt kết nối ngay.", irreversible=True, effect="Thu hồi ứng dụng: khoá bị từ chối ngay, thư webhook chưa gửi bị huỷ; không mở lại được, muốn dùng phải cài ứng dụng mới.",
+           resource="core.admin", action="manage", title="Thu hồi ứng dụng kết nối")
 async def revoke(ctx: Ctx, inp: Revoke) -> dict[str, Any]:
     """Có hiệu lực NGAY: token bị từ chối từ request kế tiếp, thư webhook chưa gửi bị huỷ. Không mở lại được — cài app mới nếu cần."""
     return await _revoke(ctx, inp.app_id, inp.reason)
 
 
 async def _revoke(ctx: Ctx, app_id: UUID, reason: str) -> dict[str, Any]:
-    await _app(ctx, app_id, lock=True)
+    app = await _app(ctx, app_id, lock=True)
     await ctx.exec("UPDATE core.remote_apps SET status = 'revoked', revoked_at = now(), revoked_by = core.me(), secret_claim_by = NULL WHERE id = %s",
                    (app_id,))
     tokens = await ctx.exec("UPDATE core.remote_app_tokens SET revoked_at = now() WHERE app_id = %s AND revoked_at IS NULL", (app_id,))
     dropped = await ctx.exec("""UPDATE core.webhook_deliveries SET status = 'cancelled', done_at = now(), last_error = %s
                                 WHERE app_id = %s AND status = 'pending'""", (f"thu hồi: {reason}"[:300], app_id))
-    return {"app_id": app_id, "tokens_revoked": tokens, "webhooks_cancelled": dropped}
+    return {"app_id": app_id, "tokens_revoked": tokens, "webhooks_cancelled": dropped, "subject": {"label": f"Ứng dụng “{app['name']}”", "open": None}}
 
 
 # ── Cửa nhà vận hành (0206): cài / xoay khoá / thu hồi KHÔNG qua phiếu, bảo lãnh bằng một VAI — chỉ ``python -m barista.operator`` ──

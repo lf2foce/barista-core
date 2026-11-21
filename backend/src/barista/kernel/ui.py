@@ -319,6 +319,19 @@ def compact(page: Any, rows: int = COMPACT_ROWS) -> dict[str, Any] | None:
     return out
 
 
+def _command_of(name: str) -> Any:
+    from barista.kernel import registry  # nạp muộn: registry nạp ui
+
+    op = registry.get(name)
+    return op if op is not None and op.kind == "command" else None
+
+
+def _rule(op: Any, fixed: set[str]) -> dict[str, Any]:
+    from barista.kernel.preview import action_rule
+
+    return action_rule(op, fixed)
+
+
 def act(command: str, title: str, preset: dict[str, Any] | None = None, style: str = "default", *,
         values: dict[str, Any] | None = None, import_only: bool = False, basis: str = "", confirm: str = "") -> dict[str, Any]:
     """Nút gọi một lệnh (form mở sẵn các trường ``preset`` — cố định, ẩn). ``values``: ô ĐIỀN SẴN mà người vẫn thấy + sửa được (vd tiêu đề việc lấy
@@ -329,7 +342,9 @@ def act(command: str, title: str, preset: dict[str, Any] | None = None, style: s
     if values:
         out["values"] = values   # chỉ THÊM trường (bất biến 7): app cũ bỏ qua ⇒ form trống như trước
     if confirm:
-        out["confirm"] = confirm   # câu hỏi lại của nút không có ô nào để điền (vd "Cấp số và khoá nội dung…") — app cũ hỏi câu chung như trước
+        out["confirm"] = confirm   # câu hỏi lại của nút không có ô nào để điền (vd "Cấp số và khoá nội dung…") — nút tự nêu thắng luật chung
+    elif not import_only and (op := _command_of(command)) is not None:
+        out.update(_rule(op, set(preset or {})))   # LUẬT XÁC NHẬN MỘT CHỖ (ADR 0253): đảo được ⇒ ``instant``; không ⇒ ``confirm`` = hệ quả
     if basis:
         # CĂN CỨ người xem đang thấy (0071 / 0251 — ``executor.basis_token``): app gửi lại nguyên chữ ở tiêu đề ``X-Expect-Basis`` khi bấm ⇒ số đã đổi
         # giữa lúc xem và lúc bấm thì lệnh trả ``conflict``, không chạy. App cũ không gửi ⇒ lệnh chạy như trước (không so)
@@ -353,6 +368,12 @@ def b_callout(tone: str, title: str, text: str = "", *, facts: list[str] | None 
               actions: list[dict[str, Any]] | None = None, needs: Needs = None) -> dict[str, Any]:
     return gated({"type": "callout", "tone": tone, "title": title, "text": text, "facts": facts or [], "draft": draft,
                   "actions": actions or []}, needs)
+
+
+def b_brief(brief: dict[str, Any], *, needs: Needs = None) -> dict[str, Any]:
+    """BẢN CHẠY THỬ CHUẨN (``kernel/preview.py``, ADR 0253) của một việc chờ duyệt: hồ sơ · cũ → mới · vì sao · đảo được không. Thẻ đề xuất, thẻ buổi sáng và
+    phiếu duyệt vẽ CÙNG khối này. App lạ khối ⇒ bỏ qua — trang vẫn có tiêu đề + các bước."""
+    return gated({"type": "brief", **{k: brief.get(k) for k in ("title", "subject", "changes", "reason", "reversible")}}, needs)
 
 
 def b_finding(tone: str, title: str, text: str, evidence: list[dict[str, Any]], *, badge: str = "", facts: list[str] | None = None,

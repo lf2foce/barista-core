@@ -325,7 +325,9 @@ class LineRef(Input):
     line_id: UUID = field("Dòng sao kê", hidden=True)
 
 
-@m.command("build_dossier", resource="acct", title="Lập hồ sơ khoản lệch cho một dòng tiền về")
+@m.command("build_dossier",
+           purpose="Dòng tiền về chưa khớp công nợ cần có hồ sơ riêng để kế toán xử lý — không đợi vòng quét tự dựng.", reversible="Đóng hồ sơ nếu lập thừa (Bỏ qua hồ sơ)",
+           resource="acct", title="Lập hồ sơ khoản lệch cho một dòng tiền về")
 async def build_dossier(ctx: Ctx, inp: LineRef) -> dict[str, Any]:
     """Kế toán lập tay cho một dòng còn mở (không đợi vòng quét). Mỗi dòng một hồ sơ: đã có ⇒ trả hồ sơ cũ."""
     ctx.require("acct", "write")
@@ -404,7 +406,9 @@ class WriteOff(Input):
     reason: str = field("Lý do", max_length=500)
 
 
-@m.command("write_off_dossier", resource="acct", title="Xoá phần thiếu của khoản lệch (cần duyệt)", risk="money")
+@m.command("write_off_dossier",
+           purpose="Khoản tiền về thiếu so với công nợ không đòi được — xoá phần thiếu để công nợ và hồ sơ khoản lệch được đóng.", irreversible=True, effect="Giảm số phải thu và doanh thu đúng số tiền xoá; không khôi phục được số đã xoá.",
+           resource="acct", title="Xoá phần thiếu của khoản lệch (cần duyệt)", risk="money")
 async def write_off_dossier(ctx: Ctx, inp: WriteOff) -> dict[str, Any]:
     """Xoá phần thiếu của một khoản hồ sơ nhắm tới — CHỈ sau phiếu duyệt do người khác duyệt (chuỗi ``receivable_correction``, như giấy báo có). Tiền đi qua đúng
     ``acct.credit_receivable`` (giảm phải thu, bút toán sổ cái, chống lặp theo mã hồ sơ); hồ sơ chỉ ghi lại và tự đóng khi dòng tiền đã phân bổ hết."""
@@ -425,6 +429,7 @@ async def write_off_dossier(ctx: Ctx, inp: WriteOff) -> dict[str, Any]:
     d = await _dossier(ctx, d["code"])
     closed = await _evaluate(ctx, d)
     return {"code": d["code"], "receivable": code, "credited_vnd": inp.amount_vnd, "closed": closed or "",
+            "subject": {"label": f"Hồ sơ khoản lệch {d['code']}", "open": {"query": "acct.dossier", "input": {"code": d["code"]}}},
             "summary": f"Xoá {_vnd(inp.amount_vnd)} của {code}" + (" · hồ sơ đã đóng" if closed else "")}
 
 
@@ -477,7 +482,9 @@ async def receivable_source_options(ctx: Ctx, inp: NoInput) -> list[dict[str, st
     return out
 
 
-@m.command("set_discrepancy_rule", resource="acct", action="manage", title="Đặt luật phân công / ngưỡng khoản lệch", category="setup")
+@m.command("set_discrepancy_rule",
+           purpose="Đặt người phụ trách và ngưỡng dựng hồ sơ khoản lệch để khoản tiền lệch được xử lý đúng người, đúng hạn.", reversible="Chạy lại lệnh với luật cũ",
+           resource="acct", action="manage", title="Đặt luật phân công / ngưỡng khoản lệch", category="setup")
 async def set_discrepancy_rule(ctx: Ctx, inp: SetRule) -> dict[str, Any]:
     eid = await entities.resolve(ctx, inp.entity_code) if inp.entity_code.strip() else None
     owner = None

@@ -1517,7 +1517,9 @@ class AppRef(Input):
     app_id: UUID = field("App", hidden=True)
 
 
-@m.command("delete", resource=None, title="Xoá app", agent="deny")   # người bấm trên màn Quản lý app — trợ lý không xoá
+@m.command("delete",
+           purpose="App không còn dùng — xoá khỏi danh sách của bạn.", irreversible=True, effect="Xoá app và cả lịch sử phiên bản, bỏ ghim; người đang dùng app sẽ mất app, không khôi phục được. Dữ liệu nguồn không đổi.",
+           resource=None, title="Xoá app", agent="deny")   # người bấm trên màn Quản lý app — trợ lý không xoá
 async def delete(ctx: Ctx, inp: AppRef) -> dict[str, Any]:
     """Xoá hẳn một app của bạn (cả lịch sử phiên bản) và bỏ ghim. Dữ liệu nguồn không đổi gì."""
     r = await _load(ctx, inp.app_id)
@@ -1528,7 +1530,7 @@ async def delete(ctx: Ctx, inp: AppRef) -> dict[str, Any]:
     else:
         await ctx.exec("DELETE FROM apps.items WHERE id = %s", (inp.app_id,))
     await ctx.call("core.unpin", workspace=WORKSPACE, key=_key(inp.app_id))
-    return {"summary": f"Đã xoá app “{r['title']}”", "menu": True}   # menu đổi ⇒ máy khách tải lại manifest ngay (0176)
+    return {"summary": f"Đã xoá app “{r['title']}”", "menu": True, "subject": {"label": f"App “{r['title']}”", "open": None}}   # menu đổi ⇒ máy khách tải lại manifest ngay (0176)
 
 
 # ── Chia dashboard cho công ty (0176) — chỉ module Báo cáo quản trị gọi, sau khi đã kiểm quyền "quản lý báo cáo quản trị" của người gọi ──

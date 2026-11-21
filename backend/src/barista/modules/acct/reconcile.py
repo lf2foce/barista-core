@@ -344,7 +344,9 @@ async def apply_line(ctx: Ctx, inp: ApplyLine) -> dict[str, Any]:
     return res
 
 
-@m.command("apply_statement", resource="acct", title="Ghi phiếu thu các dòng khớp đủ")
+@m.command("apply_statement",
+           purpose="Dòng tiền ngân hàng khớp đủ với khoản phải thu — ghi phiếu thu hàng loạt để công nợ khớp tiền về.", irreversible=True, effect="Ghi phiếu thu vào sổ cái cho mọi dòng khớp đủ; muốn sửa phải đảo từng phiếu thu.",
+           resource="acct", title="Ghi phiếu thu các dòng khớp đủ")
 async def apply_statement(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     """Ghi hàng loạt CHỈ các dòng khớp ĐỦ theo mã (khớp lại lúc bấm — không tin danh sách cũ). Mỗi dòng phân bổ vào khoản của nó ⇒ gói nguồn
     phản ứng (ghi nhận của gói, việc theo dõi tự đóng, hồ sơ chuyển chặng). Dòng lệch / chưa khớp để lại cho người xem từng dòng."""

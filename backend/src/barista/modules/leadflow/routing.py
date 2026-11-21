@@ -426,7 +426,9 @@ class Intake(Input):
     external_ref: str = field("Mã bên ngoài", "", help="vd leadgen_id của Meta", max_length=200, group="Nguồn tự động (kỹ thuật)")
 
 
-@m.command("intake", resource="leadflow", title="Nạp lead", importable=True, agent="deny", apps=True)   # app nguồn lead (0140) — trợ lý thì không
+@m.command("intake",
+           purpose="Nạp lead mới từ quảng cáo, biểu mẫu hoặc nhà cung cấp và chia cho người gọi, để khách được liên hệ nhanh.", irreversible=True, effect="Lead được tạo và chia cho người nhận ngay, người nhận được báo; không xoá được, chỉ chuyển sang chặng Mất.",
+           resource="leadflow", title="Nạp lead", importable=True, agent="deny", apps=True)   # app nguồn lead (0140) — trợ lý thì không
 async def intake(ctx: Ctx, inp: Intake) -> dict[str, Any]:
     """Ai nạp được: người có quyền chia lead phạm vi đội trở lên (team digital / marketing được cấp, trưởng nhóm, quản lý).
     Khách cũ đã có người chăm ⇒ giữ người đó (một SĐT = một khách), kể cả khi người nạp chỉ định khác. Khách đã có lead [[offering|l]] này quay
@@ -556,7 +558,9 @@ async def _drain(ctx: Ctx) -> int:
     return n
 
 
-@m.command("drain", resource="leadflow", action="manage", title="Chia lại hàng chờ", agent="deny")
+@m.command("drain",
+           purpose="Chia lại các lead đang chờ trong hàng chờ cho những người đủ điều kiện nhận.", irreversible=True, effect="Chia ngay các lead đang chờ cho người nhận theo luật và báo từng người; muốn đổi phải chuyển tay từng lead.",
+           resource="leadflow", action="manage", title="Chia lại hàng chờ", agent="deny")
 async def drain(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     return {"assigned": await _drain(ctx)}
 
@@ -659,7 +663,9 @@ class LeadRef(Input):
     lead_id: UUID = field("Lead", hidden=True)
 
 
-@m.command("accept", resource="leadflow", title="Nhận lead", agent="propose", risk="low")
+@m.command("accept",
+           subject=("crm.lead", "lead_id"), purpose="Người được chia xác nhận nhận lead, để hạn gọi lần đầu bắt đầu tính và lead không bị thu hồi.", irreversible=True, effect="Lead thành của bạn và hạn gọi lần đầu bắt đầu chạy; không trả lại được, chỉ chuyển tay qua trưởng nhóm.",
+           resource="leadflow", title="Nhận lead", agent="propose", risk="low")
 async def accept(ctx: Ctx, inp: LeadRef) -> dict[str, Any]:
     """Người được chia bấm NHẬN (chỉ khi luật có bước nhận): chính người đang giữ, lead còn chờ nhận. Hạn gọi lần đầu giữ nguyên như lúc chia.
     Trợ lý chỉ soạn thẻ — bấm nhận là cam kết của chính người đó."""
@@ -683,7 +689,9 @@ class ReassignIn(Input):
     reason: str = field("Lý do", "", max_length=300, example="Người giữ đang nghỉ, khách cần gọi ngay")
 
 
-@m.command("reassign", resource="leadflow", title="Chuyển lead đang chờ gọi sang người khác", agent="propose", risk="authority", min_scope="team")
+@m.command("reassign",
+           subject=("crm.lead", "lead_id"), purpose="Chuyển lead chưa liên hệ sang người khác khi người giữ không kịp gọi, để khách không bị bỏ chờ.", irreversible=True, effect="Lead sang người mới với hạn gọi tính lại từ đầu, người giữ cũ được báo ngay; muốn trả lại phải chuyển tay lần nữa.",
+           resource="leadflow", title="Chuyển lead đang chờ gọi sang người khác", agent="propose", risk="authority", min_scope="team")
 async def reassign(ctx: Ctx, inp: ReassignIn) -> dict[str, Any]:
     """Trưởng nhóm / quản lý chuyển một lead CHƯA được liên hệ (đang chờ nhận / chờ gọi) sang người khác — người mới có đủ hạn từ đầu, người cũ
     được báo, lịch sử ghi rõ ai chuyển vì sao. Trợ lý được ĐỀ XUẤT (gợi ý buổi sáng, câu hỏi "lead nào sắp trễ") — người quản lý bấm mới chuyển.

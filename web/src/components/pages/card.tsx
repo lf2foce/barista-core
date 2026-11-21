@@ -1,5 +1,6 @@
 "use client";
 
+import { BriefView } from "@/components/desk/brief";
 import { Check, MessagesSquare, Sparkles } from "lucide-react";
 import type { ChartData } from "@/lib/chart";
 import type { Block } from "@/lib/types";
@@ -283,6 +284,8 @@ export function CardView({ page: raw, onClose, onChanged, head }: { page: CardPa
             return <Section key={i} title={b.title}><StepStrip steps={b.steps} /></Section>;
           case "stages":
             return <Section key={i} title={b.title}><StageList stages={b.stages} /></Section>;
+          case "brief":
+            return <BriefView key={i} brief={b} className="rounded-xl bg-surface2 px-3 py-2.5" />;
           case "callout":
             return <Callout key={i} {...b} onAction={(a) => desk.openForm(a, { onDone: onChanged })} />;
           case "finding":

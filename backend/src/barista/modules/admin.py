@@ -210,18 +210,22 @@ async def _invite_access(ctx: Ctx, inp: Invite) -> str | None:
     return f"{inp.name or inp.email} <{inp.email.lower()}>: " + "; ".join(out) if out else None
 
 
-@m.command("invite_user", resource="core.admin", action="manage", title="Thêm người dùng", importable=True, sensitive=_invite_access)
+@m.command("invite_user",
+           purpose="Cho người mới vào công ty với đúng vai trò và đội để bắt đầu làm việc.", reversible="Khoá tài khoản ở Sửa người dùng (bỏ chọn Đang làm việc)",
+           resource="core.admin", action="manage", title="Thêm người dùng", importable=True, sensitive=_invite_access)
 async def invite_user(ctx: Ctx, inp: Invite) -> dict[str, Any]:
     if not await ctx.val("SELECT 1 FROM core.roles WHERE key = %s", (inp.role,)):
         raise NotFound(f"Không có vai trò {inp.role}")
     uid = await ctx.val("SELECT core.ensure_user(%s, %s)", (inp.email, inp.name))
+    before = await ctx.val("SELECT role FROM core.memberships WHERE user_id = %s", (uid,))
     await ctx.exec("UPDATE core.users SET name = %s WHERE id = %s AND name = ''", (inp.name, uid))
     await ctx.exec(
         """INSERT INTO core.memberships (user_id, role) VALUES (%s, %s)
            ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role, active = true""", (uid, inp.role))
     if tid := await _team_id(ctx, inp.team_code):
         await _set_home_team(ctx, uid, tid, inp.is_lead)
-    return {"user_id": uid, "email": inp.email.lower()}
+    return {"user_id": uid, "email": inp.email.lower(), "subject": await _person(ctx, uid, inp.email),
+            "changes": [{"label": "Vai trò", "before": await _role_ref(ctx, before) if before else "Chưa có trong công ty", "after": await _role_ref(ctx, inp.role)}]}
 
 
 async def _set_home_team(ctx: Ctx, uid: UUID, tid: UUID, lead: bool) -> None:
@@ -242,6 +246,12 @@ class TeamMemberRef(Input):
 
 class AddTeam(TeamMemberRef):
     is_lead: bool = field("Trưởng đội này", False)
+
+
+async def _person(ctx: Ctx, uid: UUID, email: str) -> dict[str, Any]:
+    """Hồ sơ người cho thẻ duyệt (ADR 0253): tên + email, chưa có màn riêng để mở."""
+    name = await ctx.val("SELECT name FROM core.users WHERE id = %s", (uid,))
+    return {"label": f"{name} · {email.lower()}" if name else email.lower(), "open": None}
 
 
 async def _member_id(ctx: Ctx, email: str) -> UUID:
@@ -271,7 +281,9 @@ async def _remove_team_access(ctx: Ctx, inp: TeamMemberRef) -> str | None:
     return f"{row['name'] or inp.email}: bỏ khỏi đội {inp.team_code} (đang là trưởng)" if row and row["is_lead"] else None
 
 
-@m.command("add_team", resource="core.admin", action="manage", title="Thêm vào đội / cơ sở khác", agent="propose", sensitive=_add_team_access)
+@m.command("add_team",
+           purpose="Một người làm ở nhiều đội / cơ sở cần thấy việc chung và nhận thông báo của đội đó.", reversible="Bấm Bỏ khỏi đội / cơ sở",
+           resource="core.admin", action="manage", title="Thêm vào đội / cơ sở khác", agent="propose", sensitive=_add_team_access)
 async def add_team(ctx: Ctx, inp: AddTeam) -> dict[str, Any]:
     """Một người làm ở nhiều đội (vd một người làm ở hai chi nhánh, quản lý vùng): thấy việc chung và nhận thông báo của đội đó; là trưởng thì có phạm vi "team" trên đội đó.
     Hồ sơ người đó tạo vẫn mặc định thuộc đội chính. Chưa có đội nào thì đây thành đội chính."""
@@ -283,10 +295,13 @@ async def add_team(ctx: Ctx, inp: AddTeam) -> dict[str, Any]:
     await ctx.exec("""INSERT INTO core.team_members (user_id, team_id, is_lead, is_home) VALUES (%s, %s, %s, %s)
                       ON CONFLICT (tenant_id, user_id, team_id) DO UPDATE SET is_lead = EXCLUDED.is_lead""", (uid, tid, inp.is_lead, home))
     ctx.emit("admin.team_members_changed", team_id=tid)
-    return {"user_id": uid, "team_id": tid, "is_home": home}
+    return {"user_id": uid, "team_id": tid, "is_home": home, "subject": await _person(ctx, uid, inp.email),
+            "changes": [{"label": "Đội / cơ sở", "before": "", "after": inp.team_code + (" (trưởng)" if inp.is_lead else "")}]}
 
 
-@m.command("remove_team", resource="core.admin", action="manage", title="Bỏ khỏi đội / cơ sở", agent="propose", sensitive=_remove_team_access)
+@m.command("remove_team",
+           purpose="Người này không còn làm ở đội / cơ sở đó — thu hẹp việc và thông báo họ thấy.", reversible="Thêm lại bằng Thêm vào đội / cơ sở khác",
+           resource="core.admin", action="manage", title="Bỏ khỏi đội / cơ sở", agent="propose", sensitive=_remove_team_access)
 async def remove_team(ctx: Ctx, inp: TeamMemberRef) -> dict[str, Any]:
     uid = await _member_id(ctx, inp.email)
     tid = await _team_id(ctx, inp.team_code)
@@ -297,7 +312,8 @@ async def remove_team(ctx: Ctx, inp: TeamMemberRef) -> dict[str, Any]:
         raise Invalid("Đây là đội chính — đổi đội chính sang đội khác trước")
     await ctx.exec("DELETE FROM core.team_members WHERE user_id = %s AND team_id = %s", (uid, tid))
     ctx.emit("admin.team_members_changed", team_id=tid)
-    return {"user_id": uid, "team_id": tid}
+    return {"user_id": uid, "team_id": tid, "subject": await _person(ctx, uid, inp.email),
+            "changes": [{"label": "Đội / cơ sở", "before": inp.team_code, "after": "Đã bỏ"}]}
 
 
 class UpdateMember(Input):
@@ -333,13 +349,16 @@ async def _member_access(ctx: Ctx, inp: UpdateMember) -> str | None:
     return _who(m, inp.email) + "; ".join(out) if out else None
 
 
-@m.command("update_member", resource="core.admin", action="manage", title="Sửa người dùng", sensitive=_member_access)
+@m.command("update_member",
+           purpose="Đổi vai trò, đội hoặc trạng thái làm việc của một người cho khớp công việc hiện tại.", reversible="Chạy lại lệnh với vai trò, đội, trạng thái cũ",
+           resource="core.admin", action="manage", title="Sửa người dùng", sensitive=_member_access)
 async def update_member(ctx: Ctx, inp: UpdateMember) -> dict[str, Any]:
     uid = await ctx.val(
         "SELECT u.id FROM core.users u JOIN core.memberships mb ON mb.user_id = u.id AND mb.tenant_id = core.tenant()"
         " WHERE u.email = %s", (inp.email.lower(),))
     if uid is None:
         raise NotFound(f"Không có thành viên {inp.email}")
+    was = await ctx.one("SELECT role, active, owner FROM core.memberships WHERE user_id = %s", (uid,))
     if inp.role is not None:
         if not await ctx.val("SELECT 1 FROM core.roles WHERE key = %s", (inp.role,)):
             raise NotFound(f"Không có vai trò {inp.role}")
@@ -362,7 +381,14 @@ async def update_member(ctx: Ctx, inp: UpdateMember) -> dict[str, Any]:
         await ctx.exec("UPDATE core.memberships SET owner = %s WHERE user_id = %s", (inp.owner, uid))
     await _ensure_admin_remains(ctx)
     await _ensure_owner_remains(ctx)
-    return {"user_id": uid}
+    changes = []
+    if was and inp.role is not None and inp.role != was["role"]:
+        changes.append({"label": "Vai trò", "before": await _role_ref(ctx, was["role"]), "after": await _role_ref(ctx, inp.role)})
+    if was and inp.active is not None and inp.active != was["active"]:
+        changes.append({"label": "Trạng thái", "before": "Đang làm việc" if was["active"] else "Đã khoá", "after": "Đang làm việc" if inp.active else "Đã khoá"})
+    if was and inp.owner is not None and inp.owner != bool(was["owner"]):
+        changes.append({"label": "Chủ tài khoản", "before": "Có" if was["owner"] else "Không", "after": "Có" if inp.owner else "Không"})
+    return {"user_id": uid, "subject": await _person(ctx, uid, inp.email), "changes": changes}
 
 
 @m.on("admin.member_deactivated")
@@ -420,7 +446,9 @@ class UnlinkGoogle(Input):
     email: str = field("Email", hidden=True)
 
 
-@m.command("unlink_google", resource="core.admin", action="manage", title="Gỡ liên kết Google & đăng xuất mọi thiết bị", agent="deny")
+@m.command("unlink_google",
+           purpose="Email công ty được cấp lại cho người khác hoặc nhân viên đổi tài khoản Google — gỡ liên kết cũ.", irreversible=True, effect="Gỡ liên kết Google và đăng xuất người này khỏi mọi thiết bị ngay; họ phải đăng nhập lại.",
+           resource="core.admin", action="manage", title="Gỡ liên kết Google & đăng xuất mọi thiết bị", agent="deny")
 async def unlink_google(ctx: Ctx, inp: UnlinkGoogle) -> dict[str, Any]:
     """Dùng khi email công ty được cấp lại cho người mới, hoặc nhân viên đổi tài khoản Google: gỡ liên kết cũ (lần đăng nhập Google tới
     gắn lại theo email đã mời) và thu hồi mọi phiên đang mở. RLS: chỉ thành viên công ty mình."""
@@ -451,7 +479,9 @@ async def _teams_existing(ctx: Ctx, keys: list[tuple[str, ...]]) -> dict[tuple[s
     return {(r["code"].lower(),): r for r in rows}
 
 
-@m.command("upsert_team", resource="core.admin", action="manage", title="Thêm / sửa đội", importable=True, sensitive=_team_access,
+@m.command("upsert_team",
+           purpose="Lập hoặc sửa đội / cơ sở để phân việc và phạm vi dữ liệu theo đúng cơ cấu công ty.", reversible="Chạy lại lệnh với tên, loại, đội cha cũ",
+           resource="core.admin", action="manage", title="Thêm / sửa đội", importable=True, sensitive=_team_access,
            import_key=ImportKey(("code",), _teams_existing, update="self"))
 async def upsert_team(ctx: Ctx, inp: UpsertTeam) -> dict[str, Any]:
     parent = await _team_id(ctx, inp.parent_code)
@@ -472,7 +502,8 @@ async def upsert_team(ctx: Ctx, inp: UpsertTeam) -> dict[str, Any]:
     # 0128: gói khác phản ứng theo cài đặt của công ty (kệ tài liệu của đội, phòng của đội) — quản trị không biết gói nào nghe
     ctx.emit("admin.team_saved", team_id=tid, code=code, name=inp.name, created=before is None,
              previous_name=before["name"] if before else None)
-    return {"team_id": tid, "code": code}
+    return {"team_id": tid, "code": code, "subject": {"label": f"{inp.name} ({code})", "open": None},
+            "changes": [{"label": "Tên đội", "before": before["name"], "after": inp.name}] if before and before["name"] != inp.name else []}
 
 
 # ── Pháp nhân (0099): chiều trên bút toán và chứng từ tiền — không phải công ty riêng ──
@@ -507,7 +538,9 @@ class UpsertEntity(Input):
     active: bool = field("Đang dùng", True, group="Thêm chi tiết", help="Ngừng ⇒ không nhận chứng từ mới; sổ cũ giữ nguyên")
 
 
-@m.command("upsert_entity", resource="core.admin", action="manage", title="Thêm / sửa pháp nhân", importable=True, category="setup")
+@m.command("upsert_entity",
+           purpose="Khai pháp nhân (tên, mã số thuế, địa chỉ) để chứng từ và bút toán tiền ghi đúng đơn vị.", reversible="Chạy lại lệnh với thông tin cũ (pháp nhân đã ghi sổ chỉ ngừng dùng, không xoá)",
+           resource="core.admin", action="manage", title="Thêm / sửa pháp nhân", importable=True, category="setup")
 async def upsert_entity(ctx: Ctx, inp: UpsertEntity) -> dict[str, Any]:
     code = inp.code.strip().upper()
     if not code:   # 0225: không bắt người dùng nghĩ ra mã — máy đặt theo tên, không trùng pháp nhân có sẵn
@@ -516,6 +549,7 @@ async def upsert_entity(ctx: Ctx, inp: UpsertEntity) -> dict[str, Any]:
         raise Invalid("Mã pháp nhân: chữ in hoa / số / gạch, tối đa 20 ký tự")
     if inp.is_default and not inp.active:
         raise Invalid("Pháp nhân mặc định phải đang dùng")
+    was = await ctx.one("SELECT name, tax_code, address FROM core.legal_entities WHERE code = %s", (code,))
     if inp.is_default:   # chỉ một mặc định — đổi mặc định là quyết định có nhật ký (lệnh này), không phải sửa tay
         await ctx.exec("UPDATE core.legal_entities SET is_default = false WHERE is_default AND code <> %s", (code,))
     eid = await ctx.val(
@@ -525,7 +559,10 @@ async def upsert_entity(ctx: Ctx, inp: UpsertEntity) -> dict[str, Any]:
         (code, inp.name.strip(), inp.tax_code.strip(), inp.address.strip(), inp.is_default, inp.active))
     if not await ctx.val("SELECT 1 FROM core.legal_entities WHERE is_default"):
         raise Invalid("Công ty phải có một pháp nhân mặc định")
-    return {"entity_id": eid, "summary": f"Pháp nhân {code} — {inp.name.strip()}"}
+    changes = [{"label": label, "before": was[key], "after": now} for label, key, now in
+               (("Tên pháp nhân", "name", inp.name.strip()), ("Mã số thuế", "tax_code", inp.tax_code.strip()), ("Địa chỉ", "address", inp.address.strip()))
+               if was and was[key] != now]
+    return {"entity_id": eid, "summary": f"Pháp nhân {code} — {inp.name.strip()}", "subject": {"label": f"{inp.name.strip()} ({code})", "open": None}, "changes": changes}
 
 
 # ── Vai trò & quyền ──
@@ -582,9 +619,12 @@ async def _role_access(ctx: Ctx, inp: UpsertRole) -> str | None:
     return "; ".join(out) or None
 
 
-@m.command("upsert_role", resource="core.admin", action="manage", title="Thêm / sửa vai trò", sensitive=_role_access)
+@m.command("upsert_role",
+           purpose="Lập hoặc đổi tên vai trò để gán quyền theo đúng chức danh trong công ty.", reversible="Chạy lại lệnh với tên cũ (quyền đã chép sửa ở Đặt quyền)",
+           resource="core.admin", action="manage", title="Thêm / sửa vai trò", sensitive=_role_access)
 async def upsert_role(ctx: Ctx, inp: UpsertRole) -> dict[str, Any]:
     key = await _role_key(ctx, inp)
+    was = await ctx.val("SELECT label FROM core.roles WHERE key = %s", (key,))
     await ctx.exec("INSERT INTO core.roles (key, label) VALUES (%s, %s) ON CONFLICT (tenant_id, key) DO UPDATE SET label = EXCLUDED.label",
                    (key, inp.label))
     if inp.entry is not None:
@@ -594,7 +634,8 @@ async def upsert_role(ctx: Ctx, inp: UpsertRole) -> dict[str, Any]:
             """INSERT INTO core.grants (role, resource, scope, actions)
                SELECT %s, resource, scope, actions FROM core.grants WHERE role = %s
                ON CONFLICT (tenant_id, role, resource) DO NOTHING""", (key, inp.copy_from))
-    return {"role": key}
+    return {"role": key, "subject": {"label": f"{inp.label} [{key}]", "open": None},
+            "changes": [{"label": "Tên vai trò", "before": was, "after": inp.label}] if was and was != inp.label else []}
 
 
 class SetGrant(Input):
@@ -634,10 +675,20 @@ async def _apply_grant(ctx: Ctx, inp: SetGrant) -> None:
     await _ensure_admin_remains(ctx)
 
 
-@m.command("set_grant", resource="core.admin", action="manage", title="Đặt quyền", sensitive=_grant_access)
+@m.command("set_grant",
+           purpose="Cấp hoặc thu quyền của một vai trò trên một loại dữ liệu để đúng người làm đúng việc.", reversible="Chạy lại lệnh với phạm vi và hành động cũ",
+           resource="core.admin", action="manage", title="Đặt quyền", sensitive=_grant_access)
 async def set_grant(ctx: Ctx, inp: SetGrant) -> dict[str, Any]:
+    cur = await ctx.one("SELECT scope, actions FROM core.grants WHERE role = %s AND resource = %s", (inp.role, inp.resource))
     await _apply_grant(ctx, inp)
-    return {"role": inp.role, "resource": inp.resource}
+
+    def show(scope: str, acts: list[str]) -> str:
+        return f"{SCOPE_LABEL[scope]} · " + ", ".join(ACTION_LABEL[a] for a in ACTIONS if a in acts)
+
+    return {"role": inp.role, "resource": inp.resource,
+            "subject": {"label": f"Vai {await _role_ref(ctx, inp.role)} · {registry.RESOURCES.get(inp.resource, inp.resource)}", "open": None},
+            "changes": [{"label": "Quyền", "before": show(cur["scope"], cur["actions"]) if cur else "Không có",
+                         "after": show(inp.scope, inp.actions) if inp.actions else "Không có"}]}
 
 
 # ── Ai thấy thông tin gì (ADR 0239 phần 3): nhóm thông tin nhạy cảm gói khai (``Pack(info_groups=…)``) × vai — đọc / ghi CHÍNH ma trận quyền ──
@@ -726,7 +777,9 @@ async def _info_access_change(ctx: Ctx, inp: SetInfoAccess) -> str | None:
     return await _grant_access(ctx, await _info_grant(ctx, inp))
 
 
-@m.command("set_info_access", resource="core.admin", action="manage", title="Đổi ai thấy thông tin", sensitive=_info_access_change, agent="deny",
+@m.command("set_info_access",
+           purpose="Quyết định vai nào được xem nhóm thông tin nhạy cảm và ở phạm vi nào.", reversible="Chạy lại lệnh với mức xem cũ",
+           resource="core.admin", action="manage", title="Đổi ai thấy thông tin", sensitive=_info_access_change, agent="deny",
            category="setup")
 async def set_info_access(ctx: Ctx, inp: SetInfoAccess) -> dict[str, Any]:
     """Một ô của màn "Ai thấy thông tin gì" = một ô ma trận quyền (``_apply_grant`` — cùng kiểm, cùng chuỗi duyệt đổi quyền như ``set_grant``)."""
@@ -969,18 +1022,23 @@ async def _chain_access(ctx: Ctx, inp: SetChain) -> str | None:
     return f"chuỗi “{inp.label}” ({await _chain_key(ctx, inp)}): {_chain_text(inp)}"
 
 
-@m.command("set_chain", resource="core.admin", action="manage", title="Thêm / sửa chuỗi duyệt", sensitive=_chain_access)
+@m.command("set_chain",
+           purpose="Quy định ai duyệt, theo thứ tự nào, cho các việc nhạy cảm như tiền và quyền.", reversible="Chạy lại lệnh với các bước duyệt cũ",
+           resource="core.admin", action="manage", title="Thêm / sửa chuỗi duyệt", sensitive=_chain_access)
 async def set_chain(ctx: Ctx, inp: SetChain) -> dict[str, Any]:
     steps = parse_steps(_chain_text(inp))
     key = await _chain_key(ctx, inp)
     for s in steps:
         if s["kind"] == "role" and not await ctx.val("SELECT 1 FROM core.roles WHERE key = %s", (s["role"],)):
             raise NotFound(f"Không có vai trò {s['role']}")
+    was = await ctx.val("SELECT steps FROM core.approval_chains WHERE key = %s", (key,))
     await ctx.exec(
         """INSERT INTO core.approval_chains (key, label, steps) VALUES (%s, %s, %s)
            ON CONFLICT (tenant_id, key) DO UPDATE SET label = EXCLUDED.label, steps = EXCLUDED.steps""",
         (key, inp.label, Jsonb(steps)))
-    return {"key": key, "steps": steps}
+    roles = {r["key"]: r["label"] for r in await ctx.all("SELECT key, label FROM core.roles")}
+    return {"key": key, "steps": steps, "subject": {"label": f"Chuỗi duyệt “{inp.label}” ({key})", "open": None},
+            "changes": [{"label": "Các bước duyệt", "before": format_steps(was, roles) if was else "Chuỗi mới", "after": format_steps(steps, roles)}]}
 
 
 class SetRule(Input):
@@ -1000,18 +1058,22 @@ def _ruleable(op: registry.Op | None) -> bool:
     return op is not None and op.kind == "command" and not op.internal and op.module != "core"
 
 
-@m.command("set_rule", resource="core.admin", action="manage", title="Đặt luật duyệt cho lệnh", sensitive=_rule_access)
+@m.command("set_rule",
+           purpose="Quyết định lệnh nào luôn phải có người duyệt trước khi chạy.", reversible="Chạy lại lệnh với chuỗi duyệt cũ (hoặc để trống chuỗi để bỏ luật)",
+           resource="core.admin", action="manage", title="Đặt luật duyệt cho lệnh", sensitive=_rule_access)
 async def set_rule(ctx: Ctx, inp: SetRule) -> dict[str, Any]:
     """Luật của chính lệnh này mặc định qua chủ tài khoản (0029) ⇒ bỏ bảo vệ của lệnh quản trị cũng phải duyệt."""
     if not _ruleable(registry.get(inp.command)):
         raise Invalid("Chỉ đặt luật duyệt cho lệnh nghiệp vụ / quản trị")
+    was = await ctx.val("SELECT chain FROM core.approval_rules WHERE command = %s", (inp.command,))
     if inp.chain:
         await ctx.exec(
             """INSERT INTO core.approval_rules (command, chain) VALUES (%s, %s)
                ON CONFLICT (tenant_id, command) DO UPDATE SET chain = EXCLUDED.chain""", (inp.command, inp.chain))
     else:
         await ctx.exec("DELETE FROM core.approval_rules WHERE command = %s", (inp.command,))
-    return {"command": inp.command, "chain": inp.chain or None}
+    return {"command": inp.command, "chain": inp.chain or None, "subject": {"label": f"Luật duyệt của “{registry.OPS[inp.command].title}”", "open": None},
+            "changes": [{"label": "Chuỗi duyệt", "before": was or "Chạy thẳng, không cần duyệt", "after": inp.chain or "Chạy thẳng, không cần duyệt"}]}
 
 
 # ── Nhật ký & sự kiện ──
@@ -1136,7 +1198,9 @@ class Retry(Input):
     delivery_id: int = field("Mã", hidden=True)
 
 
-@m.command("retry_delivery", resource="core.admin", action="manage", title="Chạy lại sự kiện")
+@m.command("retry_delivery",
+           purpose="Một phản ứng tự động của hệ thống bị lỗi — chạy lại để nghiệp vụ đi tiếp.", irreversible=True, effect="Chạy lại phản ứng tự động ngay. Nếu phản ứng gửi tin hoặc ghi sổ thì kết quả đó không thu lại được.",
+           resource="core.admin", action="manage", title="Chạy lại sự kiện")
 async def retry_delivery(ctx: Ctx, inp: Retry) -> dict[str, Any]:
     n = await ctx.exec("UPDATE core.deliveries SET status = 'pending', next_at = now() WHERE id = %s AND status <> 'done'",
                        (inp.delivery_id,))
@@ -1150,7 +1214,9 @@ class Dismiss(Input):
     reason: str = field("Lý do bỏ qua", kind="textarea", max_length=500, example="Đã lập hoá đơn tay ngày 02/11; phản ứng tự động không cần nữa")
 
 
-@m.command("dismiss_delivery", resource="core.admin", action="manage", title="Bỏ qua sự kiện lỗi (có lý do)", agent="deny")
+@m.command("dismiss_delivery",
+           purpose="Phản ứng lỗi mà nghiệp vụ đã xử lý cách khác — bỏ qua có lý do để không chặn việc tắt gói.", reversible="Bấm Chạy lại sự kiện (sự kiện bỏ qua vẫn chạy lại được)",
+           resource="core.admin", action="manage", title="Bỏ qua sự kiện lỗi (có lý do)", agent="deny")
 async def dismiss_delivery(ctx: Ctx, inp: Dismiss) -> dict[str, Any]:
     """Phản ứng hết lượt thử / đang lỗi mà nghiệp vụ đã xử lý cách khác ⇒ quản trị BỎ QUA có lý do (ghi ai, lúc nào). Không phải "đã xong": trạng
     thái riêng để truy lại; từ đây nó không còn chặn tắt gói."""
@@ -1309,19 +1375,24 @@ class SetAgentGroup(Input):
     mode: str = field("Trợ lý", "", options={"": "Theo quyền người hỏi", "propose": "Chỉ đề xuất", "deny": "Tắt"})
 
 
-@m.command("set_agent_group", resource="core.admin", action="manage", title="Bật / tắt nhóm công cụ của trợ lý", agent="deny")
+@m.command("set_agent_group",
+           purpose="Quyết định trợ lý được dùng cả nhóm công cụ nào: theo quyền người hỏi, chỉ đề xuất hay tắt.", reversible="Chọn lại chế độ cũ cho nhóm này",
+           resource="core.admin", action="manage", title="Bật / tắt nhóm công cụ của trợ lý", agent="deny")
 async def set_agent_group(ctx: Ctx, inp: SetAgentGroup) -> dict[str, Any]:
     key = inp.group.removesuffix(".*")
     if key not in registry.MODULES or not inp.group.endswith(".*"):
         raise NotFound(f"Không có nhóm {inp.group}")
     if inp.mode and inp.mode not in ("propose", "deny"):
         raise Invalid("Chế độ không hợp lệ")
+    was = await ctx.val("SELECT mode FROM core.agent_policies WHERE command = %s", (inp.group,)) or ""
     if not inp.mode:
         await ctx.exec("DELETE FROM core.agent_policies WHERE command = %s", (inp.group,))
     else:
         await ctx.exec("""INSERT INTO core.agent_policies (command, mode) VALUES (%s, %s)
                           ON CONFLICT (tenant_id, command) DO UPDATE SET mode = EXCLUDED.mode""", (inp.group, inp.mode))
-    return {"group": inp.group, "mode": inp.mode or "on",
+    mode_text = {"": "Theo quyền người hỏi", "propose": "Chỉ đề xuất", "deny": "Tắt"}
+    return {"group": inp.group, "mode": inp.mode or "on", "subject": {"label": f"Nhóm công cụ {registry.MODULES[key]}", "open": None},
+            "changes": [{"label": "Trợ lý", "before": mode_text.get(was, was), "after": mode_text[inp.mode]}] if was != inp.mode else [],
             "summary": f"Trợ lý — nhóm {registry.MODULES[key]}: " + {"": "theo quyền người hỏi", "propose": "chỉ đề xuất", "deny": "tắt"}[inp.mode]}
 
 
@@ -1459,16 +1530,21 @@ async def _policy_access(ctx: Ctx, inp: SetAgentPolicy) -> str | None:
     return f"NỚI trợ lý TỰ LÀM “{op.title}” ({cap})"
 
 
-@m.command("set_agent_policy", resource="core.admin", action="manage", title="Đặt quyền cho trợ lý", agent="deny", sensitive=_policy_access)
+@m.command("set_agent_policy",
+           purpose="Siết hoặc nới quyền của trợ lý với một thao tác (đề xuất, tự làm, tắt) theo độ tin cậy công ty muốn.", reversible="Đặt lại chế độ cũ (siết bất kỳ lúc nào; nới lại cần chủ tài khoản duyệt)",
+           resource="core.admin", action="manage", title="Đặt quyền cho trợ lý", agent="deny", sensitive=_policy_access)
 async def set_agent_policy(ctx: Ctx, inp: SetAgentPolicy) -> dict[str, Any]:
     """Siết: bất kỳ lúc nào. NỚI lên "Tự làm" (0143): chỉ lệnh khai ``promotable``, thành tích đề xuất đủ ngưỡng công ty, bắt buộc trần số lần / ngày
     (và trần tiền nếu lệnh có ô tiền); căn cứ (thành tích lúc đặt) lưu kèm; qua chủ tài khoản duyệt."""
     op = registry.get(inp.command)
     if op is None or op.internal:
         raise NotFound(f"Không có thao tác {inp.command}")
+    was = await ctx.val("SELECT mode FROM core.agent_policies WHERE command = %s", (inp.command,)) or op.agent
+    subject = {"label": f"Quyền của trợ lý với “{op.title}”", "open": None}
     if not inp.mode:
         await ctx.exec("DELETE FROM core.agent_policies WHERE command = %s", (inp.command,))
-        return {"command": inp.command, "mode": op.agent, "summary": f"“{op.title}”: trợ lý theo trần — {AGENT_MODE_LABEL[op.agent].lower()}"}
+        return {"command": inp.command, "mode": op.agent, "summary": f"“{op.title}”: trợ lý theo trần — {AGENT_MODE_LABEL[op.agent].lower()}", "subject": subject,
+                "changes": [{"label": "Trợ lý được", "before": AGENT_MODE_LABEL[was], "after": AGENT_MODE_LABEL[op.agent]}] if was != op.agent else []}
     modes = registry.AGENT_MODES
     if inp.mode not in modes:
         raise Invalid("Chế độ không hợp lệ")
@@ -1484,7 +1560,8 @@ async def set_agent_policy(ctx: Ctx, inp: SetAgentPolicy) -> dict[str, Any]:
                    (inp.command, inp.mode, inp.daily_cap if basis else None, inp.money_cap_vnd if basis else None, Jsonb(basis) if basis else None,
                     ctx.p.user_id))
     what = "NỚI — trợ lý tự làm" if basis else f"siết — {AGENT_MODE_LABEL[inp.mode].lower()}"
-    return {"command": inp.command, "mode": inp.mode, "promoted": basis is not None, "summary": f"“{op.title}”: {what}"}
+    return {"command": inp.command, "mode": inp.mode, "promoted": basis is not None, "summary": f"“{op.title}”: {what}", "subject": subject,
+            "changes": [{"label": "Trợ lý được", "before": AGENT_MODE_LABEL[was], "after": AGENT_MODE_LABEL[inp.mode]}] if was != inp.mode else []}
 
 
 class SetAgentTrust(Input):
@@ -1514,10 +1591,13 @@ async def _trust_access(ctx: Ctx, inp: SetAgentTrust) -> str | None:
     return None
 
 
-@m.command("set_agent_trust", resource="core.admin", action="manage", title="Đặt ngưỡng tin cậy của trợ lý", agent="deny", sensitive=_trust_access)
+@m.command("set_agent_trust",
+           purpose="Đặt ngưỡng thành tích để một thao tác của trợ lý được nới lên Tự làm.", reversible="Chạy lại lệnh với ngưỡng cũ",
+           resource="core.admin", action="manage", title="Đặt ngưỡng tin cậy của trợ lý", agent="deny", sensitive=_trust_access)
 async def set_agent_trust(ctx: Ctx, inp: SetAgentTrust) -> dict[str, Any]:
     """Ngưỡng để một lệnh được nới lên Tự làm là DỮ LIỆU công ty (0143): công ty cẩn thận giữ 95%, công ty tin trợ lý đặt 90% — code chỉ kiểm."""
-    if _loosens(await _trust(ctx), inp):
+    cur = await _trust(ctx)
+    if _loosens(cur, inp):
         await _rule_required(ctx, "admin.set_agent_trust")   # nới ngưỡng mà không có luật duyệt ⇒ từ chối (fail closed)
     await ctx.exec("""INSERT INTO core.agent_trust (min_proposals, min_approved_pct, window_days, max_errors_7d, reverse_days, autorun_low_risk,
                                                     autorun_daily_cap, updated_by, updated_at)
@@ -1528,7 +1608,12 @@ async def set_agent_trust(ctx: Ctx, inp: SetAgentTrust) -> dict[str, Any]:
                           updated_by = EXCLUDED.updated_by, updated_at = now()""",
                    (inp.min_proposals, inp.min_approved_pct, inp.window_days, inp.max_errors_7d, inp.reverse_days, inp.autorun_low_risk,
                     inp.autorun_daily_cap, ctx.p.user_id))
-    return {"summary": f"Ngưỡng tin cậy: ≥ {inp.min_proposals} đề xuất, ≥ {inp.min_approved_pct}% duyệt nguyên văn trong {inp.window_days} ngày; "
+    changes = [{"label": lbl, "before": str(cur[k]), "after": str(getattr(inp, k))} for lbl, k in
+               (("Số đề xuất tối thiểu", "min_proposals"), ("Tỉ lệ duyệt nguyên văn tối thiểu (%)", "min_approved_pct"), ("Cửa sổ tính (ngày)", "window_days"),
+                ("Lỗi tối đa trong 7 ngày", "max_errors_7d"), ("Ngày tính là sửa sai", "reverse_days"), ("Tự làm tối đa mỗi ngày", "autorun_daily_cap"))
+               if cur.get(k) != getattr(inp, k)]
+    return {"subject": {"label": "Ngưỡng tin cậy của trợ lý", "open": None}, "changes": changes,
+            "summary": f"Ngưỡng tin cậy: ≥ {inp.min_proposals} đề xuất, ≥ {inp.min_approved_pct}% duyệt nguyên văn trong {inp.window_days} ngày; "
                        f"tự hạ khi ≥ {inp.max_errors_7d} lỗi / 7 ngày; lệnh rủi ro thấp đảo được: "
                        + (f"trợ lý làm ngay (≤ {inp.autorun_daily_cap} lần / ngày / lệnh)" if inp.autorun_low_risk else "chỉ đề xuất")}
 
@@ -1616,7 +1701,9 @@ async def _preset_access(ctx: Ctx, inp: SetAgentPreset) -> str | None:
     return what + " (vẫn có Hoàn tác; tiền, duyệt phiếu, đổi quyền luôn do người)"
 
 
-@m.command("set_agent_preset", resource="core.admin", action="manage", title="Chọn mức tự chủ của trợ lý", agent="deny", sensitive=_preset_access)
+@m.command("set_agent_preset",
+           purpose="Chọn mức tự chủ đặt sẵn cho trợ lý thay vì chỉnh từng lệnh.", reversible="Chọn lại mức trước (chỉnh riêng từng lệnh đã bị mức mới thay thì không tự quay lại)",
+           resource="core.admin", action="manage", title="Chọn mức tự chủ của trợ lý", agent="deny", sensitive=_preset_access)
 async def set_agent_preset(ctx: Ctx, inp: SetAgentPreset) -> dict[str, Any]:
     """Ghi mức đặt sẵn vào dữ liệu đã có: công tắc + trần (``core.agent_trust``) và dòng chính sách (``core.agent_policies``). "Toàn quyền" ghi dòng
     nới từng lệnh ``promotable`` có căn cứ "mức Toàn quyền, chủ tài khoản duyệt" — vòng quét tự hạ vẫn áp như lệnh nới tay."""
@@ -1731,13 +1818,17 @@ class Profile(Input):
                        help="Trợ lý mở đầu bằng câu này; phần nghiệp vụ tự theo các gói đang bật. Không ghi chỉ dẫn cho trợ lý ở đây.")
 
 
-@m.command("set_profile", resource="core.admin", action="manage", title="Giới thiệu công ty cho trợ lý", agent="deny")
+@m.command("set_profile",
+           purpose="Cho trợ lý biết công ty làm gì để trả lời đúng ngành nghề.", reversible="Chạy lại lệnh với câu giới thiệu cũ",
+           resource="core.admin", action="manage", title="Giới thiệu công ty cho trợ lý", agent="deny")
 async def set_profile(ctx: Ctx, inp: Profile) -> dict[str, Any]:
     """Cấu hình RIÊNG của công ty (0056) — không viết cứng ngành trong code. Trợ lý không tự sửa lời dặn của chính nó."""
+    was = await ctx.val("SELECT about FROM core.tenant_profile") or ""
     await ctx.exec("""INSERT INTO core.tenant_profile (about, updated_by) VALUES (%s, core.me())
                       ON CONFLICT (tenant_id) DO UPDATE SET about = EXCLUDED.about, updated_by = EXCLUDED.updated_by, updated_at = now()""",
                    (inp.about.strip(),))
-    return {"summary": "Đã lưu giới thiệu công ty cho trợ lý"}
+    return {"summary": "Đã lưu giới thiệu công ty cho trợ lý", "subject": {"label": "Giới thiệu công ty cho trợ lý", "open": None},
+            "changes": [{"label": "Giới thiệu", "before": was[:200], "after": inp.about.strip()[:200]}] if was != inp.about.strip() else []}
 
 
 # ── Nhận diện thương hiệu công ty (ADR 0249 lát 2): MỘT bộ cho mọi thứ công ty phát ra (ấn phẩm, giấy tờ, Word) — trước nằm riêng ở Soạn với AI ──
@@ -1771,7 +1862,9 @@ class SetBrand(Input):
     logo_filename: str = field("Tên tệp logo", "", hidden=True, max_length=120)
 
 
-@m.command("set_brand", resource="core.admin", action="manage", title="Sửa nhận diện thương hiệu", agent="propose")
+@m.command("set_brand",
+           purpose="Để ấn phẩm, giấy tờ và tệp Word công ty phát ra mang đúng màu, phông, chân trang và logo.", reversible="Chạy lại lệnh với màu, phông, chân trang cũ (logo cũ phải gửi lại)",
+           resource="core.admin", action="manage", title="Sửa nhận diện thương hiệu", agent="propose")
 async def set_brand(ctx: Ctx, inp: SetBrand) -> dict[str, Any]:
     """Màu / phông / chân trang / logo của công ty. Logo mới thay logo cũ (logo cũ được thu hồi ở kho tệp); không gửi logo ⇒ giữ logo đang có."""
     color = inp.primary_color.removeprefix("#").upper()
@@ -1787,7 +1880,8 @@ async def set_brand(ctx: Ctx, inp: SetBrand) -> dict[str, Any]:
             raise Invalid("Logo hỏng (base64)") from None
         stored = await files.put(ctx, raw, inp.logo_filename, "image/png" if inp.logo_filename.lower().endswith(".png") else "image/jpeg", max_bytes=LOGO_MAX)
         logo_id = stored.id
-    old = await ctx.val("SELECT logo_file_id FROM admin.brand")
+    was = await _brand_row(ctx)
+    old = was["logo_file_id"]
     await ctx.exec("""INSERT INTO admin.brand (primary_color, font, footer, logo_file_id, logo_filename, updated_by) VALUES (%s, %s, %s, %s, %s, core.me())
                       ON CONFLICT (tenant_id) DO UPDATE SET primary_color = EXCLUDED.primary_color, font = EXCLUDED.font, footer = EXCLUDED.footer,
                           logo_file_id = coalesce(EXCLUDED.logo_file_id, admin.brand.logo_file_id),
@@ -1796,7 +1890,11 @@ async def set_brand(ctx: Ctx, inp: SetBrand) -> dict[str, Any]:
                    (color, inp.font, inp.footer.strip(), logo_id, inp.logo_filename if logo_id else ""))
     if logo_id and old:
         await files.release(ctx, old)
-    return {"summary": "Đã lưu nhận diện thương hiệu"}
+    changes = [{"label": lbl, "before": str(was[k]), "after": str(now)} for lbl, k, now in
+               (("Màu chính", "primary_color", color), ("Phông", "font", inp.font), ("Chân trang", "footer", inp.footer.strip())) if str(was[k]).removeprefix("#").upper() != str(now).removeprefix("#").upper()]
+    if logo_id:
+        changes.append({"label": "Logo", "before": was["logo_filename"] or "Chưa có", "after": inp.logo_filename})
+    return {"summary": "Đã lưu nhận diện thương hiệu", "subject": {"label": "Nhận diện thương hiệu công ty", "open": None}, "changes": changes}
 
 
 @m.query("brand", resource=None, title="Nhận diện thương hiệu (cho tệp xuất)", internal=True, agent="deny", callers=("compose",),
@@ -1840,7 +1938,9 @@ class SetTerm(Input):
                        "Để trống = bỏ chữ riêng, dùng chữ mặc định.")
 
 
-@m.command("set_term", resource="core.admin", action="manage", title="Đổi từ vựng công ty", agent="deny")
+@m.command("set_term",
+           purpose="Đặt cách gọi riêng của công ty cho một khái niệm để màn hình và trợ lý dùng đúng từ.", reversible="Chạy lại lệnh với từ cũ, hoặc để trống để về chữ mặc định",
+           resource="core.admin", action="manage", title="Đổi từ vựng công ty", agent="deny")
 async def set_term(ctx: Ctx, inp: SetTerm) -> dict[str, Any]:
     """Đặt nhãn riêng của công ty cho một khái niệm (0124). Trợ lý không tự đổi từ vựng — nó định hình chính lời dặn của trợ lý."""
     if inp.term not in vocab.TERMS:
@@ -1848,6 +1948,7 @@ async def set_term(ctx: Ctx, inp: SetTerm) -> dict[str, Any]:
     if bad := vocab.problem(inp.label):
         raise Invalid(bad)
     label = vocab.clean(inp.label)
+    was = await ctx.val("SELECT label FROM core.vocabulary WHERE term = %s", (inp.term,))
     if label:
         await ctx.exec("""INSERT INTO core.vocabulary (term, label, updated_by) VALUES (%s, %s, core.me())
                           ON CONFLICT (tenant_id, term) DO UPDATE SET label = EXCLUDED.label, updated_by = EXCLUDED.updated_by, updated_at = now()""",
@@ -1855,7 +1956,9 @@ async def set_term(ctx: Ctx, inp: SetTerm) -> dict[str, Any]:
     else:
         await ctx.exec("DELETE FROM core.vocabulary WHERE term = %s", (inp.term,))
     ctx.after_commit(_forget_vocab(ctx.p.tenant_id))
-    return {"term": inp.term, "label": label, "summary": f"Từ nay gọi {vocab.TERMS[inp.term].meaning} là “{vocab.label(inp.term, {inp.term: label})}”"}
+    return {"term": inp.term, "label": label, "summary": f"Từ nay gọi {vocab.TERMS[inp.term].meaning} là “{vocab.label(inp.term, {inp.term: label})}”",
+            "subject": {"label": f"Từ vựng: {vocab.TERMS[inp.term].meaning}", "open": None},
+            "changes": [{"label": "Cách gọi", "before": vocab.label(inp.term, {inp.term: was or ""}), "after": vocab.label(inp.term, {inp.term: label})}]}
 
 
 # ── Cài đặt công ty (0128): công tắc bật / tắt do gói khai (Module.setting), giá trị là dữ liệu công ty ──
@@ -1891,7 +1994,9 @@ class SetSetting(Input):
     enabled: bool = field("Bật", True)
 
 
-@m.command("set_setting", resource="core.admin", action="manage", title="Đổi cài đặt công ty", agent="propose", category="setup")
+@m.command("set_setting",
+           purpose="Bật hoặc tắt một công tắc nghiệp vụ của công ty cho khớp cách công ty làm việc.", reversible="Bật / tắt lại công tắc này",
+           resource="core.admin", action="manage", title="Đổi cài đặt công ty", agent="propose", category="setup")
 async def set_setting(ctx: Ctx, inp: SetSetting) -> dict[str, Any]:
     """Bật / tắt một công tắc của gói đang bật (0128). Trợ lý chỉ đề xuất — người quản trị bấm mới đổi."""
     return await _apply_setting(ctx, inp)
@@ -1902,10 +2007,13 @@ async def _apply_setting(ctx: Ctx, inp: SetSetting) -> dict[str, Any]:
     s = company_settings.SETTINGS.get(inp.key)
     if s is None or registry.MODULE_PACK.get(s.module, "base") not in await _enabled(ctx):
         raise NotFound("Không có cài đặt này (hoặc gói của nó chưa bật)")
+    was = await ctx.val("SELECT enabled FROM core.settings WHERE key = %s", (inp.key,))
+    was = s.default if was is None else was
     await ctx.exec("""INSERT INTO core.settings (key, enabled, updated_by) VALUES (%s, %s, core.me())
                       ON CONFLICT (tenant_id, key) DO UPDATE SET enabled = EXCLUDED.enabled, updated_by = EXCLUDED.updated_by, updated_at = now()""",
                    (inp.key, inp.enabled))
-    return {"key": inp.key, "enabled": inp.enabled, "summary": f"{s.label}: {'bật' if inp.enabled else 'tắt'}"}
+    return {"key": inp.key, "enabled": inp.enabled, "summary": f"{s.label}: {'bật' if inp.enabled else 'tắt'}", "subject": {"label": s.label, "open": None},
+            "changes": [{"label": "Công tắc", "before": "Bật" if was else "Tắt", "after": "Bật" if inp.enabled else "Tắt"}]}
 
 
 class OperatorSetting(SetSetting):
@@ -1955,7 +2063,9 @@ class SaveField(Input):
     key: str = field("Mã trường", "", hidden=True)
 
 
-@m.command("save_field", resource="core.admin", action="manage", title="Thêm / sửa trường riêng", agent="propose", category="setup")
+@m.command("save_field",
+           purpose="Hồ sơ cần ghi thêm một thông tin riêng của công ty — thêm, sửa hoặc ngừng dùng trường đó.", reversible="Sửa lại tên, lựa chọn hoặc bật dùng lại trường (giá trị đã nhập vẫn giữ)",
+           resource="core.admin", action="manage", title="Thêm / sửa trường riêng", agent="propose", category="setup")
 async def save_field(ctx: Ctx, inp: SaveField) -> dict[str, Any]:
     """Thêm một trường riêng cho đối tượng (hoặc sửa tên / lựa chọn / ngừng dùng trường đã có — ``key`` của dòng). Mã trường do máy đặt từ tên và không
     đổi sau đó; KIỂU không đổi được sau khi tạo (giá trị đã ghi theo kiểu cũ). Trợ lý chỉ đề xuất — quản trị bấm mới đổi."""
@@ -1967,7 +2077,7 @@ async def save_field(ctx: Ctx, inp: SaveField) -> dict[str, Any]:
         raise Invalid("Kiểu Chọn một cần ít nhất hai lựa chọn")
     if any(len(o) > 80 for o in options) or len(options) > 50:
         raise Invalid("Tối đa 50 lựa chọn, mỗi lựa chọn tối đa 80 ký tự")
-    have = await ctx.all("SELECT key, kind, active FROM core.field_defs WHERE subject = %s", (inp.subject,))
+    have = await ctx.all("SELECT key, kind, active, label FROM core.field_defs WHERE subject = %s", (inp.subject,))
     old = next((r for r in have if r["key"] == inp.key), None) if inp.key else None
     if inp.key and old is None:
         raise NotFound("Không thấy trường này")
@@ -1988,8 +2098,12 @@ async def save_field(ctx: Ctx, inp: SaveField) -> dict[str, Any]:
                           WHERE subject = %s AND key = %s""",
                        (inp.label.strip(), Jsonb(options if inp.kind == "choice" else []), inp.help.strip(), inp.active, inp.subject, key))
     extra_fields.invalidate(ctx.p.tenant_id)
+    changes = [] if old is None else [{"label": lbl, "before": was, "after": now} for lbl, was, now in
+                                       (("Tên trường", old["label"], inp.label.strip()), ("Đang dùng", "Có" if old["active"] else "Không", "Có" if inp.active else "Không"))
+                                       if was != now]
     return {"subject": inp.subject, "key": key, "summary": f"{s.label}: trường “{inp.label.strip()}” ({extra_fields.KINDS[inp.kind]})"
-                                                              + ("" if inp.active else " — ngừng dùng")}
+                                                              + ("" if inp.active else " — ngừng dùng"),
+            "changes": changes}
 
 
 # ── Múi giờ công ty (0169): lưu mốc là timestamptz; ngày / giờ nghiệp vụ và hiển thị theo múi của công ty — dữ liệu, mặc định của bản cài ──
@@ -2019,7 +2133,9 @@ class SetTimezone(Input):
                           help="Tên IANA (Khu vực/Thành phố), vd Asia/Singapore, Europe/London")
 
 
-@m.command("set_timezone", resource="core.admin", action="manage", title="Đổi múi giờ công ty", agent="deny", category="setup")
+@m.command("set_timezone",
+           purpose="Đặt múi giờ của công ty để ngày, giờ, hạn và lịch tính đúng giờ địa phương.", reversible="Chạy lại lệnh với múi giờ cũ (dữ liệu đã lưu không bị sửa)",
+           resource="core.admin", action="manage", title="Đổi múi giờ công ty", agent="deny", category="setup")
 async def set_timezone(ctx: Ctx, inp: SetTimezone) -> dict[str, Any]:
     """Đổi múi giờ của CHÍNH công ty (RLS: một dòng core.tenants của phiên). Có hiệu lực từ lần đọc ghi kế tiếp; không sửa dữ liệu đã lưu (mốc tuyệt đối),
     chỉ đổi cách tính ngày / giờ từ nay. Trợ lý không đổi thay (đổi múi dời mọi hạn / lịch theo giờ đồng hồ — việc của người quản trị)."""
@@ -2031,7 +2147,8 @@ async def set_timezone(ctx: Ctx, inp: SetTimezone) -> dict[str, Any]:
         raise Invalid(f"Múi giờ “{z.key}” chưa có trong cơ sở dữ liệu của bản cài — chọn múi khác hoặc nhờ nhà vận hành cập nhật dữ liệu múi giờ")
     old = await ctx.val("SELECT timezone FROM core.tenants")
     await ctx.exec("UPDATE core.tenants SET timezone = %s WHERE id = core.tenant()", (z.key,))
-    return {"timezone": z.key, "previous": old, "summary": f"Múi giờ công ty: {z.key}" + (f" (trước: {old})" if old != z.key else " (không đổi)")}
+    return {"timezone": z.key, "previous": old, "summary": f"Múi giờ công ty: {z.key}" + (f" (trước: {old})" if old != z.key else " (không đổi)"),
+            "changes": [{"label": "Múi giờ", "before": old, "after": z.key}] if old != z.key else []}
 
 
 # ── Quốc gia công ty (0199): SĐT lưu E.164 ở mọi nơi; HIỂN THỊ theo nước của công ty (số cùng nước dạng nội địa, số nước khác dạng +…) ──
@@ -2066,7 +2183,9 @@ class SetCountry(Input):
     country: str = field("Quốc gia", options_query="admin.country_options", example="VN", help="Chọn nước đặt trụ sở công ty")
 
 
-@m.command("set_country", resource="core.admin", action="manage", title="Đổi quốc gia công ty", agent="deny", category="setup")
+@m.command("set_country",
+           purpose="Đặt quốc gia của công ty để số điện thoại hiện đúng dạng nội địa.", reversible="Chạy lại lệnh với quốc gia cũ (số đã lưu không đổi)",
+           resource="core.admin", action="manage", title="Đổi quốc gia công ty", agent="deny", category="setup")
 async def set_country(ctx: Ctx, inp: SetCountry) -> dict[str, Any]:
     """Đổi quốc gia của CHÍNH công ty (RLS: một dòng core.tenants của phiên). Chỉ đổi cách hiện SĐT; số đã lưu (E.164) không đổi."""
     c = inp.country.strip().upper()
@@ -2074,7 +2193,8 @@ async def set_country(ctx: Ctx, inp: SetCountry) -> dict[str, Any]:
         raise Invalid(f"Mã quốc gia “{inp.country}” không đúng dạng ISO hai chữ cái (vd VN, SG)")
     old = await ctx.val("SELECT country FROM core.tenants")
     await ctx.exec("UPDATE core.tenants SET country = %s WHERE id = core.tenant()", (c,))
-    return {"country": c, "previous": old, "summary": f"Quốc gia công ty: {c}" + (f" (trước: {old})" if old != c else " (không đổi)")}
+    return {"country": c, "previous": old, "summary": f"Quốc gia công ty: {c}" + (f" (trước: {old})" if old != c else " (không đổi)"),
+            "changes": [{"label": "Quốc gia", "before": old, "after": c}] if old != c else []}
 
 
 @m.query("pack_options", resource="core.admin", title="Gói nghiệp vụ")
@@ -2091,7 +2211,9 @@ class SetPack(Input):
     enabled: bool = field("Bật", True)
 
 
-@m.command("set_pack", resource="core.admin", action="manage", title="Bật / tắt gói nghiệp vụ", agent="deny")
+@m.command("set_pack",
+           purpose="Bật hoặc tắt một gói nghiệp vụ cho công ty cho khớp phần việc công ty đang làm.", reversible="Bật / tắt lại gói (dữ liệu giữ nguyên; tắt chỉ được khi không còn việc dở dang)",
+           resource="core.admin", action="manage", title="Bật / tắt gói nghiệp vụ", agent="deny")
 async def set_pack(ctx: Ctx, inp: SetPack) -> dict[str, Any]:
     """Bật: bật KÈM các gói nó dựa vào mà công ty chưa bật (bắc cầu, gói được cần trước), mỗi gói cài phần mặc định còn thiếu của riêng nó, cùng một
     lần ghi; gói nào công ty chưa có quyền dùng (đích hay gói kèm) ⇒ từ chối cả đợt, không bật gì (0157). Tắt: chỉ khi không gói nào đang bật cần nó
@@ -2353,7 +2475,9 @@ async def defaults_drift(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
              "nút cài không ghi đè.")
 
 
-@m.command("install_missing_defaults", resource="core.admin", action="manage", title="Cài phần mặc định còn thiếu", agent="deny")
+@m.command("install_missing_defaults",
+           purpose="Cài phần mặc định còn thiếu (vai, quyền, đội, chuỗi duyệt, mẫu quy trình) của các gói đang bật.", irreversible=True, effect="Thêm mọi phần mặc định còn thiếu của các gói đang bật; chỗ công ty đã đổi giữ nguyên. Phần đã thêm muốn bỏ phải gỡ từng mục.",
+           resource="core.admin", action="manage", title="Cài phần mặc định còn thiếu", agent="deny")
 async def install_missing_defaults(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     """Người bấm (trợ lý không làm thay): ``admin.install_defaults`` cho MỌI gói đang bật — chỉ thêm mục chưa từng cài; quyền mở rộng thẩm quyền của gói
     đã cài vẫn chờ chủ tài khoản; chỗ công ty đã đổi giữ nguyên."""
@@ -2575,7 +2699,9 @@ class RequestPack(Input):
     note: str = field("Ghi chú cho nhà cung cấp", "", max_length=500)
 
 
-@m.command("request_pack", resource="core.admin", action="manage", title="Yêu cầu mở gói", agent="deny")
+@m.command("request_pack",
+           purpose="Xin nhà cung cấp mở một gói mà bản cài chưa có.", irreversible=True, effect="Gửi yêu cầu tới các quản trị và nhà cung cấp ngay; tin đã gửi không thu lại được.",
+           resource="core.admin", action="manage", title="Yêu cầu mở gói", agent="deny")
 async def request_pack(ctx: Ctx, inp: RequestPack) -> dict[str, Any]:
     """Quản trị xin nhà cung cấp mở một gói trong danh mục mà bản cài CHƯA có (0163): chỉ ghi yêu cầu (``core.pack_requests``, không giá, không bật gì),
     báo các quản trị khác của công ty + kênh nhà vận hành. Xin lại cùng gói ⇒ không thêm dòng. Gói đã cài thì không xin được (dùng Bật gói)."""
@@ -2708,7 +2834,9 @@ class FlowKey(Input):
     key: str = field("Mẫu quy trình", hidden=True)
 
 
-@m.command("upgrade_flow", resource="core.admin", action="manage", title="Cập nhật mẫu quy trình lên bản mới của gói", agent="deny")
+@m.command("upgrade_flow",
+           purpose="Mẫu quy trình của gói có bản mới — cập nhật để hồ sơ mới chạy theo bản mới.", irreversible=True, effect="Thêm phiên bản mới của mẫu quy trình; hồ sơ đang mở giữ bản cũ, phiên bản đã thêm không gỡ được.",
+           resource="core.admin", action="manage", title="Cập nhật mẫu quy trình lên bản mới của gói", agent="deny")
 async def upgrade_flow(ctx: Ctx, inp: FlowKey) -> dict[str, Any]:
     """Mẫu quy trình gói vừa có bản mới ⇒ quản trị CHỌN cập nhật: thêm phiên bản mới (hồ sơ đang mở giữ bản cũ — luật phiên bản của flow)."""
     from barista import presets

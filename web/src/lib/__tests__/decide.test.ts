@@ -98,22 +98,3 @@ describe("decide: phần chạy tiếp thành một lượt trả lời trong ch
     expect(stepDone({ n: 1, tool: "x", title: "x", status: "dismissed" })).toBe(true);
   });
 });
-
-import { decidedInTurn } from "../decide";
-
-describe("mở lại cuộc trò chuyện: đề xuất đã quyết", () => {
-  it("lấy từ decided và pending.calls (trừ đang chờ)", () => {
-    expect(
-      decidedInTurn({
-        decided: [{ card_id: "a", status: "ok", message: "Đã xong: A" }, { card_id: "b", status: "dismissed", message: "x" }],
-        pending: { calls: { k1: { card_id: "c", status: "waiting" }, k2: { card_id: "d", status: "pending_approval", message: "Đã gửi phiếu duyệt" } } },
-      }),
-    ).toEqual({ a: "Đã xong: A", b: "Đã bỏ đề xuất", d: "Đã gửi phiếu duyệt" });
-    expect(decidedInTurn({})).toEqual({});
-    expect(decidedInTurn({ decided: "rác", pending: null })).toEqual({});
-  });
-  it("cả gợi ý bên lề (asides) đã quyết", () => {
-    expect(decidedInTurn({ asides: { m1: { card_id: "m1", status: "ok", message: "Đã xong: Ghi nhớ" }, m2: { card_id: "m2", status: "waiting" } } }))
-      .toEqual({ m1: "Đã xong: Ghi nhớ" });
-  });
-});

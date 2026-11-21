@@ -216,7 +216,8 @@ async def import_mappings(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
                          "(bố cục mới ghi đè). Hệ thống chỉ nhớ tiêu đề cột và chữ ô lựa chọn, không nhớ dữ liệu dòng.")
 
 
-@m.command("delete_import_mapping", resource="core.admin", action="manage", title="Quên cách khớp cột đã nhớ", agent="deny", category="setup")
+@m.command("delete_import_mapping", resource="core.admin", action="manage", title="Quên cách khớp cột đã nhớ", agent="deny", category="setup",
+           reversible="Lần nhập sau bấm khớp cột lại một lần là máy nhớ lại")
 async def delete_import_mapping(ctx: Ctx, inp: MappingId) -> dict[str, Any]:
     """Xoá MỘT bố cục đã nhớ — file cùng bố cục lần sau được khớp lại từ đầu (tên cột + nội dung + model). Không đụng dữ liệu đã nhập."""
     if not await ctx.exec("DELETE FROM core.import_mappings WHERE id = %s", (inp.id,)):

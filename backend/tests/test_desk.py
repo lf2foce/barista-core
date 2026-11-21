@@ -226,7 +226,7 @@ def test_a_screen_contributed_twice_is_one_desk_entry() -> None:
 
 async def test_whole_desk_deadline_and_the_rail_count(who: Who, monkeypatch: pytest.MonkeyPatch) -> None:
     """Cả bàn có hạn chót: quá hạn ⇒ mục còn lại "chưa kiểm được", bàn vẫn trả. Số trên nút "Việc" do server đếm: mục có tín hiệu đỏ / vàng
-    + thẻ đề xuất sáng đang mở (đếm bằng một câu đọc — không kích hoạt soạn đề xuất)."""
+    + SỐ VIỆC chờ quyết (đề xuất + phiếu duyệt — ADR 0253; đếm bằng câu đọc — không kích hoạt soạn đề xuất)."""
     import asyncio
 
     sale1 = await who("sale1")
@@ -248,7 +248,7 @@ async def test_whole_desk_deadline_and_the_rail_count(who: Who, monkeypatch: pyt
 
     async def broken_count(p: Principal) -> int:
         raise ConnectionError("thử")
-    monkeypatch.setattr(desk.morning, "open_count", broken_count)
+    monkeypatch.setattr(desk.decisions, "count", broken_count)
     monkeypatch.setattr(desk, "DESK_DEADLINE_S", 12.0)
     monkeypatch.setattr(executor, "query", query)
     page = await desk.desk(sale1)

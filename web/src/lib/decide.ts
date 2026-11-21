@@ -13,6 +13,8 @@ export type DecideOutcome = {
   done: boolean;
   message: string;
   replayed: boolean;
+  /** Phiếu duyệt sinh ra (thẻ thành "Đã gửi duyệt") — mở đúng phiếu này. */
+  approvalId?: string;
 };
 
 export type DecideState = { phase: "first" | "continuing" | "tail"; turn: LiveTurn };
@@ -39,7 +41,7 @@ export function decideStep(s: DecideState, ev: StreamEvent): DecideStep {
         const resuming = ev.resuming === true;
         return {
           state: { ...s, phase: resuming ? "continuing" : "tail" },
-          outcome: { status: ev.status || "ok", done: true, message: ev.message || (ev.status === "dismissed" ? "Đã bỏ đề xuất" : "Đã xong"), replayed: ev.replayed === true },
+          outcome: { status: ev.status || "ok", done: true, message: ev.message || (ev.status === "dismissed" ? "Đã bỏ đề xuất" : "Đã xong"), replayed: ev.replayed === true, ...(ev.approval_id ? { approvalId: ev.approval_id } : {}) },
           startTurn: resuming,
         };
       }
@@ -61,22 +63,3 @@ export function decideStep(s: DecideState, ev: StreamEvent): DecideStep {
 
 /** Luồng hết mà chưa có kết quả nào ⇒ coi như máy chủ không trả lời. */
 export const NO_ANSWER: DecideOutcome = { status: "error", done: false, message: "Máy chủ không trả lời", replayed: false };
-
-/**
- * Mở lại cuộc trò chuyện cũ: đề xuất nào đã được quyết (lượt lưu `decided: [{card_id, status, message}]`, hoặc `pending.calls` có status khác
- * "waiting") ⇒ hiện "Đã xong …" / "Đã bỏ đề xuất" thay vì form chờ — không mời người xác nhận lại thứ đã chạy.
- */
-export function decidedInTurn(turn: { decided?: unknown; pending?: unknown; asides?: unknown }): Record<string, string> {
-  const out: Record<string, string> = {};
-  const take = (c: unknown) => {
-    const o = (c ?? {}) as { card_id?: unknown; status?: unknown; message?: unknown };
-    if (typeof o.card_id !== "string" || typeof o.status !== "string" || o.status === "waiting") return;
-    out[o.card_id] = o.status === "dismissed" ? "Đã bỏ đề xuất" : typeof o.message === "string" && o.message ? o.message : "Đã xong";
-  };
-  if (Array.isArray(turn.decided)) turn.decided.forEach(take);
-  const calls = (turn.pending as { calls?: unknown } | undefined)?.calls;
-  if (calls && typeof calls === "object") Object.values(calls as Record<string, unknown>).forEach(take);
-  // đề xuất bên lề (vd gợi ý ghi nhớ) — lưu theo mã thẻ ở `asides`, không thuộc danh sách chờ
-  if (turn.asides && typeof turn.asides === "object") Object.values(turn.asides as Record<string, unknown>).forEach(take);
-  return out;
-}

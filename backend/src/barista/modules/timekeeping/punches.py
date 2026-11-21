@@ -44,7 +44,9 @@ class Punch(Input):
     note: str = field("Ghi chú", "", max_length=300, example="Gặp khách ở công trình, vào văn phòng sau")
 
 
-@m.command("punch", resource="timekeeping", title="Chấm công", agent="deny", risk="authority")
+@m.command("punch",
+           purpose="Chấm công vào hoặc ra của chính bạn để ghi nhận giờ làm thật.", irreversible=True, effect="Giờ chấm theo giờ máy chủ vào sổ chấm công; sổ chỉ thêm, sai thì xin bổ sung giờ chấm.",
+           resource="timekeeping", title="Chấm công", agent="deny", risk="authority")
 async def punch(ctx: Ctx, inp: Punch) -> dict[str, Any]:
     """Chấm công của CHÍNH người bấm, giờ của máy chủ. Trợ lý không chấm thay (0150 §3 mục 8). Trượt luật ⇒ ghi + gắn cờ, không từ chối."""
     if ctx.p.user_id is None:
@@ -97,7 +99,9 @@ class ImportPunch(Input):
     note: str = field("Ghi chú", "", max_length=300)
 
 
-@m.command("import_punch", resource="timekeeping", action="manage", title="Nhập giờ chấm từ máy chấm / tệp", importable=True, agent="deny",
+@m.command("import_punch",
+           purpose="Nhập giờ chấm từ máy chấm công hoặc tệp để bảng công đủ giờ vào / ra.", irreversible=True, effect="Giờ chấm vào sổ chấm công và tính vào bảng công; sổ chỉ thêm, không xoá được.",
+           resource="timekeeping", action="manage", title="Nhập giờ chấm từ máy chấm / tệp", importable=True, agent="deny",
            risk="authority")
 async def import_punch(ctx: Ctx, inp: ImportPunch) -> dict[str, Any]:
     """Một dòng giờ chấm từ tệp xuất của máy chấm công (nhập cả tệp qua Nhập dữ liệu — đúng lệnh này từng dòng). Cùng người + lúc + vào/ra ⇒ không ghi
@@ -130,7 +134,9 @@ class Review(Input):
     note: str = field("Ghi chú", "", max_length=300, example="Đi gặp khách theo lịch đã báo")
 
 
-@m.command("review_punch", resource="timekeeping", action="manage", title="Xét giờ chấm có cờ", agent="deny", risk="authority")
+@m.command("review_punch",
+           purpose="Nhận hoặc bỏ giờ chấm có cờ để công chỉ tính giờ làm thật.", irreversible=True, effect="Quyết định nhận / bỏ ghi vào sổ và chỉ xét một lần; bỏ thì người lao động được báo ngay, không đổi lại được.",
+           resource="timekeeping", action="manage", title="Xét giờ chấm có cờ", agent="deny", risk="authority")
 async def review_punch(ctx: Ctx, inp: Review) -> dict[str, Any]:
     """Quản lý (của đội — RLS) nhận hoặc bỏ một giờ chấm có cờ. Không xét giờ của chính mình (DB); xét một lần, chỉ thêm."""
     row = await ctx.one("""SELECT p.id,p.user_id,p.at,p.flags,r.id AS reviewed FROM timekeeping.punches p

@@ -850,7 +850,8 @@ class AdjustTask(Input):
 
 
 @m.command("adjust_task", resource="flow", title="Giao lại / dời hạn", promotable=True, risk="low", target="task_id",   # 0143: rủi ro thấp, đảo được
-           undone_by=("flow.adjust_task", "flow.set_task:status=cancelled"))
+           undone_by=("flow.adjust_task", "flow.set_task:status=cancelled"), subject=(TASK_SUBJECT, "task_id"),
+           purpose="Việc cần người khác nhận hoặc cần dời hạn để kịp thực tế — người cũ và người mới đều được báo")
 async def adjust_task(ctx: Ctx, inp: AdjustTask) -> dict[str, Any]:
     """Đổi người làm và / hoặc hạn của một việc — cùng luật như lập kế hoạch: người mới trong phạm vi giao việc của người đổi, hạn không qua,
     không trễ hơn mốc kế hoạch, rơi ngày nghỉ thì dời. Báo người mới, người cũ (nếu đổi người) kèm lời nhắn."""

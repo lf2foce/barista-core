@@ -3,6 +3,7 @@
 import { Check, ChevronRight, RefreshCw, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { cardToneVar } from "@/lib/format";
+import { batchSummary, groupItems, type DecideGroup, type DecideItem } from "@/lib/to-decide";
 import type { DeskSection } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { IconTile, screenTint } from "@/components/icons";
@@ -30,7 +31,7 @@ export function DeskColumn() {
   };
   const groups = page?.groups ?? [];
   // thẻ đề xuất sáng (trợ lý soạn sẵn, người bấm mới chạy) thuộc nhóm "Cần tôi quyết" — có thẻ mà chưa có nhóm ⇒ vẫn dựng nhóm đó
-  const shown = chat.morning.length && !groups.some((g) => g.key === "decide") ? [{ key: "decide", title: "Cần tôi quyết", sections: [] }, ...groups] : groups;
+  const shown = chat.toDecide.length && !groups.some((g) => g.key === "decide") ? [{ key: "decide", title: "Chờ tôi duyệt", sections: [] }, ...groups] : groups;
   const waiting = page?.count ?? 0;
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -52,13 +53,13 @@ export function DeskColumn() {
           <section key={g.key} aria-label={g.title} className="pb-2">
             <h3 className="t12m flex items-center gap-1.5 px-3 pt-3 pb-1 text-muted-foreground">
               {g.title}
-              {hotCount(g.sections, g.key === "decide" ? chat.morning.length : 0) ? (
+              {(g.key === "decide" && chat.toDecide.length) || hotCount(g.sections, 0) ? (
                 <span className="t12m grid h-[18px] min-w-[18px] place-items-center rounded-full bg-foreground/8 px-1.5 text-foreground tnum">
-                  {hotCount(g.sections, g.key === "decide" ? chat.morning.length : 0)}
+                  {g.key === "decide" && chat.toDecide.length ? chat.toDecide.length : hotCount(g.sections, 0)}
                 </span>
               ) : null}
             </h3>
-            {g.key === "decide" ? <MorningCards /> : null}
+            {g.key === "decide" ? <DecideList /> : null}
             <ul className="flex flex-col gap-0.5">
               {g.sections
                 .filter((s) => s.lines.length || s.unchecked)
@@ -85,26 +86,57 @@ function subtitle(hot: number, unknown: number): string {
   return `${parts.join(" · ")} · đúng quyền của bạn`;
 }
 
-/** Thẻ đề xuất buổi sáng (0074 A): trợ lý soạn sẵn từ dữ liệu của mình, bấm để xem — xác nhận mới chạy. Thuộc "Cần tôi quyết" (0094). */
-function MorningCards() {
+/**
+ * "CHỜ TÔI DUYỆT" (ADR 0253, thay MorningCards): TỪNG việc người này phải quyết — đề xuất trợ lý soạn sẵn + phiếu duyệt — nhóm theo loại. Mỗi dòng nói việc +
+ * hồ sơ + vì sao (bản chạy thử chuẩn); bấm mở đúng thẻ / đúng phiếu. Nhóm cùng loại gộp lô được thì có "Duyệt cả N": lần lượt từng thẻ, thẻ nào căn cứ đã đổi ở lại.
+ */
+function DecideList() {
   const desk = useDesk();
   const chat = useChat();
-  if (!chat.morning.length) return null;
+  const [busy, setBusy] = useState<string | null>(null);
+  const groups = groupItems(chat.toDecide);
+  if (!groups.length) return null;
+  const open = (it: DecideItem) => (it.card ? desk.openCard(it.card, true) : void desk.openTarget("core.approval", { approval_id: it.id }, "Phiếu duyệt"));
+  const approveAll = async (g: DecideGroup) => {
+    setBusy(g.key);
+    try {
+      const res = await chat.decideMany(g.kind, g.items.map((x) => x.id));
+      const sum = batchSummary(res);
+      desk.show(sum.text, sum.failed);
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
-    <ul className="flex flex-col gap-0.5 pb-0.5">
-      {chat.morning.map((c) => (
-        <li key={c.id}>
-          <button type="button" onClick={() => desk.openCard(c, true)} className="flex w-full items-start gap-2.5 rounded-[10px] px-2.5 py-[7px] text-left outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring">
-            <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/12 text-primary"><Sparkles className="size-3.5" aria-hidden /></span>
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5 pt-[5px]">
-              <span className="text-[14px]">{c.title}</span>
-              {desk.confirmed[c.id] ? <span className="t12 text-muted-foreground">{desk.confirmed[c.id]}</span> : null}
-            </span>
-            <ChevronRight className="mt-2 size-3 shrink-0 text-muted-foreground/70" aria-hidden />
-          </button>
-        </li>
+    <div className="flex flex-col gap-1.5 pb-0.5">
+      {groups.map((g) => (
+        <div key={g.key} className="flex flex-col">
+          <div className="flex items-center gap-2 px-2.5 pt-1">
+            <span className="t12m flex-1 truncate text-muted-foreground">{g.title} · {g.items.length}</span>
+            {g.batchable && g.items.length >= 2 ? (
+              <button type="button" disabled={busy !== null} onClick={() => void approveAll(g)} className="t12m rounded-md px-2 py-0.5 text-primary outline-none hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                {busy === g.key ? "Đang duyệt…" : `Duyệt cả ${g.items.length}`}
+              </button>
+            ) : null}
+          </div>
+          <ul className="flex flex-col gap-0.5">
+            {g.items.map((it) => (
+              <li key={it.id}>
+                <button type="button" onClick={() => open(it)} className="flex w-full items-start gap-2.5 rounded-[10px] px-2.5 py-[7px] text-left outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring">
+                  <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/12 text-primary"><Sparkles className="size-3.5" aria-hidden /></span>
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5 pt-[5px]">
+                    <span className="text-[14px]">{it.title}</span>
+                    {it.requester ? <span className="t12 text-muted-foreground">{it.requester} xin duyệt</span> : null}
+                    {it.card && desk.settled(it.card) ? <span className="t12 text-muted-foreground">{desk.settled(it.card)?.label}</span> : it.reason ? <span className="t12 line-clamp-2 text-muted-foreground">{it.reason}</span> : null}
+                  </span>
+                  <ChevronRight className="mt-2 size-3 shrink-0 text-muted-foreground/70" aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       ))}
-    </ul>
+    </div>
   );
 }
 

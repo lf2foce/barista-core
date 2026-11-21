@@ -250,7 +250,9 @@ class RunRef(Input):
     run_id: UUID = field("Kỳ lương", hidden=True)
 
 
-@m.command("compute_run", resource="pay", title="Tính lại kỳ nháp", agent="propose", risk="low")
+@m.command("compute_run",
+           purpose="Tính lại kỳ lương nháp để số trong phiếu khớp dữ liệu công và mức trả mới nhất.", reversible="Tính lại lần nữa; kỳ vẫn là nháp",
+           resource="pay", title="Tính lại kỳ nháp", agent="propose", risk="low")
 async def compute_run(ctx: Ctx, inp: RunRef) -> dict[str, Any]:
     _need_payroll(ctx)
     run = await _run(ctx, inp.run_id, lock=True)
@@ -264,7 +266,9 @@ async def compute_run(ctx: Ctx, inp: RunRef) -> dict[str, Any]:
     return {"run_id": run["id"], **out, "summary": summary}
 
 
-@m.command("discard_run", resource="pay", action="manage", title="Xoá kỳ nháp", agent="deny")
+@m.command("discard_run",
+           purpose="Bỏ kỳ lương nháp lập sai để dòng công quay về chưa vào kỳ.", irreversible=True, effect="Xoá kỳ nháp cùng các phiếu đã tính; dòng công trở lại chưa vào kỳ và phải lập kỳ mới.",
+           resource="pay", action="manage", title="Xoá kỳ nháp", agent="deny")
 async def discard_run(ctx: Ctx, inp: RunRef) -> dict[str, Any]:
     _need_payroll(ctx)
     run = await _run(ctx, inp.run_id, lock=True)
@@ -281,7 +285,9 @@ async def _law_refs(ctx: Ctx, run_id: UUID) -> list[str]:
     return sorted({ref for r in rows for ref in r["rule_ref"].split(" + ") if not ref.startswith("company:")})
 
 
-@m.command("submit_run", resource="pay", action="manage", title="Gửi duyệt kỳ lương", agent="deny", risk="money")
+@m.command("submit_run",
+           purpose="Gửi kỳ lương lên người duyệt để chốt số liệu trước khi chi.", irreversible=True, effect="Đầu vào kỳ lương bị đóng băng và phiếu duyệt gửi tới người duyệt; phiếu đang dừng rời khỏi kỳ, dòng công của họ chờ kỳ sau.",
+           resource="pay", action="manage", title="Gửi duyệt kỳ lương", agent="deny", risk="money")
 async def submit_run(ctx: Ctx, inp: RunRef) -> dict[str, Any]:
     """Đóng băng đầu vào, mở phiếu duyệt ``pay_run``. Phiếu đang DỪNG (thiếu mức, quy tắc chưa xác minh…) không đi theo: rời kỳ, dòng công của họ
     chờ kỳ sau. Ngày hạch toán phải còn trong kỳ kế toán mở (0119)."""
@@ -372,7 +378,9 @@ async def reopen_run(ctx: Ctx, inp: LockIn) -> None:
                    (inp.run_id, inp.submission))
 
 
-@m.command("return_to_draft", resource="pay", action="manage", title="Rút kỳ về nháp", agent="deny")
+@m.command("return_to_draft",
+           purpose="Rút kỳ lương đang chờ duyệt về nháp để sửa số liệu.", reversible="Tính lại rồi Gửi duyệt kỳ lương (phiếu duyệt mới)",
+           resource="pay", action="manage", title="Rút kỳ về nháp", agent="deny")
 async def return_to_draft(ctx: Ctx, inp: RunRef) -> dict[str, Any]:
     """Kỳ đang chờ duyệt về nháp để sửa (phiếu duyệt cũ không chốt được nữa — lần gửi mới là phiếu mới)."""
     _need_payroll(ctx)
@@ -389,7 +397,9 @@ class PayRun(RunRef):
     reason: str = field("Lý do chi", max_length=300, example="Chi kỳ lương 10/2026")
 
 
-@m.command("request_payment", resource="pay", action="read", title="Đề nghị chi kỳ lương", agent="deny", risk="money")
+@m.command("request_payment",
+           purpose="Đề nghị chi cho cả kỳ lương đã chốt để mỗi phiếu có lệnh chi và người lao động nhận đúng hạn.", irreversible=True, effect="Gửi phiếu duyệt chi cho cả kỳ lương đã chốt; sau khi duyệt, mỗi phiếu thành một lệnh chi và tiền ra khỏi tài khoản công ty.",
+           resource="pay", action="read", title="Đề nghị chi kỳ lương", agent="deny", risk="money")
 async def request_payment(ctx: Ctx, inp: PayRun) -> dict[str, Any]:
     """MỘT đề nghị chi cho cả kỳ đã chốt (mỗi phiếu một lệnh chi) qua chuỗi chi nghĩa vụ của Tài chính — quyền thật là quyền lập đề nghị chi của kế
     toán (``acct.request_payment_batch`` chạy bằng quyền người bấm)."""

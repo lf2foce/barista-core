@@ -493,7 +493,7 @@ async def _execute(ctx: Ctx, r: Mapping[str, Any], w: When, data: dict[str, Any]
                 pre = await executor.propose(owner, op.name, inp)
             if pre.status != "proposed":
                 return "failed", f"Chạy thử “{op.title}” không được: {pre.error or pre.status}"
-            summary = (pre.output.get("preview") or {}).get("summary") if isinstance(pre.output, dict) and isinstance(pre.output.get("preview"), dict) else ""
+            summary = pre.output["brief"]["title"] if isinstance(pre.output, dict) and pre.output.get("brief") else ""
             return "trial", f"Sẽ chạy “{op.title}”" + (f": {summary}" if summary else "")
         if r["action"] == "propose" and op:
             return "trial", f"Sẽ đề xuất “{op.title}” cho {who}: “{text}”"
@@ -543,15 +543,14 @@ async def _propose(ctx: Ctx, r: Mapping[str, Any], op: registry.Op, inp: dict[st
         if not rp.ai:
             errors.append(f"{rp.name}: công ty tắt trợ lý — không có kho đề xuất")
             continue
-        pre = await executor.propose(rp.as_agent(), op.name, inp)
+        why = f"Luật tự động “{r['name']}”: {text}"
+        pre = await executor.propose(rp.as_agent(), op.name, inp, reason=why)
         if pre.status != "proposed" or not isinstance(pre.output, dict):
             errors.append(f"{rp.name}: {pre.error or pre.status}")
             continue
         o = pre.output
-        title = str((o.get("preview") or {}).get("summary") if isinstance(o.get("preview"), dict) else "") or op.title
-        filed += await morning.file_cards(rp, f"{morning.AUTO}:{key}:{uid}", [{"kind": "proposal", "command": o["command"], "title": title,
-                                                                              "input": o["input"], "basis": o.get("basis")}],
-                                          f"Luật tự động “{r['name']}”: {text}")
+        filed += await morning.file_cards(rp, f"{morning.AUTO}:{key}:{uid}", [{"kind": "proposal", "command": o["command"], "title": o["brief"]["title"],
+                                                                              "input": o["input"], "basis": o.get("basis"), "brief": o["brief"]}], why)
     return filed, errors
 
 

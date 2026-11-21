@@ -137,7 +137,9 @@ class ImportWork(Input):
     note: str = field("Ghi chú", "", max_length=300)
 
 
-@m.command("import_work", resource="pay", title="Nhập công", importable=True, agent="deny", risk="money")
+@m.command("import_work",
+           purpose="Ghi dòng công từ sổ gốc của công ty để kỳ lương sau tính đúng số lượng công của từng người.", irreversible=True, effect="Dòng công vào sổ công và được tính vào kỳ lương kế tiếp; sổ công chỉ thêm, không sửa hoặc xoá được.",
+           resource="pay", title="Nhập công", importable=True, agent="deny", risk="money")
 async def import_work(ctx: Ctx, inp: ImportWork) -> dict[str, Any]:
     """Một dòng công từ sổ gốc của công ty (bảng Excel lượt dịch vụ, ca, sản phẩm…) — nhập cả file qua Nhập dữ liệu, chạy ĐÚNG lệnh này từng dòng.
     Chỉ số lượng: tiền do mức trả quyết lúc lập kỳ."""
@@ -159,7 +161,9 @@ class RequestEntry(Input):
     reason: str = field("Lý do", kind="textarea", max_length=500, example="Thưởng hoàn thành chỉ tiêu tháng 10")
 
 
-@m.command("request_entry", resource="pay", title="Xin nhập tay khoản lương", agent="deny")
+@m.command("request_entry",
+           purpose="Xin duyệt khoản thưởng, phạt hoặc khấu trừ một lần có lý do, để người thứ hai kiểm trước khi vào lương.", irreversible=True, effect="Gửi phiếu duyệt khoản lương nhập tay tới người duyệt; sau khi duyệt, khoản vào sổ công của kỳ lương và không xoá được.",
+           resource="pay", title="Xin nhập tay khoản lương", agent="deny")
 async def request_entry(ctx: Ctx, inp: RequestEntry) -> dict[str, Any]:
     """Thưởng, phạt, khấu trừ một lần: có lý do, qua chuỗi duyệt ``pay_entry`` — người xin không tự duyệt, trợ lý không xin."""
     _need_payroll(ctx)

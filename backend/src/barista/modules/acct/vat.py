@@ -41,7 +41,7 @@ from barista.api import (
 )
 from barista.kernel import ledger, registry
 from barista.modules.acct import m
-from barista.modules.acct.common import _vnd, locked_message
+from barista.modules.acct.common import _vnd, locked_message, receivable_subject
 from barista.modules.acct.corrections import _day, _need_approval, _need_books, reduce_receivable
 from barista.modules.acct.receivables import _target
 
@@ -326,7 +326,9 @@ class IssueVat(Input):
     price_mode: Literal["", "exclusive", "inclusive"] = field("Số tiền của khoản", "", options={"": "Theo loại thuế", **PRICE}, group="Thêm chi tiết")
 
 
-@m.command("issue_vat_invoice", resource="acct", title="Ghi hoá đơn GTGT đã xuất", importable=True, agent="propose", risk="money")
+@m.command("issue_vat_invoice",
+           purpose="Hoá đơn GTGT đã xuất ở phần mềm hoá đơn — ghi ký hiệu, số và tách thuế để sổ thuế đầu ra khớp hoá đơn.", reversible="Huỷ hoá đơn GTGT rồi ghi hoá đơn thay thế",
+           resource="acct", title="Ghi hoá đơn GTGT đã xuất", importable=True, agent="propose", risk="money")
 async def issue_vat_invoice(ctx: Ctx, inp: IssueVat) -> dict[str, Any]:
     """Hoá đơn đã xuất ở phần mềm hoá đơn điện tử ⇒ ghi ký hiệu + số + ngày lập (người lập = người ghi); code chụp mức thuế theo loại × ngày lập, tách thuế,
     ghi sổ thuế GTGT đầu ra, gắn số hoá đơn vào khoản (đối soát sao kê khớp theo số). Cùng ký hiệu + số ghi lại ⇒ không ghi lần hai."""
@@ -371,7 +373,10 @@ async def issue_vat_invoice(ctx: Ctx, inp: IssueVat) -> dict[str, Any]:
     await ctx.exec("UPDATE acct.receivables SET invoice_no = %s, invoice_on = %s, invoiced_by = core.me() WHERE id = %s", (invoice_no, on, t["id"]))
     ctx.emit("acct.invoice_recorded", receivable_id=t["id"], code=t["code"], source=t["source"], source_ref=t["source_ref"], invoice_no=invoice_no)
     return {"invoice_id": vid, "code": t["code"], "base_vnd": p["base"], "tax_vnd": p["tax"], "gross_vnd": p["gross"], "rate_bps": rate.rate_bps,
-            "created": True, "summary": f"{t['code']}: hoá đơn {invoice_no} — {rate.label}, thuế {_vnd(p['tax'])}, tổng {_vnd(p['gross'])}"
+            "created": True, "subject": receivable_subject(t),
+            "changes": [{"label": "Hoá đơn GTGT", "before": "", "after": f"{invoice_no} · thuế {_vnd(p['tax'])}"},
+                        *([{"label": "Số phải thu", "before": _vnd(t["amount_vnd"]), "after": _vnd(t["amount_vnd"] + p["added"])}] if p["added"] else [])],
+            "summary": f"{t['code']}: hoá đơn {invoice_no} — {rate.label}, thuế {_vnd(p['tax'])}, tổng {_vnd(p['gross'])}"
             + (f" (phải thu tăng {_vnd(p['added'])})" if p["added"] else "")}
 
 
@@ -383,7 +388,9 @@ class CancelVat(Input):
     cancelled_on: Day | None = field("Ngày huỷ", None, placeholder="Hôm nay", help="Không trước ngày lập")
 
 
-@m.command("cancel_vat_invoice", resource="acct", title="Huỷ hoá đơn GTGT (để lập thay thế)", agent="propose", risk="money")
+@m.command("cancel_vat_invoice",
+           purpose="Hoá đơn sai đã huỷ hoặc thay thế ở phần mềm hoá đơn — đảo bút toán thuế để sổ thuế và công nợ như trước khi xuất.", reversible="Ghi lại hoá đơn thay thế bằng “Ghi hoá đơn GTGT đã xuất”",
+           resource="acct", title="Huỷ hoá đơn GTGT (để lập thay thế)", agent="propose", risk="money")
 async def cancel_vat_invoice(ctx: Ctx, inp: CancelVat) -> dict[str, Any]:
     """Hoá đơn sai (đã huỷ / thay thế ở phần mềm hoá đơn điện tử) ⇒ bút toán ĐẢO của bút toán thuế; bản ghi giữ nguyên, chỉ điền ngày / lý do huỷ; khoản phải
     thu trả về như trước khi xuất (giá chưa gồm thuế: bỏ phần thuế đã cộng) rồi ghi được hoá đơn thay thế. Đã có hoá đơn điều chỉnh ⇒ không huỷ được."""
@@ -415,7 +422,8 @@ async def cancel_vat_invoice(ctx: Ctx, inp: CancelVat) -> dict[str, Any]:
         status = "open" if t["paid_vnd"] == 0 else "paid" if t["paid_vnd"] == new else "partial"
         await ctx.exec("UPDATE acct.receivables SET amount_vnd = %s, fee_vnd = %s, status = %s WHERE id = %s", (new, new, status, t["id"]))
     await ctx.exec("UPDATE acct.receivables SET invoice_no = '', invoice_on = NULL, invoiced_by = NULL WHERE id = %s", (t["id"],))
-    return {"invoice_id": inv["id"], "code": t["code"], "reversed_tax_vnd": inv["tax_vnd"],
+    return {"invoice_id": inv["id"], "code": t["code"], "reversed_tax_vnd": inv["tax_vnd"], "subject": receivable_subject(t),
+            "changes": [{"label": "Hoá đơn GTGT", "before": f"{inv['symbol']}-{inv['number']}", "after": "Đã huỷ"}],
             "summary": f"Huỷ hoá đơn {inv['symbol']}-{inv['number']} của {t['code']}" + (f" — đảo thuế {_vnd(inv['tax_vnd'])}" if inv["tax_vnd"] else "")}
 
 
@@ -428,7 +436,9 @@ class AdjustVat(Input):
     adjusted_on: Day | None = field("Ngày lập", None, placeholder="Hôm nay", help="Không trước ngày hoá đơn gốc")
 
 
-@m.command("adjust_vat_invoice", resource="acct", title="Điều chỉnh giảm hoá đơn GTGT", agent="propose", risk="money")
+@m.command("adjust_vat_invoice",
+           purpose="Bên mua được giảm giá trị hoá đơn — ghi hoá đơn điều chỉnh giảm để thuế đầu ra và phải thu đúng.", irreversible=True, effect="Giảm thuế đầu ra, doanh thu và số phải thu theo hoá đơn điều chỉnh; không đảo được.",
+           resource="acct", title="Điều chỉnh giảm hoá đơn GTGT", agent="propose", risk="money")
 async def adjust_vat_invoice(ctx: Ctx, inp: AdjustVat) -> dict[str, Any]:
     """Hoá đơn điều chỉnh GIẢM (số riêng) cho hoá đơn gốc còn hiệu lực: phần thuế tách theo MỨC CỦA HOÁ ĐƠN GỐC (lần giảm cuối lấy đúng phần thuế còn lại —
     tổng thuế giảm không lệch đồng nào); giảm phải thu qua đường giấy báo có (0156 — đã thu thừa ⇒ về tiền chưa phân bổ). Bút toán: Nợ doanh thu (giá) + Nợ
@@ -474,7 +484,8 @@ async def adjust_vat_invoice(ctx: Ctx, inp: AdjustVat) -> dict[str, Any]:
                    (vid, t["id"], t["entity_id"], inv["id"], symbol, number, on, inv["category"], inv["treatment"], inv["rate_bps"], base, tax,
                     inp.reduce_vnd, inv["rule_refs"], out["journal_id"], inp.reason.strip()))
     return {"invoice_id": vid, "code": t["code"], "base_vnd": base, "tax_vnd": tax, "gross_vnd": inp.reduce_vnd, "amount_vnd": out["amount_vnd"],
-            "status": out["status"], "released_vnd": out["released_vnd"], "created": True,
+            "status": out["status"], "released_vnd": out["released_vnd"], "created": True, "subject": receivable_subject(t),
+            "changes": [{"label": "Số phải thu", "before": _vnd(t["amount_vnd"]), "after": _vnd(out["amount_vnd"])}],
             "summary": f"Điều chỉnh giảm {_vnd(inp.reduce_vnd)} (thuế {_vnd(tax)}) hoá đơn {inv['symbol']}-{inv['number']} của {t['code']}"
             + (f" · {_vnd(out['released_vnd'])} đã thu thừa về tiền chưa phân bổ" if out["released_vnd"] else "")}
 

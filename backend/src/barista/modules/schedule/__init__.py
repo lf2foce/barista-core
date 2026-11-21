@@ -827,7 +827,9 @@ class EventRef(Input):
     event_id: UUID = field("Lịch", hidden=True)
 
 
-@m.command("mark_done", resource="schedule", action="read", title="Đánh dấu đã xong", agent="propose")
+@m.command("mark_done",
+           purpose="Đánh dấu lịch đã diễn ra để giờ đó được giữ như đã dùng thật.", irreversible=True, effect="Lịch chuyển sang đã xong và giữ khoảng giờ đó như đã dùng thật; không trả về chưa xong được.",
+           resource="schedule", action="read", title="Đánh dấu đã xong", agent="propose")
 async def mark_done(ctx: Ctx, inp: EventRef) -> dict[str, Any]:
     """Lịch đã diễn ra. Vẫn giữ khoảng giờ đó (đã dùng thật) — không ai đặt chồng vào quá khứ được."""
     ev = await _event(ctx, inp.event_id)

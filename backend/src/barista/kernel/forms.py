@@ -123,6 +123,13 @@ DRAFT_QUERY = "core.draft_input"
 def form_spec(op: Op, terms: Mapping[str, str] | None = None, fields: Mapping[str, tuple[Any, ...]] | None = None) -> dict[str, Any]:
     spec: dict[str, Any] = {"command": op.name, "title": op.title, "description": op.form_help, "importable": op.importable,
                             "fields": _with_extra(op, _model_specs(op.input), fields)}
+    # LUẬT XÁC NHẬN Ở MỘT CHỖ (ADR 0253, ``kernel/preview.confirm_rule``): "none" = đảo được ⇒ nút không ô nào chạy ngay khi chạm (báo kết quả, kèm Hoàn tác);
+    # "consequence" = phá huỷ / không đảo được ⇒ hộp nói HỆ QUẢ bằng ``effect``. Chỉ THÊM trường — app cũ hỏi câu chung như trước.
+    from barista.kernel.preview import confirm_rule  # nạp muộn: preview đọc field_specs của file này
+
+    spec["confirm"], effect = confirm_rule(op)
+    if effect:
+        spec["effect"] = effect
     if op.intent:
         # chỉ THÊM trường (bất biến 7): app chưa biết ⇒ vẽ đủ ô như cũ. ``intent`` = ô hỏi trước; ``draft`` = truy vấn soạn phần còn lại
         spec["intent"] = list(op.intent)

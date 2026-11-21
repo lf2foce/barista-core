@@ -501,7 +501,9 @@ async def file(ctx: Ctx, inp: FileRef) -> dict[str, Any]:
             "data_b64": base64.b64encode(data).decode()}
 
 
-@m.command("keep_on_record", resource="talk", title="Lưu tệp trong trao đổi vào hồ sơ", agent="deny")
+@m.command("keep_on_record",
+           irreversible=True, effect="Tệp thành tệp của hồ sơ: ai xem hồ sơ cũng mở được, kể cả khi tin nhắn bị thu hồi; không gỡ ra khỏi hồ sơ được.",
+           resource="talk", title="Lưu tệp trong trao đổi vào hồ sơ", agent="deny")
 async def keep_on_record(ctx: Ctx, inp: FileRef) -> dict[str, Any]:
     """Tệp gửi trong trao đổi của một hồ sơ ⇒ thành TỆP CỦA HỒ SƠ đó (ADR 0249) — CÙNG tệp, không chép: Trao đổi cấp quyền lấy tệp cho lõi sau khi
     người bấm đọc được tin (RLS), lõi giữ thêm một chỗ dùng. Từ đó ai thấy hồ sơ mở được tệp, kể cả khi tin bị thu hồi."""
@@ -575,7 +577,9 @@ async def edit_message(ctx: Ctx, inp: EditIn) -> dict[str, Any]:
     return {"message_id": r["id"], "summary": "Đã sửa tin"}
 
 
-@m.command("recall_message", resource="talk", title="Thu hồi tin nhắn của mình", agent="deny")
+@m.command("recall_message",
+           irreversible=True, effect="Tin hiện là “đã thu hồi” cho mọi người, ghim và nhắc tên bị bỏ; không khôi phục lại như cũ được.",
+           resource="talk", title="Thu hồi tin nhắn của mình", agent="deny")
 async def recall_message(ctx: Ctx, inp: MessageRef) -> dict[str, Any]:
     """Không xoá: mọi người thấy "Tin đã được thu hồi" (ai, lúc nào); nội dung, thẻ, tệp giữ lại — chỉ người gửi và người có quyền "Xem lại tin
     đã thu hồi" mà vẫn đọc được luồng xem lại được (``talk.message_versions`` + RLS ``talk.may_see_message``). Bỏ ghim, bỏ nhắc tên."""
@@ -636,7 +640,9 @@ class PinIn(Input):
     pinned: bool = field("Ghim", True, hidden=True)
 
 
-@m.command("pin", resource="talk", title="Ghim / bỏ ghim tin trong trao đổi", agent="deny")
+@m.command("pin",
+           reversible="Bấm lại để bỏ ghim",
+           resource="talk", title="Ghim / bỏ ghim tin trong trao đổi", agent="deny")
 async def pin(ctx: Ctx, inp: PinIn) -> dict[str, Any]:
     """Ai gửi được vào trao đổi thì ghim được (như nhóm chat); ai ghim, lúc nào hiện trên dải ghim, nhật ký giữ vết."""
     r = await _message(ctx, inp.message_id)
@@ -660,7 +666,9 @@ async def _me_changed(ctx: Ctx, tid: Any) -> None:
     await ctx.exec("SELECT pg_notify('barista_talk', 'inbox:' || core.tenant() || ':' || core.me() || ':' || %s::text)", (tid,))
 
 
-@m.command("mark_read", resource="talk", title="Đánh dấu đã đọc trao đổi", agent="deny")
+@m.command("mark_read",
+           reversible="Chỉ đổi số chưa đọc của riêng bạn; có tin mới sẽ hiện chưa đọc lại",
+           resource="talk", title="Đánh dấu đã đọc trao đổi", agent="deny")
 async def mark_read(ctx: Ctx, inp: ReadIn) -> dict[str, int]:
     """Đọc ≠ theo dõi: đọc một luồng không tự đăng ký theo dõi nó."""
     if not await ctx.val("SELECT 1 FROM talk.threads WHERE id = %s", (inp.thread_id,)):
@@ -678,7 +686,9 @@ class FollowIn(Input):
     following: bool = field("Theo dõi", True, hidden=True)
 
 
-@m.command("follow", resource="talk", title="Theo dõi / bỏ theo dõi trao đổi", agent="deny")
+@m.command("follow",
+           reversible="Bấm lại để bỏ theo dõi",
+           resource="talk", title="Theo dõi / bỏ theo dõi trao đổi", agent="deny")
 async def follow(ctx: Ctx, inp: FollowIn) -> dict[str, Any]:
     tid = await ctx.val("SELECT id FROM talk.threads WHERE subject_kind = %s AND subject_id = %s", (inp.subject_kind, inp.subject_id))
     if tid is None:
@@ -694,7 +704,9 @@ class MuteIn(Input):
     muted: bool = field("Tắt thông báo", True, hidden=True)
 
 
-@m.command("mute", resource="talk", title="Tắt / bật thông báo một trao đổi", agent="deny")
+@m.command("mute",
+           reversible="Bấm lại để bật thông báo",
+           resource="talk", title="Tắt / bật thông báo một trao đổi", agent="deny")
 async def mute(ctx: Ctx, inp: MuteIn) -> dict[str, Any]:
     """Tắt tiếng: không thông báo "có tin mới", không tính vào số trên menu; vẫn thấy luồng + số chưa đọc của luồng. Bị @nhắc vẫn báo."""
     if not await ctx.val("SELECT 1 FROM talk.threads WHERE id = %s", (inp.thread_id,)):
@@ -798,7 +810,9 @@ async def can_read(ctx: Ctx, inp: ThreadRef) -> dict[str, bool]:
     return {"ok": True}
 
 
-@m.command("cards_changed", resource="talk", title="Báo luồng: thẻ vừa đổi trạng thái", agent="deny")
+@m.command("cards_changed",
+           reversible="Chỉ báo máy đang mở luồng tải lại, không đổi dữ liệu",
+           resource="talk", title="Báo luồng: thẻ vừa đổi trạng thái", agent="deny")
 async def cards_changed(ctx: Ctx, inp: ThreadRef) -> dict[str, Any]:
     """Người vừa bấm nút trên thẻ trong luồng ⇒ báo các máy đang mở luồng tải lại (cùng kênh "có tin mới", chỉ mang mã luồng) — thẻ của
     người khác tính lại bằng quyền của họ. Chỉ người xem được luồng mới báo được."""
@@ -1072,7 +1086,9 @@ async def _drop_member(ctx: Ctx, room_id: UUID, uid: UUID) -> None:
                           (SELECT user_id FROM talk.room_members WHERE room_id = %s ORDER BY added_at, user_id LIMIT 1)""", (room_id, room_id))
 
 
-@m.command("leave_room", resource="talk", title="Rời phòng", agent="deny")
+@m.command("leave_room",
+           irreversible=True, effect="Bạn không còn thấy tin của phòng; muốn vào lại phải nhờ thành viên khác thêm.",
+           resource="talk", title="Rời phòng", agent="deny")
 async def leave_room(ctx: Ctx, inp: RoomRef) -> dict[str, Any]:
     room = await subject_room(ctx, registry.SubjectRef(subject_id=inp.room_id))
     assert ctx.p.user_id is not None

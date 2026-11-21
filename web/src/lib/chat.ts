@@ -1,3 +1,4 @@
+import { decodeBrief } from "./brief";
 import { decodePage } from "./decode";
 import type { ChatCard, Step, StreamEvent, UndoSpec } from "./types";
 
@@ -30,7 +31,7 @@ export function decodeCard(raw: ChatCard): ChatCard {
     u && typeof u === "object" && typeof u.command === "string" && u.command && u.input && typeof u.input === "object" && !Array.isArray(u.input)
       ? { command: u.command, input: u.input as UndoSpec["input"], title: typeof u.title === "string" && u.title ? u.title : "Hoàn tác" }
       : null;
-  return { ...raw, page: raw.page ? decodePage(raw.page) : null, preview: raw.preview ? decodePage(raw.preview) : null, why, undo };
+  return { ...raw, page: raw.page ? decodePage(raw.page) : null, preview: raw.preview ? decodePage(raw.preview) : null, why, undo, brief: decodeBrief(raw.brief) };
 }
 
 /** Thẻ vừa tới có tự bung ra khung làm việc không: thẻ gọn (xem ngay trong chat), bảng rỗng, đề xuất (xác nhận ngay trong câu trả lời — 0144) và
