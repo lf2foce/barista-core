@@ -100,7 +100,7 @@ type Ctx = _Ctx
 # gọi model NGOÀI giao dịch.
 type Prep = _Prep
 
-__version__ = "1.73.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
+__version__ = "1.74.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
 #                         1.7: gộp ba nhánh cùng mang 1.6 — regulations.declare / compare / known_codes (0154) · Module.inbound (webhook VÀO từ nhà cung cấp) · Pack(records=…) cấu hình mặc định qua lệnh của module sở hữu (0153)
 #                              · Module.consumes nhận thêm họ outreach / doc_read / paper_draft — dịch vụ lõi mở cho gói ngoài (0155)
 #                         1.8: NeedsConfirmation — lệnh tự biết việc trợ lý định làm chạm lịch / dữ liệu của NGƯỜI KHÁC ⇒ cả lệnh thành thẻ đề xuất (0158)
@@ -231,6 +231,7 @@ __version__ = "1.73.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                              trống = mẫu mặc định của loại. Bỏ hai bộ ``brochure.SLOTS`` / ``TEMPLATES`` (không xuất ra bề mặt, đã lệch — danh sách ở phân hệ Ấn phẩm).
 #                              Migration base/107 (bảng ``admin.brand``) + compose/073 — chỉ thêm, không bảo trì.
 #                         1.73: ``files.signed_url`` cho gói (link ký ≤ 60 giây, ảnh / PDF xem tại chỗ) + hai khối nền ``ui.b_image`` / ``ui.b_split`` (gói tự ghép bố cục: ảnh nguồn bên trái, dòng đọc bên phải…) — chỉ thêm, không migration
+#                         1.74: SỐ TÓM TẮT cho màn tổng hợp của gói (đọc bằng quyền người xem — ``ctx.call_as_optional(…, ctx.p)``): ``health.summary``, ``leadflow.summary``, ``acct.cashflow_projection``, ``core.approvals_summary`` — cùng con số màn của module đó hiện, không dựng màn; họ ``receivable`` nhận ``acct.receivable_totals`` (tổng phải thu / đã thu theo mã gốc của nguồn gọi — ô tổng của màn danh sách trên cả tập). Chỉ thêm, không migration
 
 __all__ = [
     "VN",

@@ -2,7 +2,7 @@
 chặn tắt gói Tài chính (tiền còn dở dang)."""
 
 from datetime import date
-from typing import Any
+from typing import Any, LiteralString
 
 from barista.api import (
     Ctx,
@@ -38,19 +38,29 @@ _LINE_DRIFT = ("""SELECT {cols} FROM acct.statement_lines l
                      OR l.allocated_vnd <> coalesce(pay.net_vnd, 0) + coalesce(rec.v, 0) + coalesce(plc.v, 0)""")
 
 
-async def _drift(ctx: Ctx) -> tuple[list[str], list[str]]:
-    return ([r["code"] for r in await ctx.all(_AR_DRIFT.format(cols="r.code") + " ORDER BY r.code LIMIT 20")],
-            [r["ref"] for r in await ctx.all(_LINE_DRIFT.format(cols="coalesce(nullif(l.bank_ref, ''), '(không mã)') AS ref, l.received_on")
-                                             + " ORDER BY l.received_on LIMIT 20")])
+def _first(sql: LiteralString, key: LiteralString, order: LiteralString) -> LiteralString:
+    """Cả tập lệch (đếm đủ) + tối đa 20 mã đầu để tra, MỘT câu. Tập lệch tính trong CTE ``MATERIALIZED`` — không để ``ORDER BY … LIMIT`` kéo planner sang
+    kế hoạch "trả dòng sớm": dưới RLS ước lượng sai số dòng ⇒ nối vòng lặp lồng cả bảng × cả bảng (đo 21/11/2026: 1,3 giây ở 6.000 khoản; tách hẳn ⇒
+    nối băm, vài chục ms). Không lệch gì ⇒ tập rỗng, như trước."""
+    return ("WITH d AS MATERIALIZED (" + sql + ") SELECT (SELECT count(*) FROM d)::int AS n, coalesce((SELECT array_agg(" + key + " ORDER BY " + order
+            + ") FROM (SELECT * FROM d ORDER BY " + order + " LIMIT 20) x), '{}') AS first")
+
+
+async def _drift(ctx: Ctx) -> tuple[tuple[int, list[str]], tuple[int, list[str]]]:
+    """((số khoản phải thu lệch, mã đầu), (số dòng sao kê lệch, mã đầu))."""
+    ar = await ctx.one(_first(_AR_DRIFT.format(cols="r.code"), "code", "code"))
+    ln = await ctx.one(_first(_LINE_DRIFT.format(cols="coalesce(nullif(l.bank_ref, ''), '(không mã)') AS ref, l.received_on"), "ref", "received_on"))
+    assert ar is not None and ln is not None
+    return (ar["n"], list(ar["first"])), (ln["n"], list(ln["first"]))
 
 
 @m.query("health_report", resource="acct", title="Sức khoẻ dữ liệu kế toán", internal=True, agent="deny", callers=("health",),
          why="health._collect (Sức khoẻ dữ liệu — health.overview, min_scope all): bất biến tiền của cả công ty. Trả {rank, issues, notes, "
              "fresh} — số khoản / dòng lệch + tối đa vài mã để tra; không số tiền, không bên trả.")
 async def health_report(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
-    ar, lines = await _drift(ctx)
+    (n_ar, ar), (n_lines, lines) = await _drift(ctx)
     return {"rank": 5, "fresh": [], "notes": [], "issues": [
-        {"key": "money_drift", "n": len(ar) + len(lines), "title": "khoản phải thu / dòng sao kê lệch với phiếu thu (lỗi phần mềm)",
+        {"key": "money_drift", "n": n_ar + n_lines, "title": "khoản phải thu / dòng sao kê lệch với phiếu thu (lỗi phần mềm)",
          "subtitle": ", ".join([*ar, *lines][:6]), "open": "acct.receivables",
          "why": "{n} chỗ số đã thu không khớp tổng phiếu thu ⇒ báo ngay cho bên vận hành phần mềm; đừng sửa tay số dư"}]}
 
@@ -63,12 +73,12 @@ _drift_alerted: dict[str, date] = {}   # công ty → ngày đã báo (mỗi ti�
 async def check_money(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     """Vòng quét: công ty có số tiền lệch ⇒ LỖI HỆ THỐNG (ghi nhật ký kèm mã lệch, quản trị nhận thông báo, nhà vận hành nhận tin) — mỗi công
     ty một lần / ngày; ngày sau còn lệch thì báo lại. Hết lệch ⇒ vòng quét không chọn công ty này nữa."""
-    ar, lines = await _drift(ctx)
+    (n_ar, ar), (n_lines, lines) = await _drift(ctx)
     key = str(ctx.p.tenant_id)
-    if (ar or lines) and _drift_alerted.get(key) != today():
+    if (n_ar or n_lines) and _drift_alerted.get(key) != today():
         _drift_alerted[key] = today()
-        raise RuntimeError(f"Lệch tiền: {len(ar)} khoản phải thu ({', '.join(ar[:5])}), {len(lines)} dòng sao kê ({', '.join(lines[:5])})")
-    return {"receivables": len(ar), "lines": len(lines)}
+        raise RuntimeError(f"Lệch tiền: {n_ar} khoản phải thu ({', '.join(ar[:5])}), {n_lines} dòng sao kê ({', '.join(lines[:5])})")
+    return {"receivables": n_ar, "lines": n_lines}
 
 
 @m.pack_blockers()

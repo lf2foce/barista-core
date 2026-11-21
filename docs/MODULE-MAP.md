@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-18 gói · 30 module · 1030 thao tác (281 nội bộ) · 21 bên nghe sự kiện.
+18 gói · 30 module · 1035 thao tác (286 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
@@ -32,7 +32,7 @@
 
 | Module | Tên | Gói | Schema | Mã | Lệnh | Truy vấn | Nội bộ |
 |---|---|---|---|---|---|---|---|
-| `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (20 file) | 68 | 83 | 55 |
+| `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (20 file) | 68 | 85 | 57 |
 | `admin` | Quản trị | `base` | `admin` | `modules/admin.py` | 39 | 45 | 13 |
 | `apps` | App của tôi | `base` | `apps` | `modules/apps.py` | 11 | 20 | 2 |
 | `asks` | Yêu cầu gửi bên ngoài | `base` | `asks` | `modules/asks.py` | 10 | 3 | 4 |
@@ -40,15 +40,15 @@
 | `compose` | Ấn phẩm | `compose` | `compose` | `modules/compose/` (8 file) | 20 | 6 | 1 |
 | `connect` | Ứng dụng kết nối | `base` | — | `modules/connect.py` | 9 | 3 | 4 |
 | `connectors` | Kết nối ngoài | `base` | `connectors` | `modules/connectors.py` | 10 | 6 | 6 |
-| `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/record_files.py` | 34 | 33 | 9 |
+| `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/record_files.py` | 34 | 34 | 10 |
 | `crm` | Khách hàng | `crm` | `crm` | `modules/crm/` (18 file) | 24 | 49 | 42 |
 | `findings` | Báo cáo chạy song song | `findings` | — | `modules/findings.py` | 0 | 7 | 1 |
 | `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (16 file) | 37 | 49 | 33 |
-| `health` | Sức khoẻ dữ liệu | `base` | — | `modules/health.py` | 0 | 1 | 0 |
+| `health` | Sức khoẻ dữ liệu | `base` | — | `modules/health.py` | 0 | 2 | 1 |
 | `hr` | Hồ sơ làm việc | `hr` | `hr` | `modules/hr/` (2 file) | 13 | 14 | 4 |
 | `kb` | Tài liệu | `base` | `kb` | `modules/kb/` (4 file) | 15 | 23 | 12 |
 | `kpi` | KPI & xếp hạng | `kpi` | `kpi` | `modules/kpi.py` | 4 | 6 | 2 |
-| `leadflow` | Chia lead & hạn xử lý | `crm` | `leadflow` | `modules/leadflow/` (7 file) | 16 | 20 | 13 |
+| `leadflow` | Chia lead & hạn xử lý | `crm` | `leadflow` | `modules/leadflow/` (7 file) | 16 | 21 | 14 |
 | `meet` | Gọi video | `meet` | `meet` | `modules/meet.py` | 17 | 11 | 4 |
 | `memory` | Trí nhớ | `base` | `memory` | `modules/memory.py` | 4 | 4 | 1 |
 | `mgmt` | Báo cáo quản trị | `mgmt` | `mgmt` | `modules/mgmt.py` | 2 | 3 | 0 |
@@ -103,6 +103,7 @@
   - `acct.post_entry` → `journal`
   - `acct.prepare_payout` → `settlement`
   - `acct.receipt_facts` → `receivable`
+  - `acct.receivable_totals` → `receivable`
   - `acct.receivables_for` → `receivable`
   - `acct.recognize_payable` → `settlement`
   - `acct.recognize_recovery` → `settlement`

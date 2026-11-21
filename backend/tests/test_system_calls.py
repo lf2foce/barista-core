@@ -32,7 +32,7 @@ FAMILIES = {
     ("flow", "_goal"): "m.metric: MỘT con số toàn công ty; người gắn chỉ số phải có phạm vi all trên tài nguyên đó (_metric_on)",
     ("kpi", "_by"): "m.metric nhóm theo người / đội (0101): số cả công ty — KPI chỉ hiện dòng người xem thấy qua RLS của kpi.targets; tên người "
                     "khác trên xếp hạng theo chính sách kpi.policy",
-    ("acct", "cashflow"): "<module>.cashflow_lines — mỗi thao tác khai callers=(\"acct\",); báo cáo dòng tiền min_scope=all",
+    ("acct", "_projection"): "<module>.cashflow_lines — mỗi thao tác khai callers=(\"acct\",); báo cáo dòng tiền min_scope=all",
     ("findings", "_one"): "<module>.findings_report — mỗi thao tác khai callers=(\"findings\",); Báo cáo chạy song song min_scope=all (0230)",
     ("health", "_collect"): "<module>.health_report — mỗi thao tác khai callers=(\"health\",); Sức khoẻ dữ liệu min_scope=all",
     ("connectors", "save"): "barista.api.connectors.save (0244): gói gọi connectors.save khai family=\"connector\" — đích kiểm owned_by theo module khai bộ "

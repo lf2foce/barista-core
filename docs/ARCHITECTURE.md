@@ -60,6 +60,7 @@ module của lõi, đã ra gói ngày 12/11/2026 (0191). Dịch vụ lõi chúng
 `identity`, `ledger_ref`, `company_figures`…). Việc định kỳ: lệnh nội bộ khai `sweep=` (0066).
 
 Gọi chéo: `ctx.call(op)` = quyền người gọi (RLS áp); `ctx.call_system(op)` = chỉ thao tác `internal=True`.
+Màn tổng hợp (bảng điều hành của gói) KHÔNG dựng màn của module khác rồi dò ô số theo nhãn: module sở hữu công bố SỐ TÓM TẮT nội bộ cùng định nghĩa với ô số của màn mình (`health.summary`, `leadflow.summary`, `acct.cashflow_projection`, `core.approvals_summary` — api 1.74), bên tổng hợp đọc bằng quyền người xem (`ctx.call_as_optional(op, ctx.p)`: không xem được màn đó ⇒ None). Ô số của màn danh sách tính trên CẢ tập lọc bằng câu tổng; trang dòng ở SQL (`ui.paging()` + `ui.table(paged_total=)`).
 
 ## 3. Quyền
 

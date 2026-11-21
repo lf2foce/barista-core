@@ -458,6 +458,29 @@ async def receivables_for(ctx: Ctx, inp: ForSource) -> list[dict[str, Any]]:
         (inp.source_prefix, [r.replace("%", "").replace("_", r"\_") + "%" for r in inp.ref_prefixes]))
 
 
+class TotalsFor(Input):
+    source_prefix: str
+    refs: list[str]
+
+
+@m.query("receivable_totals", resource="acct", title="Tổng khoản phải thu theo đối tượng nguồn", internal=True, agent="deny", family="receivable",
+         why="Gói khai consumes(\"receivable\") cần Ô TỔNG trên cả tập đối tượng của mình (vd ô phí đã ghi nhận / đã thu của một màn danh sách lọc theo kỳ — "
+             "mọi giao dịch trong tập, không phải trang đang hiện), không cần từng khoản. refs = mã đối tượng GỐC người xem đã thấy qua RLS của gói (lần lập lại "
+             "<mã>#NN gộp vào mã gốc). Chỉ nguồn của CHÍNH module gọi. Trả {mã gốc: {amount_vnd, paid_vnd, n}} của các khoản chưa huỷ — không mã khoản, "
+             "không bên trả, không hạn.")
+async def receivable_totals(ctx: Ctx, inp: TotalsFor) -> dict[str, dict[str, int]]:
+    """Tổng số phải thu / đã thu theo đối tượng nguồn (gom các lần lập ``<mã>#NN`` về mã gốc) — một câu GROUP BY, khớp mã gốc chính xác (không ``LIKE``
+    theo tiền tố: với vài nghìn mã, khớp tiền tố là vài trăm ms)."""
+    ctx.owned_by(inp.source_prefix.split(".")[0], f"Nguồn {inp.source_prefix}")
+    if not inp.refs:
+        return {}
+    rows = await ctx.all("""SELECT split_part(source_ref, '#', 1) AS ref, coalesce(sum(amount_vnd), 0)::bigint AS amount_vnd,
+                                   coalesce(sum(paid_vnd), 0)::bigint AS paid_vnd, count(*)::int AS n
+                            FROM acct.receivables WHERE starts_with(source, %s) AND status <> 'void' AND split_part(source_ref, '#', 1) = ANY(%s)
+                            GROUP BY 1""", (inp.source_prefix, inp.refs))
+    return {r["ref"]: {"amount_vnd": int(r["amount_vnd"]), "paid_vnd": int(r["paid_vnd"]), "n": r["n"]} for r in rows}
+
+
 @m.command("follow_overdue", resource="acct", title="Mở việc nhắc khoản phải thu quá hạn", internal=True,
            sweep="""SELECT DISTINCT tenant_id FROM acct.receivables WHERE status IN ('open', 'partial') AND followed_at IS NULL
                     AND due_on < core.today_of(tenant_id)""")

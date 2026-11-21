@@ -243,6 +243,18 @@ class InboxFilter(Input):
     status: str = field("Trạng thái", "pending", options={"pending": "Chờ duyệt", "all": "Tất cả"})
 
 
+async def _waiting(ctx: Ctx) -> int:
+    """Số phiếu đang chờ CHÍNH người xem duyệt (cả tập — danh sách màn có trần)."""
+    return int(await ctx.val("SELECT count(*) FROM core.approvals WHERE status = 'pending' AND core.me() = ANY(approver_ids)") or 0)
+
+
+@m.query("approvals_summary", resource=None, title="Phiếu duyệt — số tóm tắt", category="core", internal=True)
+async def approvals_summary(ctx: Ctx, inp: NoInput) -> dict[str, int]:
+    """SỐ TÓM TẮT cho màn tổng hợp: {waiting} = số phiếu đang chờ người xem duyệt (cùng ô "Chờ bạn duyệt" của Phiếu duyệt). Gọi bằng QUYỀN NGƯỜI XEM
+    (``ctx.call_as_optional(…, ctx.p)``) — không nội dung phiếu, không tên."""
+    return {"waiting": await _waiting(ctx)}
+
+
 @m.query("approvals", resource=None, title="Phiếu duyệt", category="core")
 async def approvals(ctx: Ctx, inp: InboxFilter) -> dict[str, Any]:
     """Phiếu mình xin + phiếu đang chờ mình duyệt (+ mọi phiếu nếu có quyền core.approvals phạm vi all)."""
@@ -261,7 +273,7 @@ async def approvals(ctx: Ctx, inp: InboxFilter) -> dict[str, Any]:
                     "progress": f"{min(r['current_step'] + (r['status'] != 'pending'), len(steps))}/{len(steps)}",
                     "status": r["status"], "mine": "Chờ bạn" if r["mine"] else "", "created_at": r["created_at"],
                     "error": r["error"]})
-    waiting = sum(1 for r in rows if r["mine"])
+    waiting = await _waiting(ctx)
     return ui.table(out, [
         ui.col("mine", "", "badge", tones={"Chờ bạn": "orange"}),
         ui.col("summary", "Nội dung"), ui.col("requester", "Người xin"), ui.col("step", "Bước hiện tại"),

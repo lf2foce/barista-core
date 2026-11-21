@@ -43,17 +43,13 @@ CASHFLOW = "cashflow_lines"   # <module>.cashflow_lines (nội bộ): dòng thu 
 # ``note`` (tuỳ chọn, 0211): một câu gói nói về cách ước dòng của mình (vd "ước theo kỳ đã chốt gần nhất") — nối vào ghi chú của bảng.
 
 
-@m.query("cashflow", resource="acct", title="Dòng tiền dự phóng", min_scope="all")
-async def cashflow(ctx: Ctx, inp: CashflowInput) -> dict[str, Any]:
-    """Theo tháng: thu = khoản phải thu chưa thu theo hạn (quá hạn dồn tháng này); chi = lệnh chi / chi trả chờ chuyển (tháng này) + nghĩa vụ phải
-    trả còn lại theo NGÀY ĐẾN HẠN nguồn nêu (0211 — trống / quá hạn dồn tháng này) + tiền THU HỘ phải trả lại (đang giữ: tháng này; sẽ thu: tháng
-    thu) + các dòng DỰ PHÓNG gói khai (``<module>.cashflow_lines``: khoản chi gói biết trước — ngân sách quảng cáo, quỹ lương kỳ chưa chốt…; gói tắt
-    ⇒ không có dòng). Nghĩa vụ MẬT người xem không thấy chi tiết (vd lương) vẫn vào số chi dưới dạng tổng theo tháng (``acct.confidential_open``) —
-    dòng tiền không thiếu khoản chi chỉ vì quyền xem. Tiền cọc đang giữ không tính chi (hoàn khi hết hợp đồng) — chỉ ghi chú."""
+async def _projection(ctx: Ctx, n_months: int) -> dict[str, Any]:
+    """Phép tính của Dòng tiền dự phóng (xem ``cashflow``) — MỘT nơi cho màn và cho ``acct.cashflow_projection``. Trả tháng, dòng, cột thêm của gói,
+    ô số thêm, ghi chú, tiền hiện có, phần không phải của mình, có đang đối chiếu sao kê không, tháng đầu tiên âm tiền."""
     t = today()
     months: list[str] = []
     y, mo = t.year, t.month
-    for _ in range(inp.months):
+    for _ in range(n_months):
         months.append(f"{mo:02d}/{y}")
         y, mo = (y + 1, 1) if mo == 12 else (y, mo + 1)
 
@@ -125,6 +121,30 @@ async def cashflow(ctx: Ctx, inp: CashflowInput) -> dict[str, Any]:
     # chiếu ngân hàng (thường 0) ⇒ mọi khoản chi đều thành "âm tiền" giả, báo sẽ thành tiếng ồn
     tracked = bool(await ctx.val("SELECT EXISTS (SELECT 1 FROM acct.statement_lines WHERE received_on >= %s)", (t - timedelta(days=TRACKED_DAYS),)))
     neg = next((r for r in rows if r["closing"] < 0), None) if tracked else None
+    note = " ".join(["Dự phóng từ dữ liệu đang có: khoản phải thu theo hạn, nghĩa vụ phải trả theo ngày đến hạn, lệnh chi chờ chuyển và các khoản "
+                     "dự kiến của nghiệp vụ khác (vd hoa hồng chờ tiền phí về).", *notes, "Chưa gồm khoản chi chưa có trong hệ thống (thuê văn phòng, thuế doanh nghiệp…).",
+                     *([] if tracked else [f"Chưa nạp sao kê trong {TRACKED_DAYS} ngày qua — tiền hiện có chưa đối chiếu ngân hàng, không báo âm tiền."])])
+    return {"rows": rows, "extra": extra, "extra_kpis": extra_kpis, "note": note, "opening": opening, "low": low, "not_ours": not_ours, "neg": neg}
+
+
+@m.query("cashflow_projection", resource="acct", title="Dòng tiền dự phóng — số tóm tắt", min_scope="all", internal=True)
+async def cashflow_projection(ctx: Ctx, inp: CashflowInput) -> dict[str, Any]:
+    """SỐ TÓM TẮT cho màn tổng hợp (bảng điều hành của gói): số dư cuối từng tháng dự phóng {rows: [{month, closing}], note} — cùng phép tính với màn
+    Dòng tiền dự phóng, không dựng bảng. Gọi bằng QUYỀN NGƯỜI XEM (``ctx.call_as_optional(…, ctx.p)``): người không xem được Tài chính cả công ty ⇒
+    None; nghĩa vụ mật vẫn vào số dưới dạng tổng như trên màn."""
+    p = await _projection(ctx, inp.months)
+    return {"rows": [{"month": r["month"], "closing": r["closing"]} for r in p["rows"]], "note": p["note"]}
+
+
+@m.query("cashflow", resource="acct", title="Dòng tiền dự phóng", min_scope="all")
+async def cashflow(ctx: Ctx, inp: CashflowInput) -> dict[str, Any]:
+    """Theo tháng: thu = khoản phải thu chưa thu theo hạn (quá hạn dồn tháng này); chi = lệnh chi / chi trả chờ chuyển (tháng này) + nghĩa vụ phải
+    trả còn lại theo NGÀY ĐẾN HẠN nguồn nêu (0211 — trống / quá hạn dồn tháng này) + tiền THU HỘ phải trả lại (đang giữ: tháng này; sẽ thu: tháng
+    thu) + các dòng DỰ PHÓNG gói khai (``<module>.cashflow_lines``: khoản chi gói biết trước — ngân sách quảng cáo, quỹ lương kỳ chưa chốt…; gói tắt
+    ⇒ không có dòng). Nghĩa vụ MẬT người xem không thấy chi tiết (vd lương) vẫn vào số chi dưới dạng tổng theo tháng (``acct.confidential_open``) —
+    dòng tiền không thiếu khoản chi chỉ vì quyền xem. Tiền cọc đang giữ không tính chi (hoàn khi hết hợp đồng) — chỉ ghi chú."""
+    p = await _projection(ctx, inp.months)
+    rows, extra, opening, low, neg = p["rows"], p["extra"], p["opening"], p["low"], p["neg"]
     page = ui.table(rows, [
         ui.col("month", "Tháng"), ui.col("opening", "Đầu kỳ", "money"), ui.col("inflow", "Tiền thu vào", "money"),
         *[ui.col(x["key"], x["label"], "money") for x in extra if x["kind"] == "in"],
@@ -132,11 +152,9 @@ async def cashflow(ctx: Ctx, inp: CashflowInput) -> dict[str, Any]:
         ui.col("out_payout", "Phải trả & lệnh chi chờ", "money"), ui.col("out_remit", "Trả tiền thu hộ", "money"),
         ui.col("net", "Ròng", "money"), ui.col("closing", "Cuối kỳ", "money"),
     ], title="Dòng tiền dự phóng", row_key="id", kpis=[
-        ui.kpi("Tiền hiện có", opening, "money", hint=not_ours),
-        ui.kpi("Thấp nhất trong kỳ", low, "money", tone="red" if low < 0 else "green"), *extra_kpis,
-    ], note=" ".join(["Dự phóng từ dữ liệu đang có: khoản phải thu theo hạn, nghĩa vụ phải trả theo ngày đến hạn, lệnh chi chờ chuyển và các khoản "
-                      "dự kiến của nghiệp vụ khác (vd hoa hồng chờ tiền phí về).", *notes, "Chưa gồm khoản chi chưa có trong hệ thống (thuê văn phòng, thuế doanh nghiệp…).",
-                      *([] if tracked else [f"Chưa nạp sao kê trong {TRACKED_DAYS} ngày qua — tiền hiện có chưa đối chiếu ngân hàng, không báo âm tiền."])]))
+        ui.kpi("Tiền hiện có", opening, "money", hint=p["not_ours"]),
+        ui.kpi("Thấp nhất trong kỳ", low, "money", tone="red" if low < 0 else "green"), *p["extra_kpis"],
+    ], note=p["note"])
     # ADD-only (bất biến 7): tháng đầu tiên âm tiền {month, closing} hoặc None — tín hiệu bàn việc + bản tin buổi sáng đọc trường này
     page["alert"] = {"month": neg["month"], "closing": int(neg["closing"])} if neg else None
     return page

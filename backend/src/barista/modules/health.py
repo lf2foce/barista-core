@@ -98,16 +98,31 @@ def _subtitle(ctx: Ctx, issue: dict[str, Any]) -> str:
     return str(issue.get("subtitle") or "")
 
 
+def figures(r: dict[str, Any]) -> dict[str, int]:
+    """Ba con số của Sức khoẻ dữ liệu từ kết quả ``assess`` — MỘT định nghĩa cho ô số của màn và cho ``health.summary``."""
+    bad = [i for i in r["issues"] if i["n"]]
+    return {"issue_kinds": len(bad), "records": sum(i["n"] for i in bad), "stale_sources": sum(1 for f in r["fresh"] if f["stale"])}
+
+
+@m.query("summary", resource="health", title="Sức khoẻ dữ liệu — số tóm tắt", min_scope="all", internal=True)
+async def summary(ctx: Ctx, inp: NoInput) -> dict[str, int]:
+    """SỐ TÓM TẮT cho màn tổng hợp (bảng điều hành của gói): đúng ba con số của màn này {issue_kinds, records, stale_sources} — không dựng thẻ, không
+    mã / tên. Gọi bằng QUYỀN NGƯỜI XEM (``ctx.call_as_optional("health.summary", ctx.p)``): người không xem được Sức khoẻ dữ liệu cả công ty ⇒ None,
+    bên gọi bỏ dòng đó — như khi đọc cả màn trước đây."""
+    return figures(assess(await _collect(ctx), datetime.now(UTC)))
+
+
 @m.query("overview", resource="health", title="Sức khoẻ dữ liệu", min_scope="all")
 async def overview(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     """Nguồn nào cập nhật tới đâu, bản ghi nào lỗi / thiếu, vì sao số trên các màn có thể lệch — số cả công ty."""
     r = assess(await _collect(ctx), datetime.now(UTC))
-    bad = [i for i in r["issues"] if i["n"]]
-    stale = [f for f in r["fresh"] if f["stale"]]
+    fig = figures(r)
+    bad = fig["issue_kinds"]
+    stale = fig["stale_sources"]
     blocks: list[dict[str, Any]] = [ui.b_kpis([
-        ui.kpi("Loại vấn đề cần sửa", len(bad), tone="orange" if bad else "green"),
-        ui.kpi("Bản ghi cần sửa", sum(i["n"] for i in bad), tone="orange" if bad else None),
-        ui.kpi("Nguồn cập nhật trễ", len(stale), tone="red" if stale else "green"),
+        ui.kpi("Loại vấn đề cần sửa", bad, tone="orange" if bad else "green"),
+        ui.kpi("Bản ghi cần sửa", fig["records"], tone="orange" if bad else None),
+        ui.kpi("Nguồn cập nhật trễ", stale, tone="red" if stale else "green"),
     ])]
     if r["why"]:
         blocks.append(ui.b_callout("warn", "Vì sao số trên các màn có thể lệch", facts=r["why"]))

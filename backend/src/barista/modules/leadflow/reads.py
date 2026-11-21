@@ -51,23 +51,42 @@ async def contact_gate(ctx: Ctx, inp: LeadIdsIn) -> dict[str, list[str]]:
     return {"gated": [str(r["lead_id"]) for r in rows]}
 
 
-@m.query("overview", resource="leadflow", title="Chia lead & hạn xử lý", min_scope="all")
-async def overview(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
-    now = datetime.now(zone())
-    since = now - timedelta(days=7)
-    stat = await ctx.one(
-        """WITH e AS (SELECT lead_id, kind, (data->>'on_time')::bool AS on_time FROM leadflow.sla_events WHERE at >= %s),
-                bad AS (SELECT DISTINCT lead_id FROM e WHERE kind = 'first_call_breached')
+async def _figures(ctx: Ctx, since: datetime) -> dict[str, int]:
+    """Số đếm của Chia lead & hạn xử lý trên CẢ tập trong phạm vi người xem (không phải danh sách đang hiện — danh sách có trần). MỘT định nghĩa cho ô
+    số của màn và cho ``leadflow.summary``. Lead ĐỖ (nạp từ hệ cũ — 0185) không phải "kẹt" / "quá hạn": đếm riêng."""
+    r = await ctx.one(
+        """WITH e AS (SELECT lead_id, kind, (data->>'on_time')::bool AS on_time FROM leadflow.sla_events WHERE at >= %(since)s),
+                bad AS (SELECT DISTINCT lead_id FROM e WHERE kind = 'first_call_breached'),
+                s AS (SELECT status, queue_reason, breached_at, imported_at FROM leadflow.lead_state
+                      WHERE status IN ('offered', 'waiting', 'contacted', 'queued') OR status = ANY(%(open)s))
            SELECT (SELECT count(DISTINCT lead_id) FROM e WHERE kind IN ('first_call_met', 'first_call_breached')) AS judged,
                   (SELECT count(DISTINCT lead_id) FROM e WHERE kind = 'first_call_met' AND on_time
                       AND lead_id NOT IN (SELECT lead_id FROM bad)) AS on_time,
                   (SELECT count(DISTINCT lead_id) FROM e WHERE kind = 'recalled') AS recalled,
-                  (SELECT count(DISTINCT lead_id) FROM e WHERE kind = 'returned') AS returned""", (since,))
-    assert stat is not None
-    # lead ĐỖ (nạp từ hệ cũ — 0185) không phải "kẹt" / "quá hạn": đếm riêng, không vào các ô vi phạm
+                  (SELECT count(DISTINCT lead_id) FROM e WHERE kind = 'returned') AS returned,
+                  (SELECT count(*) FROM s WHERE status = 'queued' AND imported_at IS NULL AND NOT coalesce(queue_reason, '') = ANY(%(planned)s)) AS stuck,
+                  (SELECT count(*) FROM s WHERE status = 'queued' AND imported_at IS NULL AND queue_reason = ANY(%(planned)s)) AS planned,
+                  (SELECT count(*) FROM s WHERE status = ANY(%(open)s) AND imported_at IS NULL) AS waiting,
+                  (SELECT count(*) FROM s WHERE status = ANY(%(open)s) AND imported_at IS NULL AND breached_at IS NOT NULL) AS grace,
+                  (SELECT count(*) FROM s WHERE status IN ('offered', 'waiting', 'contacted', 'queued') AND imported_at IS NOT NULL) AS parked""",
+        {"since": since, "open": list(OPEN), "planned": list(PLANNED)})
+    return {k: int(v) for k, v in (r or {}).items()}
+
+
+@m.query("summary", resource="leadflow", title="Chia lead — số tóm tắt", min_scope="all", internal=True)
+async def summary(ctx: Ctx, inp: NoInput) -> dict[str, int]:
+    """SỐ TÓM TẮT cho màn tổng hợp (bảng điều hành của gói): số đếm của màn Chia lead & hạn xử lý {stuck, planned, waiting, grace, judged, on_time,
+    recalled, returned, parked} (sự kiện: 7 ngày qua) — không lead nào, không tên. Gọi bằng QUYỀN NGƯỜI XEM (``ctx.call_as_optional(…, ctx.p)``):
+    người không xem được Chia lead cả công ty ⇒ None."""
+    return await _figures(ctx, datetime.now(zone()) - timedelta(days=7))
+
+
+@m.query("overview", resource="leadflow", title="Chia lead & hạn xử lý", min_scope="all")
+async def overview(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    now = datetime.now(zone())
+    fig = await _figures(ctx, now - timedelta(days=7))
     q_states = await ctx.all("SELECT lead_id, offering_code, source, queue_reason, updated_at FROM leadflow.lead_state WHERE status = 'queued'"
                              " AND imported_at IS NULL ORDER BY updated_at LIMIT 60")
-    parked = await ctx.val("SELECT count(*) FROM leadflow.lead_state WHERE status IN ('offered', 'waiting', 'contacted', 'queued') AND imported_at IS NOT NULL")
     planned = [q for q in q_states if q["queue_reason"] in PLANNED]
     stuck = [q for q in q_states if q["queue_reason"] not in PLANNED]
     waiting = await ctx.all("SELECT lead_id, holder_id, first_call_due, offering_code, breached_at FROM leadflow.lead_state WHERE status = ANY(%s)"
@@ -79,16 +98,16 @@ async def overview(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
         c = custs.get(str(q["lead_id"]), {})
         return f"{c.get('customer', '—')} · {q['offering_code'] or 'chưa chọn [[offering|l]]'} · {SOURCE_LABEL.get(q['source'], '')}"
 
-    judged = stat["judged"]
-    grace = [w for w in waiting if w["breached_at"] is not None]
-    kpis = [ui.kpi("Kẹt — không ai nhận", len(stuck), tone="red" if stuck else None),
-            ui.kpi("Chờ điều phối chia", len(planned), tone="orange" if planned else None),
-            ui.kpi("Đang chờ gọi lần đầu", len(waiting)),
-            ui.kpi("Gọi đúng hạn (7 ngày)", round(100 * stat["on_time"] / judged, 1) if judged else None, "percent",
-                   hint=f"{stat['on_time']} đúng hạn / {judged} lead đã có kết quả" if judged else "Chưa có lead nào có kết quả"),
-            ui.kpi("Thu hồi (7 ngày)", stat["recalled"], tone="orange" if stat["recalled"] else None),
-            ui.kpi("Quá hạn — trong ân hạn", len(grace), tone="red" if grace else None, hint="Đã báo trưởng nhóm, chưa thu hồi — chuyển tay ngay được"),
-            ui.kpi("Khách quay lại (7 ngày)", stat["returned"], tone="blue" if stat["returned"] else None,
+    # ô số: cả tập (``_figures``); danh sách bên dưới: vài chục dòng đầu
+    judged, n_stuck, n_planned, grace, parked = fig["judged"], fig["stuck"], fig["planned"], fig["grace"], fig["parked"]
+    kpis = [ui.kpi("Kẹt — không ai nhận", n_stuck, tone="red" if n_stuck else None),
+            ui.kpi("Chờ điều phối chia", n_planned, tone="orange" if n_planned else None),
+            ui.kpi("Đang chờ gọi lần đầu", fig["waiting"]),
+            ui.kpi("Gọi đúng hạn (7 ngày)", round(100 * fig["on_time"] / judged, 1) if judged else None, "percent",
+                   hint=f"{fig['on_time']} đúng hạn / {judged} lead đã có kết quả" if judged else "Chưa có lead nào có kết quả"),
+            ui.kpi("Thu hồi (7 ngày)", fig["recalled"], tone="orange" if fig["recalled"] else None),
+            ui.kpi("Quá hạn — trong ân hạn", grace, tone="red" if grace else None, hint="Đã báo trưởng nhóm, chưa thu hồi — chuyển tay ngay được"),
+            ui.kpi("Khách quay lại (7 ngày)", fig["returned"], tone="blue" if fig["returned"] else None,
                    hint="Khách đã có lead để lại thông tin lần nữa qua kênh khác — người đang chăm đã được báo")]
     if parked:
         kpis.append(ui.kpi(PARKED_LABEL[0].upper() + PARKED_LABEL[1:], parked,
@@ -96,7 +115,7 @@ async def overview(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
                                 "đó thành lead sống, hạn tính từ lúc giao"))
     blocks: list[dict[str, Any]] = [ui.b_kpis(kpis)]
     if stuck:
-        blocks.append(ui.b_callout("bad", f"{len(stuck)} lead kẹt", "Không có ai đủ điều kiện nhận, chưa có luật, hoặc đã thu hồi hết số lần. "
+        blocks.append(ui.b_callout("bad", f"{n_stuck} lead kẹt", "Không có ai đủ điều kiện nhận, chưa có luật, hoặc đã thu hồi hết số lần. "
                                    "Giao tay ở “Lead chờ chia” (có gợi ý người nhận), hoặc chỉnh luật ở “Lead đi đâu”.",
                                    actions=[ui.act("leadflow.drain", "Thử chia lại", style="primary")]))
         blocks.append(ui.b_list([{"title": qtitle(q), "subtitle": f"Chờ {_span(q['updated_at'], now)} — {QUEUE_REASON.get(q['queue_reason'], '')}", "tone": "bad",
