@@ -531,13 +531,46 @@ def _summary(r: Report, key: str) -> int:
 
 DEV_SETUP = r"""
 import asyncio, json, sys
+from psycopg import AsyncConnection
 from barista import seed
 from barista.config import settings
 from barista.db import db
 from barista.kernel import auth, executor, loader, packs, registry, screens
 from barista.kernel.migrate import migrate
 
-key, target_email = sys.argv[1], sys.argv[2]
+key, target_email, target_tenant = sys.argv[1], sys.argv[2], sys.argv[3]
+
+async def _resolve_existing_tenant():
+    async with await AsyncConnection.connect(settings.owner_database_url, autocommit=True) as conn:
+        has_table = (await (await conn.execute("SELECT to_regclass('core.tenants') IS NOT NULL")).fetchone() or (False,))[0]
+        if not has_table:
+            return None   # DB mới hoàn toàn — được chạy migration + nạp công ty mẫu
+        n_tenants = (await (await conn.execute("SELECT count(*) FROM core.tenants")).fetchone() or (0,))[0]
+        if not n_tenants:
+            return None   # DB đã có khung nhưng chưa có công ty nào
+        rows = await (await conn.execute(
+            "SELECT t.id, t.name, u.email FROM core.tenants t "
+            "JOIN core.memberships m ON m.tenant_id = t.id AND m.active "
+            "JOIN core.users u ON u.id = m.user_id "
+            "WHERE m.role = 'admin' AND lower(u.email) = lower(%s) "
+            "ORDER BY t.created_at",
+            (target_email,),
+        )).fetchall()
+        if target_tenant:
+            rows = [r for r in rows if str(r[0]) == target_tenant or r[1].strip().lower() == target_tenant.strip().lower()]
+        if not rows:
+            raise SystemExit(
+                f"DỪNG: DB đã có công ty nhưng không thấy quản trị khớp {target_email!r}"
+                + (f" tại công ty {target_tenant!r}" if target_tenant else "")
+                + " — chưa chạy migration nào; dùng DB thử riêng (--db barista_erp_packdev) hoặc nêu đúng --admin / --tenant"
+            )
+        if len(rows) > 1:
+            choices = ", ".join(f"{r[1]} ({r[0]})" for r in rows)
+            raise SystemExit(
+                f"DỪNG: quản trị {target_email!r} thuộc {len(rows)} công ty ({choices}) — "
+                "chưa chạy migration nào; chỉ định rõ --tenant <tên hoặc UUID>"
+            )
+        return {"id": rows[0][0], "name": rows[0][1], "email": rows[0][2]}
 
 async def run():
     if (settings.env or "").strip().lower() == "production":
@@ -545,28 +578,15 @@ async def run():
     loader.load()
     if key not in registry.PACKS:
         raise SystemExit(f"Không nạp được gói {key!r} — kiểm tra entry point barista.packs trong pyproject.toml")
+    # Chốt ĐÚNG MỘT công ty đích TRƯỚC khi chạy migration (DB có sẵn nhưng sai admin / mơ hồ nhiều công ty ⇒ dừng sạch, không tạo schema gói)
+    t_row = await _resolve_existing_tenant()
     ran = await migrate(settings.owner_database_url)
     await db.open(settings.database_url, settings.owner_database_url)
     try:
-        async with db.owner.connection() as conn:
-            any_tenant = await (await conn.execute("SELECT count(*) AS n FROM core.tenants")).fetchone()
-            has_tenants = bool(any_tenant and any_tenant["n"])
-            t_row = await (await conn.execute(
-                "SELECT t.id, t.name, u.email FROM core.tenants t "
-                "JOIN core.memberships m ON m.tenant_id = t.id AND m.active "
-                "JOIN core.users u ON u.id = m.user_id "
-                "WHERE m.role = 'admin' AND lower(u.email) = lower(%s) LIMIT 1",
-                (target_email,),
-            )).fetchone()
-        if not has_tenants:
+        if t_row is None:
             tid = await seed.sample_company(seed.TENANT, "sample", (key,))
             t_name, login_email = seed.TENANT, f"admin@{seed.DOMAIN}"
             enabled_now = True
-        elif t_row is None:
-            raise SystemExit(
-                f"DỪNG: DB đã có công ty nhưng không thấy quản trị mẫu {target_email!r} — "
-                "không tự chọn công ty khác; dùng DB thử riêng (--db barista_erp_packdev) hoặc nêu rõ --admin <email>"
-            )
         else:
             tid, t_name, login_email = t_row["id"], t_row["name"], t_row["email"]
             async with db.owner.connection() as conn:
@@ -674,7 +694,7 @@ def _pack_key(pack: Path) -> str:
 
 
 def dev(pack: Path, extra: list[Path], port: int, web_port: int, no_serve: bool,
-        db_name: str = DEV_DB_DEFAULT, admin_email: str = "admin@sanmau.demo",
+        db_name: str = DEV_DB_DEFAULT, admin_email: str = "admin@sanmau.demo", target_tenant: str = "",
         env_extra: dict[str, str] | None = None, vpy_override: Path | None = None) -> int:
     """Chạy thử một gói trên DB thử local — từ chối BARISTA_ENV=production, từ chối DB ngoài danh sách dev, không `uv sync` xoá gói, không `seed --reset`."""
     pack = pack.resolve()
@@ -729,7 +749,7 @@ def dev(pack: Path, extra: list[Path], port: int, web_port: int, no_serve: bool,
     print(f"  OK: đã cài editable {pack.name} vào {vpy}")
 
     step(f"2. Chạy migration & bật gói trên DB thử {owner_db} (giữ nguyên dữ liệu hiện có)")
-    code, out = run([str(vpy), "-c", DEV_SETUP, key, admin_email], cwd=core_be, env=env)
+    code, out = run([str(vpy), "-c", DEV_SETUP, key, admin_email, target_tenant], cwd=core_be, env=env)
     if code:
         die(f"chuẩn bị DB cho gói {key} lỗi:\n{out[-2000:]}")
     info = json.loads(out.strip().splitlines()[-1])
@@ -772,6 +792,7 @@ def main(argv: list[str]) -> int:
     d.add_argument("pack", type=Path)
     d.add_argument("--db", default=DEV_DB_DEFAULT, help=f"DB thử local đích (mặc định {DEV_DB_DEFAULT}; chỉ nhận barista_erp / barista_erp_dev* / barista_erp_packdev*)")
     d.add_argument("--admin", default="admin@sanmau.demo", help="email quản trị của công ty đích để bật gói (mặc định admin@sanmau.demo)")
+    d.add_argument("--tenant", default="", help="tên hoặc UUID công ty đích khi quản trị thuộc nhiều công ty")
     d.add_argument("--with", dest="extra", action="append", type=Path, default=[], help="gói khác cần cài kèm (lặp được)")
     d.add_argument("--port", type=int, default=8300, help="cổng API dev (mặc định 8300)")
     d.add_argument("--web-port", type=int, default=3100, help="cổng web để in địa chỉ + lệnh mở màn (mặc định 3100)")
@@ -787,7 +808,7 @@ def main(argv: list[str]) -> int:
         new(args.key, args.dest, args.title.strip() or args.key.replace("_", " ").capitalize(), "connector" if args.connector else "plain")
         return 0
     if args.cmd == "dev":
-        return dev(args.pack, args.extra, args.port, args.web_port, args.no_serve, db_name=args.db, admin_email=args.admin)
+        return dev(args.pack, args.extra, args.port, args.web_port, args.no_serve, db_name=args.db, admin_email=args.admin, target_tenant=args.tenant)
     return check(args.pack, args.core_ref, args.worktree, args.extra, args.keep)
 
 

@@ -241,12 +241,27 @@ async def test_pack_dev_installs_migrates_enables_and_preserves_existing_db_data
             tid = (await (await conn.execute("UPDATE core.tenants SET name = 'Công ty giữ dữ liệu' RETURNING id")).fetchone() or (None,))[0]
             assert tid is not None
 
-        # Không tự chọn công ty khác nếu không khớp email quản trị chỉ định
+        # Ca 1 (rà Codex 21/11): sai email admin ⇒ dừng TRƯỚC khi chạy migration (schema gói chưa được tạo)
         with pytest.raises(SystemExit):
             packkit.dev(made, [], 8399, 3199, True, db_name=dbname, admin_email="khongco@example.demo", env_extra=env_extra, vpy_override=vpy)
         capsys.readouterr()
+        async with await AsyncConnection.connect(owner_url, autocommit=True) as conn:
+            assert (await (await conn.execute("SELECT to_regnamespace('kho_lanh') IS NULL")).fetchone()) == (True,)
 
-        rc1 = packkit.dev(made, [], 8399, 3199, True, db_name=dbname, env_extra=env_extra, vpy_override=vpy)
+        # Ca 2 (rà Codex 21/11): một admin thuộc HAI công ty ⇒ dừng TRƯỚC khi chạy migration (không tự chọn bừa LIMIT 1)
+        async with await AsyncConnection.connect(owner_url, autocommit=True) as conn:
+            tid2 = (await (await conn.execute("INSERT INTO core.tenants (name) VALUES ('Công ty thứ hai') RETURNING id")).fetchone() or (None,))[0]
+            await conn.execute("INSERT INTO core.roles (tenant_id, key, label) VALUES (%s, 'admin', 'Quản trị')", (tid2,))
+            uid = (await (await conn.execute("SELECT id FROM core.users WHERE lower(email) = 'admin@sanmau.demo'")).fetchone() or (None,))[0]
+            await conn.execute("INSERT INTO core.memberships (tenant_id, user_id, role, active) VALUES (%s, %s, 'admin', true)", (tid2, uid))
+        with pytest.raises(SystemExit):
+            packkit.dev(made, [], 8399, 3199, True, db_name=dbname, env_extra=env_extra, vpy_override=vpy)
+        capsys.readouterr()
+        async with await AsyncConnection.connect(owner_url, autocommit=True) as conn:
+            assert (await (await conn.execute("SELECT to_regnamespace('kho_lanh') IS NULL")).fetchone()) == (True,)
+
+        # Nêu rõ --tenant ⇒ chạy migration và bật ĐÚNG công ty đó (công ty thứ hai không bị đụng)
+        rc1 = packkit.dev(made, [], 8399, 3199, True, db_name=dbname, target_tenant="Công ty giữ dữ liệu", env_extra=env_extra, vpy_override=vpy)
         out1 = capsys.readouterr().out
         assert rc1 == 0, out1
         assert "Công ty giữ dữ liệu" in out1 and "vừa bật" in out1 and "http://localhost:3199" in out1 and "http://127.0.0.1:8399/docs" in out1
@@ -255,10 +270,11 @@ async def test_pack_dev_installs_migrates_enables_and_preserves_existing_db_data
         async with await AsyncConnection.connect(owner_url, autocommit=True) as conn:
             assert (await (await conn.execute("SELECT name FROM core.tenants WHERE id = %s", (tid,))).fetchone()) == ("Công ty giữ dữ liệu",)
             assert (await (await conn.execute("SELECT 1 FROM core.tenant_packs WHERE tenant_id = %s AND pack = 'kho_lanh'", (tid,))).fetchone()) == (1,)
+            assert (await (await conn.execute("SELECT 1 FROM core.tenant_packs WHERE tenant_id = %s AND pack = 'kho_lanh'", (tid2,))).fetchone()) is None
             assert (await (await conn.execute("SELECT to_regnamespace('kho_lanh') IS NOT NULL")).fetchone()) == (True,)
 
         # Chạy lại lần 2: idempotent, không chạy lại migration, vẫn giữ nguyên dữ liệu
-        rc2 = packkit.dev(made, [], 8399, 3199, True, db_name=dbname, env_extra=env_extra, vpy_override=vpy)
+        rc2 = packkit.dev(made, [], 8399, 3199, True, db_name=dbname, target_tenant="Công ty giữ dữ liệu", env_extra=env_extra, vpy_override=vpy)
         out2 = capsys.readouterr().out
         assert rc2 == 0 and "đã bật sẵn" in out2 and "không có migration mới" in out2
     finally:
