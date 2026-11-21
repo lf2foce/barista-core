@@ -22,6 +22,8 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
 
@@ -117,8 +119,9 @@ def _sealed(html: str, script: str = "") -> str:
     return out
 
 
-def _run_chrome(exe: str, html: str, mode: list[str], out_name: str, script: str = "") -> bytes:
-    """``mode``: cờ chọn đầu ra, ``{out}`` = đường tệp ra trong thư mục tạm; ``--dump-dom`` ⇒ đầu ra là DOM in ra stdout."""
+def _run_chrome(exe: str, html: str, mode: list[str], out_name: str, script: str = "", cancel: threading.Event | None = None) -> bytes:
+    """``mode``: cờ chọn đầu ra, ``{out}`` = đường tệp ra trong thư mục tạm; ``--dump-dom`` ⇒ đầu ra là DOM in ra stdout. ``cancel`` được đặt ⇒ diệt trình duyệt sớm. Hàm chỉ
+    RETURN / raise SAU KHI cả nhóm tiến trình trình duyệt đã bị diệt và đã thu (``wait``) — người gọi dựa vào đó để nhả chỗ giới hạn lượt."""
     with tempfile.TemporaryDirectory(prefix="barista-chrome-") as d:
         src, out = Path(d) / "in.html", Path(d) / out_name
         src.write_text(_sealed(html, script), encoding="utf-8")
@@ -130,15 +133,23 @@ def _run_chrome(exe: str, html: str, mode: list[str], out_name: str, script: str
             cmd.insert(1, "--no-sandbox")
         with out.open("wb") if "--dump-dom" in mode else open(os.devnull, "wb") as sink:
             proc = subprocess.Popen(cmd, stdout=sink, stderr=subprocess.DEVNULL, start_new_session=True)
+        deadline = time.monotonic() + CHROME_TIMEOUT_S
         try:
-            proc.wait(timeout=CHROME_TIMEOUT_S)
-        except subprocess.TimeoutExpired as e:
-            raise Unavailable("Dựng PDF quá lâu — thử lại sau, hoặc bớt ảnh") from e
+            while proc.poll() is None:
+                if cancel is not None and cancel.is_set():
+                    raise Unavailable("Đã huỷ dựng PDF")
+                if time.monotonic() > deadline:
+                    raise Unavailable("Dựng PDF quá lâu — thử lại sau, hoặc bớt ảnh")
+                try:
+                    proc.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    pass
         finally:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)   # trình duyệt đẻ nhiều tiến trình con — diệt cả nhóm, không để sót
             except ProcessLookupError:
                 pass
+            proc.wait()   # thu tiến trình gốc: tới đây trình duyệt thật sự đã thoát
         if not out.exists() or out.stat().st_size == 0 or out.stat().st_size > OUT_MAX_BYTES:
             raise Unavailable("Trình duyệt không dựng được tệp — thử lại, hoặc báo quản trị nếu lỗi lặp lại")
         return out.read_bytes()
@@ -150,8 +161,21 @@ async def _chrome(html: str, mode: list[str], out_name: str, script: str = "") -
         raise Unavailable("Máy chủ chưa cài trình duyệt để dựng PDF ấn phẩm — báo quản trị (cần Chromium trong ảnh API)")
     if len(html.encode()) > HTML_MAX_BYTES:
         raise Unavailable("Ấn phẩm quá nặng để dựng PDF (nhiều ảnh lớn) — bớt ảnh rồi thử lại")
-    async with _chrome_slot:
-        return await asyncio.to_thread(_run_chrome, exe, html, mode, out_name, script)
+    await _chrome_slot.acquire()   # chờ chỗ: huỷ ở đây chưa giữ gì ⇒ không có gì để nhả
+    cancel = threading.Event()
+    try:
+        job = asyncio.ensure_future(asyncio.to_thread(_run_chrome, exe, html, mode, out_name, script, cancel))
+    except BaseException:
+        _chrome_slot.release()
+        raise
+    # Chỗ giới hạn nhả ĐÚNG MỘT LẦN, khi luồng chạy trình duyệt đã xong (``_run_chrome`` chỉ kết thúc sau khi diệt + thu cả nhóm tiến trình) — không nhả khi tác vụ chờ bị huỷ:
+    # huỷ chỉ báo luồng diệt trình duyệt (``cancel``), còn trình duyệt cũ chưa thoát thì lượt sau vẫn phải chờ ⇒ không bao giờ hai trình duyệt cùng lúc.
+    job.add_done_callback(lambda j: (_chrome_slot.release(), None if j.cancelled() else j.exception())[0])
+    try:
+        return await asyncio.shield(job)
+    except asyncio.CancelledError:
+        cancel.set()
+        raise
 
 
 async def html_to_pdf(html: str) -> bytes:
