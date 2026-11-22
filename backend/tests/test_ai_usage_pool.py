@@ -7,9 +7,12 @@ rồi xếp hàng ghi lại — không dòng nào mất. Lệnh soạn câu hỏ
 import asyncio
 import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import suppress
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RunUsage
@@ -25,6 +28,24 @@ from tests.conftest import Who, ok, owner_val
 
 def _usage() -> RunUsage:
     return RunUsage(requests=1, input_tokens=10, output_tokens=5)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _stop_background_flusher() -> AsyncIterator[None]:
+    """Diệt task ``metering._flusher`` còn ngủ từ bài test trước (vd sau ``test_a_full_pool_held_by_others``): nếu không huỷ, nó thức dậy giữa
+    bài sau (dù bài sau đã monkeypatch ``_retry_forever``) và ``popleft`` dòng đang kiểm ``pending()`` ⇒ lỗi chập chờn."""
+    async def _cancel() -> None:
+        task = metering._flusher
+        if isinstance(task, asyncio.Task) and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        if isinstance(metering._flusher, asyncio.Task):
+            metering._flusher = None
+
+    await _cancel()
+    yield
+    await _cancel()
 
 
 async def _count(category: str) -> int:

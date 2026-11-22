@@ -2,28 +2,34 @@
 # Kiểm TRƯỚC KHI ĐẨY / GỘP main của lõi (DIEU-PHOI luật 2) — cùng các pha test của deploy/release.sh (deploy/checks.sh), chạy trên CÂY LÀM VIỆC hiện tại
 # (file đã theo dõi + file mới chưa bị .gitignore, kể cả sửa chưa commit), để gói vỡ vì thay đổi của lõi lộ ra TRƯỚC khi gộp, không phải lúc phát hành
 # (15/11/2026: một lượt phát hành dừng 4 lần ở test; một lần do lõi đổi chữ hướng dẫn MCP + phạm vi token làm vỡ 2 test của real_estate).
-#   bash scripts/premerge.sh <bản cài>               # BẮT BUỘC nêu bản cài: ruff + pyright + TOÀN BỘ test lõi (~5 phút máy 8 GB) + gói ghim của bản cài
+#   bash scripts/premerge.sh <bản cài>               # BẮT BUỘC nêu bản cài: bảo thủ — chạm backend/src hoặc scripts/packkit tự chạy ĐỦ cả nhóm upgrade; chỉ bỏ upgrade khi đổi thuần web/docs/deploy/test ngoài upgrade
+#   bash scripts/premerge.sh --full <bản cài>        # luôn chạy ĐỦ kể cả nhóm upgrade (tạo đủ dấu để release.sh không phải chạy lại Python)
+#   bash scripts/premerge.sh --no-upgrade <bản cài>  # bỏ qua nhóm upgrade khi lặp nhanh lúc dev (không ghi dấu tổng ⇒ release.sh vẫn chạy bù bắt buộc)
 #   bash scripts/premerge.sh --quick <bản cài>       # test lõi chỉ: test_meta / pack_surface / dummy_pack / upgrade + file test trùng tên module đã đổi
 #   bash scripts/premerge.sh --packs-main <bản cài>  # gói của bản cài lấy ở origin/main của barista-packs thay cho tag ghim (bắt gói vỡ trước khi tag)
 # Pha: (1) chụp cây làm việc ⇒ tar, gói của bản cài ở tag + commit ghim (deploy/packs.py — như phát hành) ⇒ thư mục tạm; (2) lõi MỘT MÌNH trong môi
-# trường uv RIÊNG của thư mục tạm: ruff + pyright + pytest; (3) cài gói vào môi trường tạm đó: test cấu trúc của lõi (tests/pack_guards.txt) + ruff /
-# pyright / pytest từng gói. Không đụng .venv của repo / worktree nào, DB test mang mã lần chạy; bẫy EXIT xoá thư mục tạm + DB. Không chạy web.
+# trường uv RIÊNG của thư mục tạm: ruff + pyright + pytest (tách dấu core-main / core-upgrade); (3) cài gói vào môi trường tạm đó: test cấu trúc
+# của lõi (tests/pack_guards.txt) + ruff / pyright / pytest từng gói (tách dấu guards + từng gói ⇒ lỗi tạm thời ở 1 gói không mất công chạy lại trên cùng nội dung). Không chạy web.
 # Khoá phát hành (DIEU-PHOI) có dòng ⇒ từ chối chạy (in người giữ). Thoát != 0 ⇒ KHÔNG đẩy main.
 set -euo pipefail
 QUICK=0
+FULL=0
+NO_UPGRADE=0
 PACKS_MAIN=0
 INSTANCE=
 while [ $# -gt 0 ]; do
   case "$1" in
     --quick) QUICK=1 ;;
+    --full) FULL=1 ;;
+    --no-upgrade) NO_UPGRADE=1 ;;
     --packs-main) PACKS_MAIN=1 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     -*) echo "Tuỳ chọn lạ: $1 (xem --help)" >&2; exit 2 ;;
     *) INSTANCE="$1" ;;
   esac
   shift
 done
-[ -n "$INSTANCE" ] || { echo "Thiếu bản cài. Dùng: bash scripts/premerge.sh [--quick] [--packs-main] <bản cài> (tên = barista-ops/instances/<tên>.json; không có mặc định)" >&2; exit 2; }
+[ -n "$INSTANCE" ] || { echo "Thiếu bản cài. Dùng: bash scripts/premerge.sh [--full|--no-upgrade|--quick] [--packs-main] <bản cài> (tên = barista-ops/instances/<tên>.json; không có mặc định)" >&2; exit 2; }
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 bash scripts/release_lock.sh || exit 3
@@ -77,7 +83,8 @@ DIGEST="$(tree_digest "$WORK")"   # trước khi test (test tạo tệp tạm) �
 echo "Kiểm cây làm việc $(git rev-parse --short HEAD)$([ -z "$(git status --porcelain)" ] || echo ' + thay đổi chưa commit') trong $WORK"
 lap
 
-PYTEST_ARGS=()
+LABEL="premerge $INSTANCE $(git rev-parse --short HEAD)"
+NEED_UPGRADE=0
 if [ "$QUICK" = 1 ]; then
   # file đổi so với điểm rẽ khỏi origin/main (kể cả chưa commit / chưa theo dõi) ⇒ file test trùng tên module
   BASE="$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD)"
@@ -103,14 +110,43 @@ if [ "$QUICK" = 1 ]; then
   echo "--quick: $SEL"
   # shellcheck disable=SC2206
   PYTEST_ARGS=(-n 2 $SEL)
+  PHASE="lõi: ruff + pyright + pytest (--quick)"; T_PHASE=$SECONDS
+  check_core "$WORK" "${PYTEST_ARGS[@]}"
+  lap
+else
+  if [ "$FULL" = 1 ]; then
+    NEED_UPGRADE=1
+  elif [ "$NO_UPGRADE" = 1 ]; then
+    NEED_UPGRADE=0
+  else
+    # Bảo thủ: bất kỳ thay đổi nào trong backend/src/ (gồm registry, presets, workspaces, barista.api, module, migration…), pyproject/uv.lock,
+    # scripts/packkit/, conftest hoặc các file/fixture upgrade đều tự chạy đủ nhóm upgrade; chỉ bỏ qua tự động khi đổi thuần web/docs/deploy/test khác.
+    BASE="$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD)"
+    for f in $( { git diff --name-only "$BASE"; git ls-files -o --exclude-standard; } | sort -u); do
+      case "$f" in
+        backend/src/*|\
+        backend/pyproject.toml|\
+        backend/uv.lock|\
+        backend/tests/conftest.py|\
+        backend/tests/test_upgrade.py|\
+        backend/tests/test_pack_loading.py|\
+        backend/tests/test_packkit.py|\
+        backend/tests/fixtures/*|\
+        scripts/packkit/*)
+          NEED_UPGRADE=1; break ;;
+      esac
+    done
+  fi
+  PHASE="lõi: ruff + pyright + pytest"; [ "$NEED_UPGRADE" = 1 ] || PHASE="$PHASE (bỏ nhóm upgrade)"; T_PHASE=$SECONDS
+  check_core_tiered "$WORK" "$CORE_DIGEST" "$LABEL" "$NEED_UPGRADE"
+  [ "$NEED_UPGRADE" = 1 ] || echo "  bỏ qua nhóm upgrade (không chạm backend/src hoặc packkit, hoặc có --no-upgrade — dùng --full để chạy đủ; release.sh luôn chạy bắt buộc)"
+  lap
 fi
 
-PHASE="lõi: ruff + pyright + pytest"; [ "$QUICK" = 0 ] || PHASE="$PHASE (--quick)"; T_PHASE=$SECONDS
-check_core "$WORK" ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"}
-[ "$QUICK" = 1 ] || stamp_write "core-$CORE_DIGEST" "premerge $INSTANCE $(git rev-parse --short HEAD)"
-lap
 PHASE="gói ${PACKS_REF:-ghim} của $INSTANCE: pack_guards + test từng gói"; T_PHASE=$SECONDS
-check_packs "$WORK" "$PACKS"
+PACK_DIGEST=""
+if [ "$QUICK" = 0 ] && [ -z "$PACKS_REF" ]; then PACK_DIGEST="$DIGEST"; fi
+check_packs "$WORK" "$PACKS" "$PACK_DIGEST" "$LABEL"
 lap
-# dấu "đã kiểm đủ" chỉ khi kiểm ĐỦ (không --quick) và gói ở tag ghim (không --packs-main) — đúng điều release.sh sẽ kiểm
-if [ "$QUICK" = 0 ] && [ -z "$PACKS_REF" ]; then stamp_write "$DIGEST" "premerge $INSTANCE $(git rev-parse --short HEAD)"; fi
+# dấu tổng "đã kiểm đủ" chỉ khi kiểm ĐỦ cả nhóm upgrade (không --quick, không --packs-main) — release.sh khi thấy dấu này sẽ bỏ qua toàn bộ Python
+if [ "$QUICK" = 0 ] && [ -z "$PACKS_REF" ] && [ "$NEED_UPGRADE" = 1 ]; then stamp_write "$DIGEST" "$LABEL"; fi

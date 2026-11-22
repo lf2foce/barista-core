@@ -434,5 +434,76 @@ def test_check_stamps_split_core_from_packs_and_web(tmp_path: Path) -> None:
     (tmp_path / "web/app.ts").write_text("2\n")
     assert digests()[:2] == (full2, core2) and digests()[2] != web2
     (tmp_path / "backend/src/a.py").write_text("x = 2\n")                  # lõi đổi ⇒ dấu lõi + dấu đủ đổi
-    full3, core3, _ = digests()
-    assert full3 != full2 and core3 != core2
+    full3, core3, web3 = digests()
+    assert full3 != full2 and core3 != core2 and web3 != web2
+    # scripts/packkit/ và 3 file docs/ mà test lõi đọc cũng nằm trong dấu lõi + dấu đủ ⇒ sửa chúng vô hiệu cache cũ
+    (tmp_path / "scripts/packkit").mkdir(parents=True)
+    (tmp_path / "scripts/packkit/packkit.py").write_text("v = 1\n")
+    full4, core4, web4 = digests()
+    assert full4 != full3 and core4 != core3 and web4 == web3
+    (tmp_path / "scripts/packkit/packkit.py").write_text("v = 2\n")
+    full5, core5, web5 = digests()
+    assert full5 != full4 and core5 != core4 and web5 == web4
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/MODULE-MAP.md").write_text("# map\n")
+    full6, core6, web6 = digests()
+    assert full6 != full5 and core6 != core5 and web6 == web5
+
+
+def test_tiered_core_and_per_pack_stamps_resume_after_partial_run(tmp_path: Path) -> None:
+    """deploy/checks.sh: tách dấu lõi (core-main / core-upgrade) và dấu từng gói (guards / pack-<k>) ⇒ lỗi ở một gói hoặc premerge bỏ qua
+    nhóm upgrade không làm mất công chạy lại các pha đã đạt; release.sh (run_upgrade=1) vẫn chạy đủ nhóm upgrade trước khi ghi dấu tổng."""
+    checks = Path(__file__).resolve().parents[2] / "deploy" / "checks.sh"
+    stamps = tmp_path / "stamps"
+    log = tmp_path / "calls.log"
+    work = tmp_path / "work"
+    (work / "backend" / ".venv" / "bin").mkdir(parents=True)
+    (work / "backend" / ".venv" / "bin" / "python").write_text("#!/bin/sh\n")
+    (work / "backend" / ".venv" / "bin" / "python").chmod(0o755)
+    (work / "backend" / "tests").mkdir(parents=True)
+    (work / "backend" / "tests" / "pack_guards.txt").write_text("tests/test_meta.py\n")
+
+    script = f'''
+set -euo pipefail
+export BARISTA_CHECK_STAMPS="{stamps}"
+. "{checks}"
+prepare_env() {{ echo "prepare" >> "{log}"; }}
+check_core() {{ shift; echo "core:$*" >> "{log}"; }}
+uv() {{
+  echo "uv:$*" >> "{log}"
+  case "$*" in
+    *packs/p2/tests*) [ -f "{tmp_path}/fix_p2" ] || return 1 ;;
+  esac
+}}
+check_core_tiered "{work}" "digC" "pm" 0
+echo "---" >> "{log}"
+check_core_tiered "{work}" "digC" "rel" 1
+echo "---" >> "{log}"
+check_core_tiered "{work}" "digC" "rel2" 1
+echo "---" >> "{log}"
+check_core_tiered "{work}" "digFull" "full" 1
+echo "===" >> "{log}"
+check_packs "{work}" "p1 p2" "digA" "pm" || true
+[ -f "{stamps}/guards-digA.ok" ] && [ -f "{stamps}/pack-p1-digA.ok" ] && [ ! -f "{stamps}/pack-p2-digA.ok" ]
+echo "---" >> "{log}"
+touch "{tmp_path}/fix_p2"
+check_packs "{work}" "p1 p2" "digA" "pm2"
+echo "---" >> "{log}"
+check_packs "{work}" "p1 p2" "digA" "rel"
+'''
+    subprocess.run(["bash", "-c", script], check=True)
+    sections = log.read_text().split("===\n")
+    c1, c2, c3, c4 = [s.strip().splitlines() for s in sections[0].split("---\n")]
+    assert c1 == ["core:-m not upgrade"]                                            # premerge không upgrade: chỉ chạy lõi chính
+    assert c2 == ["prepare", "uv:run --no-sync pytest -q -m upgrade"]               # release.sh: bỏ lõi chính, chỉ chạy bù upgrade
+    assert c3 == []                                                                 # lần sau: có dấu tổng core-digC ⇒ 0 việc
+    assert c4 == ["core:"]                                                          # chạy đủ từ đầu: gộp 1 lượt pytest (không tách nối tiếp)
+    assert (stamps / "core-digC.ok").is_file() and (stamps / "core-digFull.ok").is_file()
+    assert (stamps / "core-main-digFull.ok").is_file() and (stamps / "core-upgrade-digFull.ok").is_file()
+
+    p1, p2, p3 = [s.strip().splitlines() for s in sections[1].split("---\n")]
+    assert any("test_meta.py" in x for x in p1) and any("packs/p1/tests" in x for x in p1) and any("packs/p2/tests" in x for x in p1)
+    # chạy lại sau khi sửa p2: KHÔNG chạy lại guards hay p1, chỉ chạy đúng p2
+    assert not any("test_meta.py" in x for x in p2) and not any("packs/p1/tests" in x for x in p2) and any("packs/p2/tests" in x for x in p2)
+    assert (stamps / "guards-digA.ok").is_file() and (stamps / "pack-p1-digA.ok").is_file() and (stamps / "pack-p2-digA.ok").is_file()
+    assert p3 == []                                                                 # tất cả đã có dấu ⇒ không cài lại gói, 0 việc

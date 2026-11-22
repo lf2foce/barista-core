@@ -62,6 +62,9 @@ dev = [
 testpaths = ["tests"]
 # 4 tiến trình, mỗi tiến trình một DB (tests/conftest.py); file nào cũng trọn trong một tiến trình. Tuần tự: -n0. Máy 8 GB — đừng -n auto.
 addopts = "-n 4 --dist loadfile"
+markers = [
+    "upgrade: diễn tập nâng cấp migration & nạp/gỡ gói (test_upgrade, test_pack_loading, test_packkit — chậm; tự chạy khi đổi backend/src hoặc packkit và bắt buộc ở release.sh)",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"

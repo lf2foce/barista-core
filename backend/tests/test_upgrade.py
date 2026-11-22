@@ -17,6 +17,7 @@ from barista.seed import reset_schemas
 from tests.conftest import MAKE_UPGRADE_DB, UPGRADE_URL, ensure_db
 
 URL = UPGRADE_URL
+pytestmark = pytest.mark.upgrade
 
 
 # Bản phân phối có chuỗi migration thuộc LỊCH SỬ mà các kịch bản dựng lại. Gói đã rời lõi mà chuỗi của nó từng nằm trong lịch sử chung (bố cục cũ, dãy số

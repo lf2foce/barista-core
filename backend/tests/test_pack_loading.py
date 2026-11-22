@@ -18,6 +18,7 @@ from tests.conftest import MAKE_UPGRADE_DB, UPGRADE_URL, ensure_db
 
 BACKEND = Path(__file__).resolve().parent.parent
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "barista-pack-sample"
+pytestmark = pytest.mark.upgrade
 
 
 def install(site: Path) -> Path:

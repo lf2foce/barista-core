@@ -59,17 +59,17 @@ CORE_DIGEST="$(tree_digest "$WORK" core)"
 WEB_DIGEST="$(tree_digest "$WORK" web)"
 T0=$SECONDS
 WEB_PID=""
-if ! stamp_ok "web-$WEB_DIGEST"; then
+if ! stamp_ok "web-$WEB_DIGEST" "web"; then
   (T=$SECONDS; rc=0; check_web "$WORK" > "$SHIP/web.log" 2>&1 || rc=$?; echo "  web: typecheck + lint + test: $((SECONDS - T))s" >> "$SHIP/web.log"; exit $rc) &
   WEB_PID=$!
 fi
-if ! stamp_ok "$DIGEST"; then
+if ! stamp_ok "$DIGEST" "lõi + gói đủ"; then
   T=$SECONDS
-  if stamp_ok "core-$CORE_DIGEST"; then prepare_env "$WORK"
-  else check_core "$WORK"; stamp_write "core-$CORE_DIGEST" "release.sh $INSTANCE ${SHA:0:8}"; echo "  lõi: ruff + pyright + pytest: $((SECONDS - T))s"; fi
+  check_core_tiered "$WORK" "$CORE_DIGEST" "release.sh $INSTANCE ${SHA:0:8}" 1
+  echo "  lõi: $((SECONDS - T))s"
   T=$SECONDS
-  check_packs "$WORK" "$PACKS"
-  echo "  gói của $INSTANCE: pack_guards + test từng gói: $((SECONDS - T))s"
+  check_packs "$WORK" "$PACKS" "$DIGEST" "release.sh $INSTANCE ${SHA:0:8}"
+  echo "  gói của $INSTANCE: $((SECONDS - T))s"
   stamp_write "$DIGEST" "release.sh $INSTANCE ${SHA:0:8}"
 fi
 if [ -n "$WEB_PID" ]; then

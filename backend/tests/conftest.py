@@ -89,6 +89,11 @@ RUN_MARK = "barista-test-run"   # dấu trên DB do lần chạy test tự tạo
 STALE_HOURS = float(os.environ.get("BARISTA_TEST_STALE_HOURS", "6"))
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Đăng ký marker dùng chung ở conftest để cả bộ test gói (đọc pyproject.toml riêng, nạp ``-p tests.conftest``) không báo cảnh báo marker lạ."""
+    config.addinivalue_line("markers", "upgrade: diễn tập nâng cấp migration & nạp/gỡ gói (test_upgrade, test_pack_loading, test_packkit)")
+
+
 def pytest_sessionstart(session: pytest.Session) -> None:
     """Dọn DB của lần chạy CŨ chết giữa chừng (không tới được pytest_sessionfinish): chỉ DB mang dấu ``RUN_MARK`` tạo quá ``STALE_HOURS`` giờ —
     DB người dùng tự tạo / chỉ định không có dấu nên không bao giờ bị đụng. Chỉ tiến trình chính làm (tiến trình con xdist bỏ qua)."""

@@ -15,6 +15,7 @@ import barista.api
 from tests.test_pack_surface import _imports, _internal
 
 ROOT = Path(__file__).resolve().parents[2]
+pytestmark = pytest.mark.upgrade
 _spec = importlib.util.spec_from_file_location("packkit", ROOT / "scripts" / "packkit" / "packkit.py")
 assert _spec and _spec.loader
 packkit = importlib.util.module_from_spec(_spec)
