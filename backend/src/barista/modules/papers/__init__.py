@@ -8,6 +8,7 @@ Mẫu nội dung là GIẢ ĐỊNH ban đầu — luật sư / kế toán của 
 
 import base64
 import io
+import logging
 import re
 from datetime import date
 from typing import Any, Literal
@@ -30,6 +31,7 @@ from barista.api import (
     Screen,
     SearchIn,
     SearchTerms,
+    can_run,
     field,
     files,
     today,
@@ -39,6 +41,7 @@ from barista.api import (
 )
 from barista.kernel import attention, convert, registry
 
+log = logging.getLogger("barista.papers")
 OFFICE = "papers.office"   # tài nguyên THẨM QUYỀN của văn bản hành chính (ADR 0251) — chỉ cấp cho vai ban hành, luôn kèm ``manage``
 m = Module("papers", "Giấy tờ", pack="base", resources={"papers": "Giấy tờ & công văn", "papers.templates": "Mẫu văn bản (soạn thảo)",
                                                        OFFICE: "Văn bản hành chính — ban hành"},
@@ -638,16 +641,35 @@ def _render_handout(d: dict[str, Any], s: dict[str, Any]) -> bytes:
     return buf.getvalue()
 
 
+def _authoring_tile(x: Any) -> dict[str, Any] | None:
+    """Một ô của điểm cắm ``papers.authoring`` đúng hình ``{title: chữ, subtitle?, module?, open: {query: chữ, input: đối tượng}}`` ⇒ chính ô đó; sai ⇒ None."""
+    if not isinstance(x, dict) or not isinstance(x.get("title"), str) or not x["title"].strip():
+        return None
+    o = x.get("open")
+    if not isinstance(o, dict) or not isinstance(o.get("query"), str) or not isinstance(o.get("input", {}), dict):
+        return None
+    return x
+
+
 @m.query("studio", resource=None, title="Soạn", agent="deny")
 async def studio(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
-    """Điểm bắt đầu soạn. Gói đang bật góp trình soạn bằng quyền người mở."""
+    """Điểm bắt đầu soạn. Gói đang bật góp trình soạn bằng quyền người mở (điểm cắm ``papers.authoring`` — api 1.79): mỗi phần cắm trả DANH SÁCH ô; kết quả sai
+    hình bị bỏ + ghi log (một gói lỗi không làm hỏng màn), ô người mở không chạy được ``open.query`` không hiện (bấm vào chỉ gặp "không có quyền")."""
     items = []
     if ctx.p.can("papers", "read"):
         items.append({"title": "Văn bản theo mẫu", "subtitle": "Công văn, giấy tờ từ hồ sơ · kiểm tra nội dung và ban hành",
                       "module": "papers", "open": {"query": "papers.list", "input": {}}})
-    items.extend(item for group in await ctx.plugs("papers.authoring") for item in group)
-    return ui.card("Soạn", [ui.b_tiles(items)],
-                   subtitle="Chọn cách bắt đầu hoặc mở một văn bản đã soạn.", icon="square.and.pencil")
+    for group in await ctx.plugs("papers.authoring"):
+        if not isinstance(group, list):   # vd một đối tượng trơn: lặp qua nó là lặp qua KHOÁ — bỏ cả phần cắm
+            log.warning("papers.authoring: phần cắm phải trả danh sách ô, nhận %s — bỏ", type(group).__name__)
+            continue
+        for x in group:
+            if (tile := _authoring_tile(x)) is None:
+                log.warning("papers.authoring: bỏ ô sai hình (cần {title, open: {query, input}}): %.200r", x)
+            elif can_run(ctx.p, tile["open"]["query"]):
+                items.append(tile)
+    blocks = [ui.b_tiles(items)] if items else [ui.b_callout("muted", "Chưa có cách soạn nào cho bạn", "Hỏi quản trị bật gói soạn thảo hoặc cấp quyền giấy tờ.")]
+    return ui.card("Soạn", blocks, subtitle="Chọn cách bắt đầu hoặc mở một văn bản đã soạn.", icon="square.and.pencil")
 
 
 # ---- Màn hình (0069): module tự khai phân hệ / góp màn vào phân hệ khác; workspaces.py chỉ ráp và lọc theo quyền

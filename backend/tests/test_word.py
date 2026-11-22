@@ -35,6 +35,26 @@ async def test_authoring_entry_uses_only_enabled_editors() -> None:
     assert "word.home" not in destinations
 
 
+async def test_authoring_entry_drops_malformed_plug_results_and_tiles_the_viewer_cannot_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rà 22/11: phần cắm ``papers.authoring`` trả sai hình (một đối tượng thay vì danh sách, ô thiếu ``title`` / ``open``) bị bỏ, màn vẫn mở; ô trỏ tới truy vấn
+    người mở không chạy được không hiện."""
+    domain = f"authoring-{uuid.uuid4().hex[:8]}.demo"
+    tid = await seed.create_tenant("Công ty thử soạn", domain, people=PEOPLE, packs=("word",))
+    staff = await seed.who(tid, "an", domain)
+    locked = next(n for n, op in sorted(registry.OPS.items()) if op.kind == "query" and not op.internal and op.resource and not executor.can_run(staff, n))
+    good = {"title": "Văn bản Word", "open": {"query": "word.home", "input": {}}}
+
+    async def plugs(self: Any, point: str, /, **inp: Any) -> list[Any]:
+        return [{"title": "một ô trơn", "open": {"query": "word.home", "input": {}}},
+                ["rác", {"title": ""}, {"title": "Không mở", "open": {"query": "word.home", "input": []}},
+                 {"title": "Khoá", "open": {"query": locked, "input": {}}}, good]]
+
+    monkeypatch.setattr(executor.Ctx, "plugs", plugs)
+    page = await q(staff, "papers.studio")
+    tiles = [item for block in page["blocks"] if block["type"] == "tiles" for item in block["items"]]
+    assert [t["title"] for t in tiles if t["open"]["query"] != "papers.list"] == ["Văn bản Word"]
+
+
 def _sample() -> bytes:
     d = Document()
     d.add_heading("Hợp đồng dịch vụ", 1)
