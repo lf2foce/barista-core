@@ -92,3 +92,46 @@ async def test_approval_slips_of_one_chain_are_listed_with_their_brief_and_decid
     assert await owner_val("SELECT count(*) FROM core.audit_log WHERE tenant_id = %s AND command = 'admin.set_grant' AND status = 'ok' AND ref = ANY(%s)",
                            (tid, slips)) == 2                                                          # nhật ký từng phiếu
     assert not [x for x in await decisions.waiting(gd) if x["kind"] == "approval"]
+
+
+async def test_cards_needing_reconciliation_head_the_list_and_never_batch(who: Who, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rà 22/11: thẻ CẦN ĐỐI SOÁT (thẻ sáng — kể cả từ hôm trước — và thẻ trong chat) đứng đầu "Chờ tôi duyệt", nhóm riêng, không duyệt lô, có nút
+    đối soát; thẻ đang chạy / đã lỗi hẳn không phải việc chờ quyết; số trên nút "Việc" đếm cả việc đang mắc."""
+    import dataclasses
+
+    from barista.agent import chat
+    from barista.kernel import preview, registry
+    from tests.conftest import fresh_phone
+    from tests.test_assistant import Scripted, call
+    from tests.test_resume import Log
+
+    sale = await who("sale1")
+    stuck = await _file(sale, "rec:stuck", "Thẻ sáng kẹt giữa lúc gọi ngoài")
+    failed = await _file(sale, "rec:failed", "Thẻ sáng lỗi hẳn")
+    still_open = await _file(sale, "rec:open", "Thẻ sáng còn chờ")
+    async with db.owner_tx() as conn:
+        await conn.execute("UPDATE core.proposals SET status = 'running', day = day - 2, decided_at = now() - (%s * interval '1 second') WHERE id = %s",
+                           (preview.STALE_RUNNING_S + 5, stuck))
+        await conn.execute("UPDATE core.proposals SET status = 'failed', result = '{\"status\": \"failed\"}' WHERE id = %s", (failed,))
+
+    async def prepare(_prep, inp):
+        raise TimeoutError("hết giờ chờ nhà cung cấp")
+
+    orig = registry.OPS["crm.create_lead"]
+    monkeypatch.setitem(registry.OPS, "crm.create_lead", dataclasses.replace(orig, prepare=prepare))
+    model = Scripted([[call("crm.create_lead", name="Khách kẹt", phone=fresh_phone(), offering_code="HSR")], "Đã ghi nhận."])
+    first = Log()
+    await chat.chat_turn(sale, "Thêm khách", emit=first, model=model)
+    chat_card = first.proposals()[0]
+    await chat.decide(sale, chat_card["id"], "confirm", chat_card["input"], "rec-list", emit=Log(), model=model)
+
+    items = await decisions.waiting(sale)
+    head = [x for x in items if x["group"] == decisions.RECONCILE_GROUP]
+    assert {x["id"] for x in head} == {str(stuck), chat_card["id"]}
+    assert items[: len(head)] == head                                            # nhóm việc đang mắc đứng đầu
+    assert all(not x["batchable"] and x["card"]["resolve"] == preview.RESOLVE for x in head)
+    ids = {x["id"] for x in items}
+    assert str(still_open) in ids and str(failed) not in ids
+    assert await decisions.count(sale) >= 3                                       # còn chờ + 2 việc đang mắc
+    with pytest.raises(Invalid):
+        await decisions.decide_many(sale, "proposal", [str(stuck)], "confirm")    # không duyệt lô thẻ cần đối soát

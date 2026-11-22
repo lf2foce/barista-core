@@ -418,10 +418,20 @@ struct ChatCard: Decodable, Identifiable {
     var aside: Bool? = nil
     /// Bên lề: tên nút xác nhận (tên lệnh, vd "Ghi nhớ").
     var verb: String? = nil
+    /// Trạng thái "đã quyết" do SERVER nói (proposed · running · needs_reconciliation · executed · sent · dismissed · expired · failed) + nhãn.
+    var state: String? = nil
+    var state_label: String? = nil
+    /// Thẻ CẦN ĐỐI SOÁT (rà 22/11): nút đóng thẻ do server gửi — ``decision`` gửi lại nguyên văn.
+    var resolve: [ResolveButton]? = nil
 
     var op: String { query ?? command ?? "" }
     var isAside: Bool { kind == "proposal" && aside == true }
     var isProposal: Bool { kind == "proposal" }
+}
+
+struct ResolveButton: Decodable, Hashable {
+    let decision: String
+    let label: String
 }
 
 struct ChatMessage: Identifiable {

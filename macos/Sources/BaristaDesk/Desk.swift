@@ -443,7 +443,25 @@ final class Desk {
     /// Xác nhận / Bỏ một đề xuất của lượt đang dừng (0049). Trả kết quả của chính lệnh đó cho form (lỗi ⇒ form hiện lỗi, sửa rồi bấm lại);
     /// phần trợ lý chạy tiếp (nếu đã đủ quyết định) chảy vào khung chat như một lượt trả lời, chạy nền sau khi form đã đóng.
     func decide(_ card: ChatCard, confirm: Bool, input: Input, key: String) async -> CommandResult {
-        let stream = api.decide(cardId: card.id, confirm: confirm, input: input, key: key)
+        await decide(card, decision: confirm ? "confirm" : "dismiss", input: input, key: key)
+    }
+
+    /// ĐỐI SOÁT (rà 22/11): đóng thẻ cần đối soát bằng nút server gửi — thẻ sáng qua ``morningDecide``, thẻ chat qua ``decide``. Không gửi lại lệnh ngoài.
+    func resolve(_ card: ChatCard, decision: String) async -> CommandResult {
+        if card.source == "morning" {
+            do {
+                let r = try await api.morningDecide(id: card.id, decision: decision, input: [:], key: UUID().uuidString)
+                if r.status == "ok" || r.status == "failed" { withAnimation(.snappy) { morning.removeAll { $0.id == card.id } } }
+                return r
+            } catch {
+                return CommandResult(status: "error", output: nil, error: error.localizedDescription, approval_id: nil, replayed: false)
+            }
+        }
+        return await decide(card, decision: decision, input: [:], key: UUID().uuidString)
+    }
+
+    func decide(_ card: ChatCard, decision: String, input: Input, key: String) async -> CommandResult {
+        let stream = api.decide(cardId: card.id, decision: decision, input: input, key: key)
         return await withCheckedContinuation { (cont: CheckedContinuation<CommandResult, Never>) in
             Task { @MainActor in
                 var answered = false

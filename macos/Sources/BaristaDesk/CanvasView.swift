@@ -328,6 +328,12 @@ private struct ProposalBody: View {
         if let done = desk.confirmed[card.id] {
             Label(done, systemImage: "checkmark.seal.fill").font(.t16).foregroundStyle(Color.ok)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if let resolve = card.resolve, !resolve.isEmpty, card.state == "needs_reconciliation" {
+            ResolveBody(card: card, buttons: resolve)
+        } else if let state = card.state, state != "proposed" {
+            // thẻ đã có kết cục / đang chạy (server nói) — không bày form cho bấm lại
+            Label(card.state_label ?? "Đề xuất này đã được xử lý", systemImage: "info.circle").font(.t16).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             VStack(alignment: .leading, spacing: 12) {
                 // lượt đang dừng (0049): Xác nhận chạy lệnh bằng quyền người qua ``decide`` rồi trợ lý làm tiếp; thẻ cũ: gọi lệnh trực tiếp
@@ -370,6 +376,45 @@ private struct ProposalBody: View {
     private var action: ActionSpec {
         ActionSpec(command: card.command ?? "", title: "Xác nhận: \(card.title)", style: "primary", bind: [:], preset: [:], when: [:],
                    importable: false)
+    }
+}
+
+/// ĐỐI SOÁT (rà 22/11): lệnh gửi hệ ngoài lỗi lưng chừng / quá hạn — người xem hệ ngoài rồi chọn đúng điều đã xảy ra (nút do server gửi).
+/// Barista không gửi lại lệnh: "đã thực hiện" đóng thẻ là xong, "chưa thực hiện" đóng thẻ là lỗi (muốn làm thì đề xuất mới).
+private struct ResolveBody: View {
+    @Environment(Desk.self) private var desk
+    let card: ChatCard
+    let buttons: [ResolveButton]
+    @State private var busy = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(card.state_label ?? "Cần đối soát với hệ ngoài", systemImage: "exclamationmark.triangle").font(.t16).foregroundStyle(.secondary)
+            Text("Kiểm tra trên hệ ngoài rồi chọn đúng điều đã xảy ra — Barista không gửi lại lệnh.").font(.t12).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                ForEach(Array(buttons.enumerated()), id: \.element) { i, b in
+                    if i == 0 {
+                        Button(busy == b.decision ? "Đang ghi…" : b.label) { Task { await pick(b) } }.buttonStyle(.borderedProminent)
+                    } else {
+                        Button(busy == b.decision ? "Đang ghi…" : b.label) { Task { await pick(b) } }.buttonStyle(.bordered)
+                    }
+                }
+            }
+            .disabled(!busy.isEmpty)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func pick(_ b: ResolveButton) async {
+        busy = b.decision
+        defer { busy = "" }
+        let r = await desk.resolve(card, decision: b.decision)
+        if ["ok", "failed"].contains(r.status) {
+            desk.confirmed[card.id] = r.status == "ok" ? "Đã đối soát: việc đã thực hiện ở hệ ngoài" : "Đã đối soát: việc chưa thực hiện"
+            Task { await desk.refreshInbox() }
+        } else {
+            desk.show(r.error.isEmpty ? r.status : r.error, isError: true)
+        }
     }
 }
 

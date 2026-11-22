@@ -721,6 +721,28 @@ def with_states(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return turns
 
 
+_UNSETTLED = """SELECT id, title, turns FROM core.chat_threads
+                WHERE updated_at > now() - interval '30 days'
+                  AND (jsonb_path_exists(turns, '$[*].pending.calls.* ? (@.status == "running" || @.status == "needs_reconciliation")')
+                       OR jsonb_path_exists(turns, '$[*].asides.* ? (@.status == "running" || @.status == "needs_reconciliation")')
+                       OR jsonb_path_exists(turns, '$[*].decided[*] ? (@.status == "running" || @.status == "needs_reconciliation")'))
+                ORDER BY updated_at DESC LIMIT 20"""
+
+
+async def reconciliation_cards(p: Principal) -> list[dict[str, Any]]:
+    """Thẻ đề xuất trong CHAT của ``p`` đang CẦN ĐỐI SOÁT (gọi hệ ngoài lỗi lưng chừng / quá hạn) — để "Chờ tôi duyệt" liệt kê việc đang mắc (rà 22/11).
+    RLS: chỉ cuộc trò chuyện của chính người này. Thẻ mang ``state`` + nút ``resolve`` như khi mở lại cuộc trò chuyện (``with_states``)."""
+    async with db.tenant_tx(p, read_only=True) as conn:
+        cur = await conn.execute(_UNSETTLED)
+        rows = await cur.fetchall()
+    out = []
+    for r in rows:
+        for t in with_states(r["turns"]):
+            out += [{**c, "thread_id": str(r["id"]), "thread_title": r["title"]} for c in t.get("cards", [])
+                    if c.get("kind") == "proposal" and c.get("state") == preview.RECONCILIATION]
+    return out
+
+
 async def list_threads(p: Principal) -> list[dict[str, Any]]:
     async with db.tenant_tx(p, read_only=True) as conn:
         cur = await conn.execute("SELECT id, title, updated_at FROM core.chat_threads WHERE mode = 'assistant' ORDER BY updated_at DESC LIMIT 50")

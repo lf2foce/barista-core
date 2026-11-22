@@ -180,6 +180,17 @@ async def open_count(p: Principal) -> int:
     return int(row["n"]) if row else 0
 
 
+async def reconcile_count(p: Principal) -> int:
+    """Số thẻ sáng của ``p`` đang CẦN ĐỐI SOÁT (mọi ngày) — chỉ đọc. ``running`` quá hạn tính bằng ``running_state`` như mọi nơi."""
+    if not p.ai:
+        return 0
+    async with db.tenant_tx(p, read_only=True) as conn:
+        cur = await conn.execute("""SELECT status, decided_at, result FROM core.proposals
+                                    WHERE status = 'running' OR (status = 'failed' AND result->>'status' = %s)""", (previews.RECONCILIATION,))
+        rows = await cur.fetchall()
+    return sum(1 for r in rows if _proposal_status(r) == previews.RECONCILIATION)
+
+
 async def cards(p: Principal) -> list[dict[str, Any]]:
     """Thẻ đề xuất đang mở hôm nay của ``p`` (cùng hình thẻ đề xuất trong chat + ``reason``). Hôm nay chưa soạn gì cho người này ⇒ soạn ngay."""
     if not p.ai:

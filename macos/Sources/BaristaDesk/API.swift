@@ -209,7 +209,12 @@ struct API: Sendable {
     }
 
     func morningDecide(id: String, confirm: Bool, input: Input, key: String) async throws -> CommandResult {
-        let body: [String: JSON] = ["decision": .string(confirm ? "confirm" : "dismiss"), "input": .object(input), "key": .string(key)]
+        try await morningDecide(id: id, decision: confirm ? "confirm" : "dismiss", input: input, key: key)
+    }
+
+    /// ``decision``: confirm · dismiss · hoặc giá trị nút ĐỐI SOÁT server gửi ở ``card.resolve`` (gửi lại nguyên văn).
+    func morningDecide(id: String, decision: String, input: Input, key: String) async throws -> CommandResult {
+        let body: [String: JSON] = ["decision": .string(decision), "input": .object(input), "key": .string(key)]
         let (d, c) = try await request("/v1/assistant/morning/\(id)/decide", method: "POST", json: body)
         return try decode(d, c)
     }
@@ -258,8 +263,11 @@ struct API: Sendable {
 
     /// Người Xác nhận / Bỏ một thẻ đề xuất (0049): dòng đầu là decided | rejected, sau đó (nếu đủ quyết định) trợ lý chạy tiếp như chat.
     func decide(cardId: String, confirm: Bool, input: Input, key: String) -> AsyncThrowingStream<StreamEvent, Error> {
-        events("/v1/assistant/proposals/decide", ["card_id": .string(cardId), "decision": .string(confirm ? "confirm" : "dismiss"),
-                                                  "input": .object(input), "key": .string(key)])
+        decide(cardId: cardId, decision: confirm ? "confirm" : "dismiss", input: input, key: key)
+    }
+
+    func decide(cardId: String, decision: String, input: Input, key: String) -> AsyncThrowingStream<StreamEvent, Error> {
+        events("/v1/assistant/proposals/decide", ["card_id": .string(cardId), "decision": .string(decision), "input": .object(input), "key": .string(key)])
     }
 
     /// Đọc chính tả: gửi đoạn ghi âm WAV ⇒ CHỈ nhận chữ chép được (không chạy lượt trợ lý) — app chèn vào ô nhập.

@@ -10,9 +10,10 @@ duyệt đã ở đúng vai, và đó chính là việc "duyệt 147 phiếu đ�
 from typing import Any
 from uuid import UUID
 
-from barista.agent import morning
+from barista.agent import chat, morning
 from barista.db import db
 from barista.kernel import agent_policy, executor, registry
+from barista.kernel import preview as previews
 from barista.kernel.errors import Invalid
 from barista.kernel.principal import Principal
 
@@ -28,10 +29,22 @@ def _batchable(op: registry.Op) -> bool:
 async def waiting(p: Principal) -> list[dict[str, Any]]:
     """Mọi việc chờ ``p`` quyết, nhóm theo loại (cùng nhóm đứng liền nhau); đề xuất soạn ngay nếu hôm nay chưa soạn gì (như ``morning.cards``)."""
     items: list[dict[str, Any]] = []
+    stuck: list[dict[str, Any]] = []
     for card in await morning.cards(p):
+        if card.get("state") == previews.RECONCILIATION:
+            stuck.append(card)
+            continue
+        if card.get("state") != "proposed":
+            continue   # thẻ đang chạy / đã có kết cục hiện ở bàn việc, không phải việc chờ quyết
         op = registry.get(card["command"])
         items.append({"kind": "proposal", "id": card["id"], "group": f"proposal:{card['command']}", "group_title": op.title if op else card["command"],
                       "title": card["title"], "reason": card.get("reason", ""), "brief": card["brief"], "batchable": op is not None and _batchable(op), "card": card})
+    # CẦN ĐỐI SOÁT (rà 22/11): việc đang mắc — thẻ sáng lẫn thẻ trong chat — đứng ĐẦU danh sách, một nhóm riêng, không duyệt lô (mỗi thẻ người phải xem hệ
+    # ngoài). Giữ ``kind="proposal"`` + ``card`` (app cũ mở thẻ như đề xuất; thẻ tự vẽ nút đối soát server gửi).
+    items = [{"kind": "proposal", "id": card["id"], "group": RECONCILE_GROUP, "group_title": "Cần đối soát với hệ ngoài",
+              "title": card["title"], "reason": card.get("state_label") or previews.RECONCILIATION_LABEL,
+              "brief": card.get("brief"), "batchable": False, "card": card}
+             for card in [*stuck, *await chat.reconciliation_cards(p)]] + items
     async with db.tenant_tx(p, read_only=True) as conn:
         cur = await conn.execute(
             """SELECT a.id, a.chain, a.command, a.summary, a.preview, a.created_at, u.name AS requester
@@ -48,9 +61,12 @@ async def waiting(p: Principal) -> list[dict[str, Any]]:
     return sorted(items, key=lambda x: order[x["group"]])
 
 
+RECONCILE_GROUP = "reconcile"
+
+
 async def count(p: Principal) -> int:
-    """Số việc chờ quyết (CHỈ đọc — không soạn đề xuất): số trên nút "Việc"."""
-    n = await morning.open_count(p)
+    """Số việc chờ quyết (CHỈ đọc — không soạn đề xuất): số trên nút "Việc" — gồm cả thẻ cần đối soát (việc đang mắc)."""
+    n = await morning.open_count(p) + await morning.reconcile_count(p) + len(await chat.reconciliation_cards(p))
     async with db.tenant_tx(p, read_only=True) as conn:
         cur = await conn.execute("SELECT count(*) AS n FROM core.approvals WHERE status = 'pending' AND core.me() = ANY(approver_ids)")
         row = await cur.fetchone()
