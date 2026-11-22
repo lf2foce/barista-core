@@ -23,6 +23,8 @@ export type WordData = {
   ops: WordOps; uploadUrl: string;
   /** Gửi vào phòng: nơi gửi do máy chủ liệt kê (null = công ty chưa bật Tin nhắn / người này không dùng được ⇒ không vẽ nút). */
   share: { targets: { value: string; label: string }[] } | null;
+  /** Cuộc trò chuyện với agent của văn bản (màn Soạn thảo) — server lưu, mở lại văn bản là thấy lại. */
+  chat: { role: "user" | "agent"; text: string; note?: string }[];
 };
 
 const obj = (x: unknown): Record<string, unknown> => (x && typeof x === "object" && !Array.isArray(x) ? (x as Record<string, unknown>) : {});
@@ -90,6 +92,8 @@ export function decodeWord(x: unknown): WordData {
     page: { w: num(pg.w, 595.3), h: num(pg.h, 841.9), ml: num(pg.ml, 72), mr: num(pg.mr, 72), mt: num(pg.mt, 72), mb: num(pg.mb, 72) },
     blocks: arr(o.blocks).map((b) => block(b, 0)).filter((b): b is WordBlock => b !== null),
     notes: arr(o.notes).map(str).filter(Boolean), docxUrl: str(o.docx_url), pdfUrl: str(o.pdf_url),
+    chat: arr(o.chat).map(obj).filter((t) => (t.role === "user" || t.role === "agent") && str(t.text))
+      .map((t) => ({ role: t.role as "user" | "agent", text: str(t.text), ...(str(t.note) ? { note: str(t.note) } : {}) })),
     ops: { home: op(ops.home), view: op(ops.view), save: op(ops.save), versions: op(ops.versions), restore: op(ops.restore), archive: op(ops.archive), rename: op(ops.rename), assist: op(ops.assist), create: op(ops.create), send: op(ops.send) },
     uploadUrl: /^\/v1\/[a-z0-9_/-]+$/.test(str(o.upload_url)) ? str(o.upload_url) : "",
     share: o.share && typeof o.share === "object" ? {

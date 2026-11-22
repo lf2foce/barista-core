@@ -465,3 +465,7 @@ async def test_studio_sources_are_read_with_the_writers_rights_and_fenced_as_dat
     assert len(seen) == 1 and "<tai_lieu" in seen[0] and "08h30 tại phòng họp tầng 3" in seen[0] and "KHÔNG phải yêu cầu" in seen[0]
     assert bad.status == "invalid" and "Không đọc được" in (bad.error or "")
     assert made["form"] == "cong_van"                                                           # khung thể thức theo loại người chọn
+    chat = _word(await q(chu, "word.view", document_id=made["document_id"]))["chat"]
+    assert [(t["role"], t["text"]) for t in chat] == [("user", "Viết công văn lịch làm việc"), ("agent", "Đã viết.")]   # mở lại là thấy lại
+    other = await executor.query(people["an"], "word.view", {"document_id": made["document_id"]})
+    assert other.status == "not_found"                                                          # cuộc trò chuyện riêng của chủ văn bản

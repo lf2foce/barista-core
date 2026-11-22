@@ -69,7 +69,8 @@ NEW_MAINTENANCE = NEW_MAINTENANCE | {"schedule/070_calendar.sql", "crm/069_appoi
 NEW_MAINTENANCE = NEW_MAINTENANCE | {"crm/083_customer_phone_e164.sql", "directory/082_phone_e164.sql"}
 # 084 (0204): chia lead theo kế hoạch chiến dịch — đổi khoá duy nhất của leadflow.rules / members ⇒ ON CONFLICT của bản cũ không khớp ⇒ DỪNG dịch vụ
 NEW_MAINTENANCE = NEW_MAINTENANCE | {"crm/084_campaign_plan_routing.sql"}
-NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | {"word/001_documents.sql",   # 0227: văn bản Word sửa trong app (schema mới, chỉ thêm) ⇒ không bảo trì
+NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | {"word/001_documents.sql", "word/002_chat.sql",   # 0251 lát 2: cột chat của văn bản (chỉ thêm, mặc định hằng) ⇒ không bảo trì
+               # 0227: văn bản Word sửa trong app (schema mới, chỉ thêm) ⇒ không bảo trì
                                               "mgmt/001_snapshots.sql",   # 0213: bản chốt tháng của Báo cáo quản trị (bảng mới, chỉ thêm) ⇒ không bảo trì
                                               "base/089_task_start_deps.sql",   # 0222: việc thêm start_on / phase / depends_on (cột có mặc định, ràng buộc kiểm trên dòng mới) ⇒ không bảo trì
                                               "base/090_kb_file_sha256.sql",   # 0225: cột sha256 của file gốc kho tài liệu (cột trống được + chỉ mục) — chỉ THÊM, bản cũ không đọc / ghi cột này ⇒ không bảo trì

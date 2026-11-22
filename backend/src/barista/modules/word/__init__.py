@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import logging
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, unquote
 from uuid import UUID
@@ -187,6 +188,7 @@ async def view(ctx: Ctx, inp: DocIn) -> dict[str, Any]:
     if stats["header_footer"]:
         notes.append("Đầu / chân trang không hiện khi sửa — xem ở Bản in.")
     block = {"type": "word", "document_id": str(d["id"]), "title": d["title"], "version": d["version"], "editable": d["archived_at"] is None,
+             "chat": d.get("chat") or [],   # cuộc trò chuyện với agent của văn bản này (màn Soạn thảo) — chỉ chủ văn bản đọc được (RLS)
              "page": model["page"], "blocks": model["blocks"], "notes": notes,
              "docx_url": f"/v1/word/{d['id']}/docx", "pdf_url": f"/v1/word/{d['id']}/pdf", **CLIENT_OPS}
     # Gửi vào phòng (§2.11): nơi gửi do gói Trao đổi liệt kê bằng quyền người xem; công ty chưa bật Trao đổi / người này không dùng được ⇒ không có mục
@@ -357,6 +359,7 @@ def _company_line(c: dict[str, Any]) -> str:
 
 
 SOURCES_MAX = 3
+CHAT_MAX = 100   # lượt trò chuyện giữ theo mỗi văn bản (lời nhắn + câu trả lời là hai lượt)
 SOURCE_CHARS = 6000
 
 
@@ -419,7 +422,17 @@ async def assist(ctx: Ctx, inp: AssistIn) -> dict[str, Any]:
     edits = [{"id": e["id"], "before": sent[e["id"]], "text": e["text"].strip()} for e in out.get("edits", [])
              if e.get("id") in sent and e.get("text", "").strip() and e["text"].strip() != sent[e["id"]].strip()]
     additions = [{"after": a["after"], "text": a["text"].strip()} for a in out.get("additions", []) if a.get("after") in sent and a.get("text", "").strip()]
-    return {"reply": str(out.get("reply") or "")[:1000], "edits": edits[:ASSIST_MAX_PARAS], "additions": additions[:100],
+    reply = str(out.get("reply") or "")[:1000]
+    # cuộc trò chuyện của văn bản (màn Soạn thảo): lời nhắn + câu trả lời — mở lại văn bản là thấy lại (cột ``chat``, giữ ``CHAT_MAX`` lượt gần nhất)
+    n = len(edits) + len(additions)
+    now = datetime.now(UTC).isoformat()
+    turns = [{"role": "user", "text": inp.instruction.strip()[:2000], "at": now},
+             {"role": "agent", "text": reply or ("Đã viết vào văn bản." if n else "Không có gì cần đổi."), "at": now,
+              **({"note": f"{'Sửa đoạn đang chọn' if inp.scope == 'selection' else 'Cập nhật văn bản'} · {n} chỗ"} if n else {})}]
+    await ctx.exec("UPDATE word.documents SET chat = (SELECT coalesce(jsonb_agg(x ORDER BY i), '[]'::jsonb) FROM "
+                   "(SELECT x, i FROM jsonb_array_elements(chat || %s::jsonb) WITH ORDINALITY AS t(x, i) ORDER BY i DESC LIMIT %s) last) WHERE id = %s",
+                   (json.dumps(turns, ensure_ascii=False), CHAT_MAX, inp.document_id))
+    return {"reply": reply, "edits": edits[:ASSIST_MAX_PARAS], "additions": additions[:100],
             "summary": f"Trợ lý đề xuất sửa {len(edits)} đoạn, thêm {len(additions)} đoạn" if edits or additions else "Trợ lý không đề xuất thay đổi"}
 
 

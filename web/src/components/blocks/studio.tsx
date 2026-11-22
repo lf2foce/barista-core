@@ -76,11 +76,15 @@ export function StudioBlock({ block }: { block: StudioData }) {
   }, [block.doc.home]);
   useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [msgs.length, busy]);
 
-  async function openDoc(id: string, title?: string): Promise<WordData | null> {
+  async function openDoc(id: string, title?: string, restore = true): Promise<WordData | null> {
     const data = await loadWord(block.doc.view, { document_id: id });
     if (!data) say({ role: "agent", text: `Không mở được “${title ?? "văn bản"}”`, error: true });
     setWord(data);
-    if (data) { setView("draft"); setFresh(false); }
+    if (data) {
+      setView("draft");
+      setFresh(false);
+      if (restore) setMsgs(data.chat.map((t) => ({ role: t.role, text: t.text, ...(t.note ? { note: t.note } : {}) })));   // cuộc trò chuyện đã lưu của văn bản này
+    }
     return data;
   }
 
@@ -92,7 +96,7 @@ export function StudioBlock({ block }: { block: StudioData }) {
       say({ role: "agent", text: r.error || "Không tạo được văn bản mới", error: true });
       return null;
     }
-    const data = await openDoc(id, title);
+    const data = await openDoc(id, title, false);   // văn bản vừa tạo: giữ câu vừa gửi trên khung (chưa có gì đã lưu)
     void refreshDocs();
     return data;
   }
