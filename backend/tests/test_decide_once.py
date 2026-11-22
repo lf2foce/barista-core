@@ -154,7 +154,7 @@ async def test_many_simultaneous_chat_confirms_never_deadlock_the_pool(who: Who)
     assert all(log.of("decided") and log.of("decided")[0]["status"] == "ok" for log in logs)
 
 
-def _register_ext_op(monkeypatch: Any, prepare_fn: Any) -> str:
+def _register_ext_op(monkeypatch: Any, prepare_fn: Any, *, prepare_writes: bool = True) -> str:
     """Đăng ký tạm một lệnh ghi có ``prepare=`` gọi hệ ngoài (mô phỏng ``mkt.set_ad_status`` / ``set_ad_budget``)."""
     from barista.kernel import registry
     from barista.kernel.fields import Input
@@ -171,7 +171,7 @@ def _register_ext_op(monkeypatch: Any, prepare_fn: Any) -> str:
     op = registry.Op(
         name=name, module="flow", kind="command", resource="flow", action="write",
         title="Gọi hệ ngoài (test)", description="Lệnh thử có bước gọi ngoài", input=ExtIn, handler=handler,
-        internal=False, importable=False, agent="propose", prepare=prepare_fn,
+        internal=False, importable=False, agent="propose", prepare=prepare_fn, prepare_writes=prepare_writes,
     )
     monkeypatch.setitem(registry.OPS, name, op)
     return name
@@ -263,7 +263,8 @@ async def test_morning_prepare_failure_marks_failed_and_retry_never_sends_second
     card = await _file_custom_card(sale, cmd, {"target": "ad-err"}, "Gọi ngoài lỗi")
 
     res = await morning.decide(sale, card, "confirm", None, "ext-fail-1")
-    assert res["status"] == "conflict" and ext_calls == ["ad-err"]
+    # bước gọi ngoài TỰ TỪ CHỐI bằng lỗi nghiệp vụ ⇒ chắc chắn chưa gửi ⇒ ``failed``; kết quả báo đúng trạng thái thẻ đã khoá (rà 22/11)
+    assert res["status"] == "failed" and res["state"] == "failed" and res["error"] and ext_calls == ["ad-err"]
     assert await owner_val("SELECT status FROM core.proposals WHERE id = %s", (card,)) == "failed"
     retry = await morning.decide(sale, card, "confirm", None, "ext-fail-2")
     assert retry["status"] == "not_found" and ext_calls == ["ad-err"]
@@ -398,7 +399,7 @@ async def test_abandoned_external_decision_needs_reconciliation_after_deadline(w
     card = await _file_custom_card(sale, cmd, {"target": "abandoned"}, "Tiến trình ngừng giữa chừng")
     async with db.owner_tx() as conn:
         await conn.execute("UPDATE core.proposals SET status = 'running', decided_at = now() - (%s * interval '1 second') WHERE id = %s",
-                           (preview.EXTERNAL_DECISION_S + 1, card))
+                           (preview.STALE_RUNNING_S + 1, card))
     for decision in ("confirm", "dismiss"):
         res = await morning.decide(sale, card, decision, None, f"stale-{decision}")
         assert res["status"] == "conflict" and res["error"] == preview.RECONCILIATION_LABEL
@@ -432,3 +433,152 @@ async def test_approval_rule_added_during_external_call_applies_to_next_decision
     finally:
         async with db.owner_tx() as conn:
             await conn.execute("DELETE FROM core.approval_rules WHERE tenant_id = %s AND command = %s", (sale.tenant_id, cmd))
+
+
+# ── Rà 22/11 (Claude + Codex): vòng đời gọi ngoài có kết cục rõ — lượt chat chạy tiếp khi thẻ lỗi, thẻ cần đối soát có đường đóng,
+#    lỗi lưng chừng không bị coi là "chưa gửi", bước chuẩn bị chỉ đọc không khoá thẻ ──
+
+
+async def test_chat_turn_resumes_when_its_last_card_fails_after_another_card_ran(who: Who, monkeypatch: Any) -> None:
+    """Lượt có hai thẻ: A chạy xong, B lỗi ở bước gọi ngoài ⇒ lượt VẪN chạy tiếp (trước đây treo mãi, A không về model)."""
+    import dataclasses
+
+    from pydantic_ai.messages import ToolCallPart
+
+    from barista.kernel import registry
+    from barista.kernel.errors import Conflict
+
+    bad = fresh_phone()
+
+    async def prepare(_prep: Any, inp: Any) -> dict[str, Any]:
+        if inp.phone == bad:
+            raise Conflict("Kênh ngoài từ chối")
+        return {"sent": inp.phone}
+
+    orig = registry.OPS["crm.create_lead"]
+    monkeypatch.setitem(registry.OPS, "crm.create_lead", dataclasses.replace(orig, prepare=prepare))
+    sale = await who("sale1")
+    good = fresh_phone()
+    tool = chat.tool_name("crm.create_lead")
+    model = Scripted([[ToolCallPart(tool, {"name": "Khách A", "phone": good, "offering_code": "HSR"}, tool_call_id="c-a"),
+                       ToolCallPart(tool, {"name": "Khách B", "phone": bad, "offering_code": "HSR"}, tool_call_id="c-b")],
+                      "Đã thêm khách A; khách B lỗi."])
+    first = Log()
+    await chat.chat_turn(sale, "Thêm hai khách", emit=first, model=model)
+    a, b = first.proposals()
+    la, lb = Log(), Log()
+    await chat.decide(sale, a["id"], "confirm", a["input"], "two-a", emit=la, model=model)
+    assert la.of("decided")[0]["status"] == "ok" and la.of("decided")[0]["resuming"] is False
+    await chat.decide(sale, b["id"], "confirm", b["input"], "two-b", emit=lb, model=model)
+    assert lb.of("decided")[0]["status"] == "failed" and lb.of("decided")[0]["resuming"] is True
+    assert lb.of("done")[-1].get("text") == "Đã thêm khách A; khách B lỗi."   # model nhận kết quả thật và trả lời — lượt không treo
+    steps = {s["card_id"]: s["status"] for s in lb.of("step")}
+    assert steps[a["id"]] == "ok" and steps[b["id"]] == "error"               # thẻ lỗi không hiện thành bước xanh
+
+
+async def test_ambiguous_external_error_needs_reconciliation_and_reconcile_closes_the_card(who: Who, monkeypatch: Any) -> None:
+    """Lỗi lạ (mạng / hết giờ của thư viện HTTP) ở bước gọi ngoài ⇒ CẦN ĐỐI SOÁT (không biết đã gửi chưa), có nút đối soát; người chọn
+    "đã thực hiện" ⇒ thẻ xong, KHÔNG gọi ngoài lần hai; thẻ hiện ở bàn việc tới khi được đóng."""
+    calls: list[str] = []
+
+    async def prepare(_prep: Any, inp: Any) -> None:
+        calls.append(inp.target)
+        raise OSError("connection reset by peer")
+
+    cmd = _register_ext_op(monkeypatch, prepare)
+    sale = await who("sale1")
+    card = await _file_custom_card(sale, cmd, {"target": "mơ-hồ"}, "Lỗi lưng chừng")
+    res = await morning.decide(sale, card, "confirm", None, "amb-1")
+    assert res["status"] == preview.RECONCILIATION and res["resolve"] == preview.RESOLVE
+    shown = next(c for c in await morning.cards(sale) if c["id"] == str(card))
+    assert shown["state"] == preview.RECONCILIATION and shown["resolve"] == preview.RESOLVE
+    assert (await morning.decide(sale, card, "confirm", None, "amb-2"))["status"] == "conflict"
+    done = await morning.decide(sale, card, preview.RECONCILED_DONE, None, "amb-3")
+    assert done["status"] == "ok" and done["state"] == "executed"
+    assert await owner_val("SELECT status FROM core.proposals WHERE id = %s", (card,)) == "done"
+    again = await morning.decide(sale, card, preview.RECONCILED_NOT_DONE, None, "amb-4")
+    assert again["status"] == "conflict"                                       # đã đóng ⇒ không đối soát lần hai
+    assert calls == ["mơ-hồ"]
+
+
+async def test_stale_running_card_is_reconciled_as_not_done(who: Who, monkeypatch: Any) -> None:
+    async def prepare(_prep: Any, inp: Any) -> None:
+        raise AssertionError("Không gửi lại lệnh của lượt bị gián đoạn")
+
+    cmd = _register_ext_op(monkeypatch, prepare)
+    sale = await who("sale1")
+    card = await _file_custom_card(sale, cmd, {"target": "kẹt"}, "Tiến trình chết giữa chừng")
+    async with db.owner_tx() as conn:
+        await conn.execute("UPDATE core.proposals SET status = 'running', day = day - 3, decided_at = now() - (%s * interval '1 second') WHERE id = %s",
+                           (preview.STALE_RUNNING_S + 1, card))
+    shown = next(c for c in await morning.cards(sale) if c["id"] == str(card))   # thẻ hôm trước vẫn hiện vì còn chờ đối soát
+    assert shown["state"] == preview.RECONCILIATION
+    res = await morning.decide(sale, card, preview.RECONCILED_NOT_DONE, None, "stale-nd")
+    assert res["status"] == "failed" and res["state"] == "failed"
+    assert not [c for c in await morning.cards(sale) if c["id"] == str(card)]   # đã đóng, từ hôm trước ⇒ thôi hiện
+
+
+async def test_read_only_prepare_failure_keeps_the_card_open_for_retry(who: Who, monkeypatch: Any) -> None:
+    """Bước chuẩn bị CHỈ ĐỌC (``prepare_writes=False``, vd Thử kết nối) lỗi mạng ⇒ thẻ vẫn chờ, bấm lại được (không khoá ở cần đối soát)."""
+    calls: list[str] = []
+
+    async def prepare(_prep: Any, inp: Any) -> dict[str, Any]:
+        calls.append(inp.target)
+        if len(calls) == 1:
+            raise OSError("mạng chập")
+        return {"ok": True}
+
+    cmd = _register_ext_op(monkeypatch, prepare, prepare_writes=False)
+    sale = await who("sale1")
+    card = await _file_custom_card(sale, cmd, {"target": "đọc"}, "Chỉ đọc")
+    first = await morning.decide(sale, card, "confirm", None, "ro-1")
+    assert first["status"] == "error"
+    assert await owner_val("SELECT status FROM core.proposals WHERE id = %s", (card,)) == "open"
+    second = await morning.decide(sale, card, "confirm", None, "ro-2")
+    assert second["status"] == "ok" and calls == ["đọc", "đọc"]
+
+
+async def test_chat_card_needing_reconciliation_resolves_and_resumes_the_turn(who: Who, monkeypatch: Any) -> None:
+    import dataclasses
+
+    from barista.kernel import registry
+
+    async def prepare(_prep: Any, inp: Any) -> None:
+        raise TimeoutError("hết giờ chờ nhà cung cấp")
+
+    orig = registry.OPS["crm.create_lead"]
+    monkeypatch.setitem(registry.OPS, "crm.create_lead", dataclasses.replace(orig, prepare=prepare))
+    sale = await who("sale1")
+    model = Scripted([[call("crm.create_lead", name="Khách đối soát", phone=fresh_phone(), offering_code="HSR")], "Đã ghi nhận."])
+    first = Log()
+    await chat.chat_turn(sale, "Thêm khách", emit=first, model=model)
+    card = first.proposals()[0]
+    l1 = Log()
+    await chat.decide(sale, card["id"], "confirm", card["input"], "rec-1", emit=l1, model=model)
+    assert l1.of("decided")[0]["status"] == preview.RECONCILIATION and l1.of("decided")[0]["resuming"] is True
+    reopened = await _reopened_chat_card(sale, first, card["id"])
+    assert reopened["state"] == preview.RECONCILIATION and reopened["resolve"] == preview.RESOLVE
+    l2 = Log()
+    await chat.decide(sale, card["id"], preview.RECONCILED_DONE, {}, "rec-2", emit=l2, model=model)
+    assert l2.of("decided")[0]["status"] == "ok"
+    after = await _reopened_chat_card(sale, first, card["id"])
+    assert after["state"] == "executed" and "resolve" not in after
+
+
+async def test_outside_status_keeps_its_published_vocabulary(who: Who, monkeypatch: Any) -> None:
+    """``status`` của đề xuất ứng dụng ngoài giữ từ vựng đã công bố; trạng thái mới đi ở trường thêm ``state`` (luật 7)."""
+    async def prepare(_prep: Any, inp: Any) -> None:
+        raise OSError("mất kết nối")
+
+    cmd = _register_ext_op(monkeypatch, prepare)
+    sale = await who("sale1")
+    async with db.tenant_tx(sale) as conn:
+        cur = await conn.execute(
+            """INSERT INTO core.proposals (user_id, day, key, command, title, reason, input)
+               VALUES (core.me(), %s, %s, %s, 'Từ app ngoài', 'thử', %s) RETURNING id""",
+            (today(), f"{morning.OUTSIDE}:app-x:abc", cmd, Jsonb({"target": "x"})))
+        row = await cur.fetchone()
+    assert row is not None
+    await morning.decide(sale, row["id"], "confirm", None, "out-1")
+    got = await morning.outside_status(sale, "app-x", row["id"])
+    assert got is not None and got["status"] == "open" and got["state"] == preview.RECONCILIATION

@@ -562,7 +562,8 @@ async def _prepare_check(prep: Prep, inp: RefIn) -> dict[str, Any]:
 
 @m.command("check",
            purpose="Kiểm tra kết nối với hệ ngoài còn chạy được không.", reversible="Thử lại được bất kỳ lúc nào; chỉ kiểm tra, không đổi dữ liệu",
-           resource="connectors", title="Thử kết nối", agent="propose", risk="low", category="setup", prepare=_prepare_check)
+           resource="connectors", title="Thử kết nối", agent="propose", risk="low", category="setup", prepare=_prepare_check,
+           prepare_writes=False)
 async def check(ctx: Ctx, inp: RefIn) -> dict[str, Any]:
     got = ctx.prepared
     if got is None:

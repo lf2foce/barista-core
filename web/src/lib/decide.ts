@@ -6,6 +6,9 @@ import type { ChatCard, StreamEvent } from "./types";
 // Nếu decided.resuming ⇒ phần trợ lý chạy tiếp chảy tiếp trên cùng luồng, y như một lượt chat (status · step · card · text · done).
 // Phần thuần ở đây (kiểm thử được); nơi gọi lo trạng thái React.
 
+/** Quyết định gửi về server: Xác nhận · Bỏ · ĐỐI SOÁT (nút server gửi ở `card.resolve` — giá trị gửi lại nguyên văn). */
+export type Decision = "confirm" | "dismiss" | (string & {});
+
 export type DecideOutcome = {
   /** ok · pending_approval · dismissed · (rejected) invalid / conflict / forbidden … · error */
   status: string;

@@ -50,6 +50,7 @@ from barista.kernel import (
     web,
     webhooks,
 )
+from barista.kernel import preview as previews
 from barista.kernel.errors import Invalid
 from barista.kernel.fields import company_country
 from barista.kernel.forms import form_spec
@@ -991,8 +992,8 @@ async def assistant_morning_decide(proposal_id: UUID, request: Request, body: An
     """Xác nhận (chạy bằng quyền người bấm, kiểm căn cứ) / Bỏ một đề xuất buổi sáng. ``key`` chống lặp như mọi lệnh."""
     p = await current(x_dev_user, x_tenant_id, request)
     decision, key, data = str(body.get("decision") or ""), str(body.get("key") or ""), body.get("input")
-    if decision not in ("confirm", "dismiss") or not key:
-        raise HTTPException(422, "Cần decision (confirm | dismiss) và key (chống lặp)")
+    if decision not in ("confirm", "dismiss", *previews.RECONCILED_MESSAGE) or not key:
+        raise HTTPException(422, "Cần decision (confirm | dismiss | reconcile_done | reconcile_not_done) và key (chống lặp)")
     return await morning.decide(p, proposal_id, decision, data if isinstance(data, dict) else None, key)
 
 

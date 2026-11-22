@@ -1249,7 +1249,7 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
                prepared: Any = _UNPREPARED, dry_run: bool = False, claim: Callable[[Conn, bool], Awaitable[Result | None]] | None = None,
                on_prepare: Callable[[Conn], Awaitable[None]] | None = None,
                on_done: Callable[[Conn, Result], Awaitable[None]] | None = None,
-               on_fail: Callable[[Conn, Result], Awaitable[None]] | None = None) -> Result:
+               on_fail: Callable[[Conn, Result], Awaitable[None]] | None = None, claimed: bool = False) -> Result:
     """Chạy một LỆNH (ghi) trong giao dịch riêng. ``key``: khoá chống lặp (cùng khoá + cùng dữ liệu ⇒ trả kết quả cũ).
     ``quiet``: cho vòng quét định kỳ — kết quả là dict toàn số 0 (không có gì xảy ra) thì KHÔNG ghi nhật ký thao tác.
     ``attended``: trợ lý đang làm trong lượt CÓ NGƯỜI — MẶC ĐỊNH False, chỉ lượt chat (``agent/chat.py: ToolRun`` với ``defer=True``) bật; mọi
@@ -1277,12 +1277,12 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
         return Result("invalid", error="Ứng dụng phải gửi Idempotency-Key cho mọi lệnh ghi")
     autorun = False   # trợ lý chạy THẲNG một lệnh được công ty nới (0143) — nhật ký ghi ref="autorun"
     given_key = key   # khoá như người gọi gửi — lần chạy lại sau bước chuẩn bị nhận đúng khoá này (bên dưới ``key`` thành khoá theo người gọi)
-    is_prepared = prepared is not _UNPREPARED
     need_prepare = False
     res: Result | None = None
     try:
         async with db.tenant_tx(p, consistent=op.consistent) as conn:
-            if claim is not None and (short := await claim(conn, is_prepared)) is not None:
+            # ``claimed``: pha 2 của một thẻ ĐÃ chiếm ``running`` trước khi gọi ngoài (bước chuẩn bị chỉ đọc không chiếm ⇒ pha 2 vẫn thấy thẻ đang chờ)
+            if claim is not None and (short := await claim(conn, claimed)) is not None:
                 return short
             # lệnh ghi: khoá chia sẻ trạng thái gói + đọc gói thật (đổi gói khoá độc quyền ⇒ không lọt lệnh của gói vừa tắt)
             await packs.require_for_write(conn, p.tenant_id, op)
@@ -1321,7 +1321,7 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
             ready = op.prepare is None or prepared is not _UNPREPARED or dry_run   # handler sắp chạy thật mà chưa chuẩn bị ⇒ _Prepare
             # Thẻ đã chiếm quyền thực thi trước khi gọi hệ ngoài. Căn cứ và luật duyệt chốt ở pha đó.
             # Pha ghi kết quả không sinh phiếu duyệt cho một thay đổi đã gửi.
-            finishing_claim = is_prepared and on_prepare is not None
+            finishing_claim = claimed
             chain, what = (None, "") if finishing_claim else await approval_for(ctx, op, model)
             if chain and p.via == "app":
                 # app không gửi phiếu duyệt: lệnh sau duyệt chạy lại bằng quyền NGƯỜI xin — app không phải thành viên để nạp lại (0140)
@@ -1347,8 +1347,8 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
                 ctx.pending_approval = aid
                 out = {"approval_id": str(aid), "message": "Đã gửi phiếu duyệt"}
             elif not ready:
-                if on_prepare is None:
-                    raise _Prepare()
+                if on_prepare is None or not op.prepare_writes:
+                    raise _Prepare()   # không có thẻ để chiếm, hoặc bước chuẩn bị chỉ đọc (lỗi thì thẻ vẫn chờ, bấm lại được — rà 22/11)
                 # chiếm thẻ nguyên tử sang 'running' và COMMIT giao dịch 1 TRƯỚC khi nhả kết nối gọi hệ ngoài (chặn Bỏ / Xác nhận thứ hai chen vào)
                 await on_prepare(conn)
                 need_prepare = True
@@ -1412,7 +1412,7 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
             prepared_outside = True
             finished = await _run(p, name, inp, key=given_key, quiet=quiet, expect_basis=expect_basis, edited=edited, files=files, attended=attended,
                                   background=background, keep_output=keep_output, prepared=value, dry_run=dry_run, claim=claim, on_prepare=on_prepare,
-                                  on_done=on_done, on_fail=on_fail)
+                                  on_done=on_done, on_fail=on_fail, claimed=need_prepare)
     except asyncio.CancelledError:
         if need_prepare and on_fail is not None:
             await asyncio.shield(_mark_failed(p, on_fail, Result(previews.RECONCILIATION, error=previews.RECONCILIATION_LABEL)))
@@ -1420,8 +1420,11 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
     except Exception as e:
         r = map_error(e, op.input)
         if need_prepare and on_fail is not None:
-            failure = Result(previews.RECONCILIATION, error=r.error) if prepared_outside or isinstance(e, TimeoutError) else r
-            await _mark_failed(p, on_fail, failure)
+            # HỢP ĐỒNG phân loại (rà 22/11): bước chuẩn bị TỰ TỪ CHỐI bằng lỗi nghiệp vụ (``Invalid`` / ``Denied`` / ``Conflict``… — map_error ra trạng thái
+            # khác "error") là chắc chắn CHƯA gửi ⇒ ``failed``. Mọi lỗi khác (mạng, hết giờ kể cả timeout của thư viện HTTP, lỗi lạ) hoặc lỗi SAU khi bước
+            # chuẩn bị đã xong ⇒ không biết hệ ngoài đã nhận chưa ⇒ cần đối soát, không bao giờ coi là "chưa làm".
+            definite = not prepared_outside and r.status != "error"
+            await _mark_failed(p, on_fail, r if definite else Result(previews.RECONCILIATION, error=r.error))
         if r.status == "error":
             await _system_error(p, name, payload, r, e)
         else:
@@ -1429,6 +1432,8 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
         return r
     if finished.status not in ("ok", "pending_approval") and need_prepare and on_fail is not None:
         await _mark_failed(p, on_fail, Result(previews.RECONCILIATION, error=finished.error))
+    if finished.status == previews.RECONCILIATION:
+        log.error("%s: hệ ngoài đã nhận lệnh nhưng phần ghi trong Barista không chạy (thẻ đã đóng) — cần đối soát tay", name)
     return finished
 
 

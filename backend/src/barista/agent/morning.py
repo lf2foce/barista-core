@@ -139,7 +139,13 @@ async def outside_status(p: Principal, source: str, proposal_id: UUID) -> dict[s
     async with db.tenant_tx(p, read_only=True) as conn:
         cur = await conn.execute("SELECT status, title, decided_at, result FROM core.proposals WHERE id = %s AND key LIKE %s", (proposal_id, mine + "%"))
         row = await cur.fetchone()
-    return {"status": _proposal_status(row), "title": row["title"], "decided_at": row["decided_at"]} if row else None
+    if row is None:
+        return None
+    # ``status`` giữ từ vựng đã công bố cho ứng dụng ngoài (open / done / dismissed / expired) — hợp đồng chỉ THÊM (luật 7, rà 22/11): trạng thái mới
+    # (đang chạy, lỗi, cần đối soát) đi ở trường THÊM ``state``; ``status`` của chúng là "open" (chưa có kết cục) / "failed" chỉ khi đã có kết cục lỗi
+    state = _proposal_status(row)
+    legacy = {"running": "open", previews.RECONCILIATION: "open"}.get(state, state)
+    return {"status": legacy, "state": state, "title": row["title"], "decided_at": row["decided_at"]}
 
 
 async def open_titles(p: Principal, prefix: str) -> list[dict[str, Any]]:
@@ -187,8 +193,11 @@ async def cards(p: Principal) -> list[dict[str, Any]]:
     if not row or not row["n"]:
         await prepare(p, day)
     async with db.tenant_tx(p, read_only=True) as conn:
-        cur = await conn.execute("""SELECT id, command, title, reason, input, basis, preview, status FROM core.proposals
-                                    WHERE day = %s AND status = 'open' ORDER BY rank, created_at""", (day,))
+        # thẻ đang chạy / lỗi hôm nay vẫn hiện (người thấy kết cục, không biến mất — rà 22/11); thẻ CẦN ĐỐI SOÁT hiện tới khi có người đóng, dù từ hôm nào
+        cur = await conn.execute("""SELECT id, command, title, reason, input, basis, preview, status, decided_at, result FROM core.proposals
+                                    WHERE (day = %s AND status IN ('open', 'running', 'failed'))
+                                       OR status = 'running' OR (status = 'failed' AND result->>'status' = %s)
+                                    ORDER BY (status = 'open'), rank, created_at""", (day, previews.RECONCILIATION))
         rows = await cur.fetchall()
     out = []
     for r in rows:
@@ -235,6 +244,8 @@ async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str,
     - Lệnh thường: khoá dòng ``FOR UPDATE`` + chạy lệnh + đóng thẻ trong CÙNG giao dịch / MỘT kết nối (``executor.run(..., claim=, on_done=)``).
     - Lệnh có ``op.prepare`` gọi hệ ngoài: ``on_prepare`` chuyển thẻ sang ``running`` và commit TRƯỚC khi nhả kết nối gọi mạng (chặn Bỏ và
       Xác nhận thứ hai chen vào lúc đang gọi ngoài); gọi xong thì Pass 2 chốt ``done``, lỗi thì ``on_fail`` chốt ``failed`` (bấm lại không gọi thêm)."""
+    if decision in previews.RECONCILED_MESSAGE:
+        return await _reconcile(p, proposal_id, decision)
     if decision != "confirm":
         async with db.tenant_tx(p) as conn:
             cur = await conn.execute("SELECT * FROM core.proposals WHERE id = %s FOR UPDATE", (proposal_id,))
@@ -255,11 +266,15 @@ async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str,
     assert row is not None
     inp: dict[str, Any] = data if isinstance(data, dict) and data else row["input"]
 
-    async def _claim(conn: Conn, prepared: bool) -> executor.Result | None:
+    async def _claim(conn: Conn, claimed: bool) -> executor.Result | None:
         cur = await conn.execute("SELECT status, decided_at, result FROM core.proposals WHERE id = %s FOR UPDATE", (proposal_id,))
         got = await cur.fetchone()
-        if prepared:
-            return None if got is not None and got["status"] == "running" else executor.Result("not_found", error=GONE)
+        if claimed:
+            if got is not None and got["status"] == "running":
+                return None
+            # pha 2 về sau khi thẻ đã đóng (quá hạn rồi người đối soát): hệ ngoài ĐÃ nhận lệnh — không báo "ok" (rà 22/11)
+            log.error("pha ghi kết quả về sau khi đề xuất %s đã đóng (%s) — cần đối soát tay", proposal_id, got["status"] if got else None)
+            return executor.Result(previews.RECONCILIATION, error="Hệ ngoài đã nhận lệnh nhưng thẻ đã đóng trước khi ghi kết quả — cần đối soát")
         return _unavailable(got)
 
     async def _on_prepare(conn: Conn) -> None:
@@ -275,7 +290,31 @@ async def decide(p: Principal, proposal_id: UUID, decision: str, data: dict[str,
     with executor.tracing(_trace(row["user_id"], row["day"], row["key"])):
         r = await executor.run(p, row["command"], inp, key=f"proposal:{proposal_id}", expect_basis=row["basis"],
                                edited=inp != row["input"], claim=_claim, on_prepare=_on_prepare, on_done=_on_done, on_fail=_on_fail)
+    if not r.ok:
+        # lỗi sau khi thẻ đã chiếm ``running`` ⇒ thẻ đã khoá ở ``failed`` / cần đối soát: báo ĐÚNG trạng thái đó (app không để form sửa-bấm-lại — rà 22/11)
+        async with db.tenant_tx(p, read_only=True) as conn:
+            cur = await conn.execute("SELECT status, decided_at, result FROM core.proposals WHERE id = %s", (proposal_id,))
+            now_row = await cur.fetchone()
+        if now_row is not None and (state := _proposal_status(now_row)) in ("failed", previews.RECONCILIATION):
+            return {**_result(state, r.error or ""), **previews.state_of(state)}
     return _result(r.status, r.error or "", executor.jsonable(r.output), r.approval_id)
+
+
+async def _reconcile(p: Principal, proposal_id: UUID, decision: str) -> dict[str, Any]:
+    """ĐỐI SOÁT (rà 22/11): thẻ cần đối soát chỉ đóng bằng người đã xem hệ ngoài — "đã thực hiện" ⇒ ``done`` (KHÔNG chạy lại lệnh), "chưa thực hiện"
+    ⇒ ``failed`` (muốn làm thì đề xuất mới). Không gọi ra ngoài; ghi ai đóng, lúc nào vào ``result``."""
+    async with db.tenant_tx(p) as conn:
+        cur = await conn.execute("SELECT status, decided_at, result FROM core.proposals WHERE id = %s FOR UPDATE", (proposal_id,))
+        row = await cur.fetchone()
+        if row is None or _proposal_status(row) != previews.RECONCILIATION:
+            return _result("conflict", "Đề xuất này không còn chờ đối soát" if row else GONE)
+        done = decision == previews.RECONCILED_DONE
+        note = {"status": "ok" if done else "failed", "reconciled": decision, "reconciled_by": str(p.user_id),
+                "error": "" if done else previews.RECONCILED_MESSAGE[decision], "before": row["result"]}
+        await conn.execute("UPDATE core.proposals SET status = %s, result = %s, decided_at = now() WHERE id = %s",
+                           ("done" if done else "failed", Jsonb(note), proposal_id))
+    return {**_result("ok" if done else "failed", "" if done else previews.RECONCILED_MESSAGE[decision]),
+            **previews.state_of("done" if done else "failed"), "message": previews.RECONCILED_MESSAGE[decision]}
 
 
 GONE = "Đề xuất này đã được xử lý (hoặc hết hạn, hoặc không phải của bạn)"

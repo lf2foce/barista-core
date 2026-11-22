@@ -18,7 +18,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 import { PANE_HEADER, RailToggle } from "./column";
 import { screenItemId, useDesk, type CanvasItem } from "./desk-context";
 import { useChat } from "./chat-context";
-import { ProposalRow } from "./chat-cards";
+import { ProposalRow, ResolveActions } from "./chat-cards";
 import { BriefView, SettledLine } from "./brief";
 import { FullFrameProvider } from "./full-frame";
 import { FrameHeadProvider, FrameShellProvider, useFrameHead } from "./frame-context";
@@ -318,7 +318,13 @@ function ProposalBody({ card }: { card: ChatCard }) {
   const done = desk.settled(card);
   const resumable = card.resumable === true;
   const morning = card.source === "morning"; // đề xuất soạn sẵn buổi sáng (0074 A) — quyết qua morning/{id}/decide
-  if (done) return <SettledLine settled={done} className="t16" />;
+  if (done)
+    return (
+      <div className="flex flex-col gap-2">
+        <SettledLine settled={done} className="t16" />
+        <ResolveActions card={card} />
+      </div>
+    );
   const finish = (message: string, approvalId?: string, status?: string) => {
     desk.setConfirmed(card.id, message, approvalId, status);
     if (status === "dismissed") chat.addSystem(`✕ Đã bỏ đề xuất: ${card.title}`);

@@ -4,7 +4,7 @@ import { decodeItems, type BatchResult, type DecideItem } from "@/lib/to-decide"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, chatStream, decideStream } from "@/lib/api";
 import { applyEvent, continueOf, decodeCard, newTurn, opensOnCanvas, type ChatMessage, type LiveTurn } from "@/lib/chat";
-import { decideStep, NO_ANSWER, startDecide, type DecideOutcome } from "@/lib/decide";
+import { decideStep, NO_ANSWER, startDecide, type Decision, type DecideOutcome } from "@/lib/decide";
 import { parseISO } from "@/lib/format";
 import { IMAGE_ONLY_TEXT, type ChatImage } from "@/lib/images";
 import type { ChatDocument } from "@/lib/api";
@@ -27,14 +27,14 @@ type ChatValue = {
   toDecide: DecideItem[];
   /** Duyệt nhiều việc cùng loại: lần lượt từng thẻ qua đường quyết của nó; thẻ lỗi / đã đổi ở lại. */
   decideMany: (kind: DecideItem["kind"], ids: string[]) => Promise<BatchResult[]>;
-  decideMorning: (card: ChatCard, decision: "confirm" | "dismiss", input: Input, key: string) => Promise<MorningOutcome>;
+  decideMorning: (card: ChatCard, decision: Decision, input: Input, key: string) => Promise<MorningOutcome>;
   /** ``documents``: tài liệu người thả vào chat và chọn "chỉ dùng trong cuộc trò chuyện này" (ADR 0249) — đi kèm câu hỏi, không vào kho / hồ sơ. */
   send: (text: string, images?: ChatImage[], documents?: ChatDocument[]) => void;
   newThread: () => void;
   openThread: (id: string) => Promise<void>;
   /** Xác nhận / Bỏ một đề xuất của lượt đang dừng (0049). Trả kết quả của chính lệnh cho form ngay ở dòng đầu; phần trợ lý chạy tiếp
    * (nếu đủ quyết định) chảy vào khung chat như một lượt trả lời mới, chạy nền sau khi form đã đóng. */
-  decide: (card: ChatCard, decision: "confirm" | "dismiss", input: Input, key: string) => Promise<DecideOutcome>;
+  decide: (card: ChatCard, decision: Decision, input: Input, key: string) => Promise<DecideOutcome>;
   /** Một dòng hệ thống trong khung chat ("✓ Đã xong…", "✕ Đã bỏ đề xuất…"). */
   addSystem: (text: string) => void;
   /** TRÌNH TẠO APP (0098 — kiểu Claude Design): chế độ trò chuyện riêng (lời dặn + công cụ riêng), app xem thử trên khung làm việc. `null` = trợ lý

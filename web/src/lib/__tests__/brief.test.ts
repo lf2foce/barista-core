@@ -36,6 +36,15 @@ describe("bản chạy thử chuẩn (ADR 0253)", () => {
     expect(undoOfOutput({ undo: { command: "", input: {} } })).toBeNull();
     expect(undoOfOutput(null)).toBeNull();
   });
+  it("thẻ cần đối soát mang nút đóng thẻ server gửi; vừa đối soát thì chữ vừa bấm thắng bản thẻ cũ", () => {
+    const resolve = [{ decision: "reconcile_done", label: "Đã thực hiện ở hệ ngoài" }, { decision: "reconcile_not_done", label: "Chưa thực hiện" }];
+    const c = card({ state: "needs_reconciliation", state_label: "Cần đối soát", resolve });
+    expect(settledOf(c)?.resolve).toEqual(resolve);
+    const after = settledOf(c, { status: "ok", message: "Đã đối soát: việc đã thực hiện ở hệ ngoài" });
+    expect(after).toEqual({ label: "Đã đối soát: việc đã thực hiện ở hệ ngoài", tone: "ok", approvalId: undefined });
+    expect(settledOf(card({ state: "executed" }), { status: "failed", message: "x" })?.label).toBe("Đã xong");   // kết cục server vẫn thắng
+    expect(settledOf(c, { status: "executed", message: "Đã đối soát: đã thực hiện" })?.label).toBe("Đã đối soát: đã thực hiện");
+  });
   it.each(["running", "failed", "needs_reconciliation"])("khôi phục thẻ %s từ server, giữ nguyên nhãn trạng thái", (state) => {
     expect(settledOf(decodeCard(card({ state, state_label: "Trạng thái từ server" })))).toEqual({ label: "Trạng thái từ server", tone: "muted" });
     expect(settledOf(card({ state: "proposed" }), { status: state, message: "Trạng thái từ lần bấm" })).toEqual({ label: "Trạng thái từ lần bấm", tone: "muted" });

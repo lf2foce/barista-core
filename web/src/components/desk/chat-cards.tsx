@@ -52,7 +52,10 @@ export function ProposalRow({ card, onEdit }: { card: ChatCard; onEdit?: () => v
       </div>
       {error ? <p className="t12 text-bad" role="alert">{error}</p> : null}
       {done ? (
-        <SettledLine settled={done} />
+        <>
+          <SettledLine settled={done} />
+          <ResolveActions card={card} />
+        </>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" disabled={busy !== null} onClick={() => void decide("confirm")} className={cn(actionClass("primary"), "h-8 px-3")}>
@@ -67,6 +70,45 @@ export function ProposalRow({ card, onEdit }: { card: ChatCard; onEdit?: () => v
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * ĐỐI SOÁT (rà 22/11): thẻ cần đối soát (gọi hệ ngoài lỗi lưng chừng / quá hạn) — người xem hệ ngoài rồi chọn một nút SERVER gửi (`card.resolve`).
+ * Không gọi ra ngoài lần nào; "đã thực hiện" đóng thẻ là xong, "chưa thực hiện" đóng thẻ là lỗi (muốn làm thì đề xuất mới).
+ */
+export function ResolveActions({ card }: { card: ChatCard }) {
+  const desk = useDesk();
+  const chat = useChat();
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const resolve = desk.settled(card)?.resolve ?? [];
+  if (!resolve.length) return null;
+  async function pick(decision: string) {
+    setBusy(decision);
+    setError("");
+    try {
+      const o = card.source === "morning" ? await chat.decideMorning(card, decision, {}, newKey()) : await chat.decide(card, decision, {}, newKey());
+      if (o.done) {
+        desk.setConfirmed(card.id, o.message, o.approvalId, o.status);
+        void desk.refreshInbox();
+      } else setError(o.message || o.status);
+    } finally {
+      setBusy("");
+    }
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="t12 text-muted-foreground">Kiểm tra trên hệ ngoài rồi chọn đúng điều đã xảy ra — Barista không gửi lại lệnh.</p>
+      {error ? <p className="t12 text-bad" role="alert">{error}</p> : null}
+      <div className="flex flex-wrap items-center gap-2">
+        {resolve.map((r, i) => (
+          <button key={r.decision} type="button" disabled={busy !== ""} onClick={() => void pick(r.decision)} className={cn(actionClass(i === 0 ? "primary" : "default"), "h-8 px-3")}>
+            {busy === r.decision ? "Đang ghi…" : r.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

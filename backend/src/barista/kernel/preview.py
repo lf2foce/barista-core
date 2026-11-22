@@ -29,14 +29,22 @@ if TYPE_CHECKING:
 
 UNKNOWN = {"ok": None, "how": ""}
 EXTERNAL_DECISION_S = 300
+# Mốc "đang chạy quá lâu ⇒ cần đối soát" = hạn gọi ngoài + khoảng đệm: mốc giờ ghi lúc chiếm thẻ (trước khi commit, trước khi đồng hồ hạn bắt đầu,
+# cộng lệch giờ app/DB) nên phải QUA HẲN hạn thì lượt kia mới chắc đã kết thúc (xong, lỗi hoặc tiến trình chết) — người đối soát không chen vào lượt còn sống.
+STALE_RUNNING_S = EXTERNAL_DECISION_S + 60
 RECONCILIATION = "needs_reconciliation"
 RECONCILIATION_LABEL = "Cần đối soát với hệ ngoài trước khi thực hiện lại"
+# ĐỐI SOÁT (rà 22/11): thẻ cần đối soát có đường đóng — người xem hệ ngoài rồi chọn một trong hai. Server gửi nút (app chỉ vẽ), cùng cho thẻ chat lẫn thẻ sáng.
+RECONCILED_DONE, RECONCILED_NOT_DONE = "reconcile_done", "reconcile_not_done"
+RESOLVE = [{"decision": RECONCILED_DONE, "label": "Đã thực hiện ở hệ ngoài"}, {"decision": RECONCILED_NOT_DONE, "label": "Chưa thực hiện"}]
+RECONCILED_MESSAGE = {RECONCILED_DONE: "Đã đối soát: việc đã thực hiện ở hệ ngoài",
+                      RECONCILED_NOT_DONE: "Đã đối soát: việc chưa thực hiện — muốn làm thì soạn đề xuất mới"}
 
 
 def running_state(started_at: datetime | float | None) -> str:
     """Lượt quá hạn (kể cả khi tiến trình chết) cần đối soát, vẫn giữ chặn chạy lại."""
     start = started_at.timestamp() if isinstance(started_at, datetime) else started_at
-    return "running" if start is not None and time.time() - start < EXTERNAL_DECISION_S else RECONCILIATION
+    return "running" if start is not None and time.time() - start < STALE_RUNNING_S else RECONCILIATION
 
 
 def reversibility(op: registry.Op) -> dict[str, Any]:
@@ -118,7 +126,9 @@ def _title(op: registry.Op, payload: dict[str, Any], given: dict[str, Any], subj
 
 def state_of(status: str, approval_id: Any = None) -> dict[str, Any]:
     """TRẠNG THÁI "đã quyết" của một thẻ đề xuất, đọc từ SERVER (không giữ ở trình duyệt) — một từ vựng cho thẻ chat lẫn thẻ sáng: ``proposed`` (chờ) ·
-    ``running`` · ``needs_reconciliation`` · ``executed`` (đã làm) · ``sent`` (đã gửi duyệt — kèm ``approval_id``) · ``dismissed`` · ``expired`` · ``failed``."""
+    ``running`` · ``needs_reconciliation`` (kèm ``resolve``: nút đối soát) · ``executed`` (đã làm) · ``sent`` (đã gửi duyệt — kèm ``approval_id``) · ``dismissed`` · ``expired`` · ``failed``."""
     if status == "done" and approval_id:
         return {"state": "sent", "approval_id": str(approval_id)}
+    if status == RECONCILIATION:
+        return {"state": RECONCILIATION, "resolve": RESOLVE}   # nút đối soát do server nói — app chỉ vẽ
     return {"state": {"open": "proposed", "done": "executed"}.get(status, status)}

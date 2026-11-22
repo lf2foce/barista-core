@@ -2,6 +2,7 @@ import { decodePage, ROUTE } from "./decode";
 import { NdjsonParser } from "./ndjson";
 import { connectAction, signalAction, SseParser } from "./sse";
 import type { IntakeOut } from "./kb-intake";
+import type { Decision } from "./decide";
 import { primeDesk } from "./session";
 import type {
   Attention,
@@ -329,7 +330,7 @@ export const api = {
   /** Duyệt nhiều việc cùng loại: lần lượt từng thẻ qua đường quyết của nó; trả từng kết quả. */
   decideMany: async (kind: "proposal" | "approval", ids: string[], decision: "confirm" | "dismiss"): Promise<{ id: string; status: string; message: string }[]> =>
     jsonOf(await post("/v1/assistant/to-decide/decide", { kind, ids, decision })),
-  morningDecide: async (id: string, decision: "confirm" | "dismiss", input: Input, key: string): Promise<CommandResult> =>
+  morningDecide: async (id: string, decision: Decision, input: Input, key: string): Promise<CommandResult> =>
     jsonOf<CommandResult>(await post(`/v1/assistant/morning/${id}/decide`, { decision, input, key })),
   threads: async (): Promise<ThreadSummary[]> => jsonOf<ThreadSummary[]>(await raw("/v1/assistant/threads")),
   thread: async (id: string) =>
@@ -379,7 +380,7 @@ async function* ndjson(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamE
 }
 
 /** Người Xác nhận / Bỏ một đề xuất của lượt đang dừng (0049) — NDJSON, cùng đường truyền với chat (BFF không đệm). */
-export async function* decideStream(cardId: string, decision: "confirm" | "dismiss", input: Input, key: string, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
+export async function* decideStream(cardId: string, decision: Decision, input: Input, key: string, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
   const res = await post("/v1/assistant/proposals/decide", { card_id: cardId, decision, input, key }, {}, signal);
   if (!res.ok || !res.body) throw new ApiError(await detailOf(res, `Không gửi được quyết định (${res.status})`), res.status);
   yield* ndjson(res.body);

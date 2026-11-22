@@ -474,6 +474,9 @@ export type CommandResult = {
   error: string;
   approval_id: string | null;
   replayed: boolean;
+  /** Quyết thẻ buổi sáng: trạng thái thẻ đã khoá (failed · needs_reconciliation · executed) + câu báo của server — trường THÊM. */
+  state?: string;
+  message?: string;
 };
 
 export type ImportReport = {
@@ -635,6 +638,8 @@ export type ChatCard = {
   state?: string;
   state_label?: string;
   approval_id?: string;
+  /** Thẻ CẦN ĐỐI SOÁT (rà 22/11): nút đóng thẻ do server gửi — `decision` gửi lại nguyên văn qua đúng đường quyết của thẻ. */
+  resolve?: { decision: string; label: string }[];
   /** Thẻ buổi sáng: vì sao nên làm (code tính ở server — web vẽ dưới tiêu đề). */
   reason?: string;
   title: string;

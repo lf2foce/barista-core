@@ -18,16 +18,20 @@ export function decodeBrief(raw: unknown): Brief | null {
   };
 }
 
-export type Settled = { label: string; tone: "ok" | "muted"; approvalId?: string };
+export type Settled = { label: string; tone: "ok" | "muted"; approvalId?: string; resolve?: { decision: string; label: string }[] };
+
+/** Trạng thái CHƯA có kết cục ở bản thẻ đang giữ — người vừa bấm (đối soát) thì chữ vừa bấm mới hơn bản thẻ cũ. */
+const TRANSIENT = new Set(["running", "needs_reconciliation"]);
 export type DecisionLabel = { message: string; approvalId?: string; status?: string };
 
 /** Thẻ đã quyết chưa — SERVER nói (`state`); `local` chỉ là chữ vừa bấm (trước khi tải lại), không phải nguồn sự thật. */
 export function settledOf(card: ChatCard, local?: DecisionLabel): Settled | null {
-  const state = card.state && card.state !== "proposed" ? card.state : local?.status;
+  const server = card.state && card.state !== "proposed" && !(local?.status && TRANSIENT.has(card.state)) ? card.state : undefined;
+  const state = server ?? local?.status;
   const label = state === card.state ? card.state_label : local?.message;
   switch (state) {
     case "executed":
-      return { label: card.state_label || "Đã xong", tone: "ok" };
+      return { label: label || "Đã xong", tone: "ok" };
     case "sent":
       return { label: "Đã gửi duyệt", tone: "ok", approvalId: card.approval_id };
     case "dismissed":
@@ -39,7 +43,7 @@ export function settledOf(card: ChatCard, local?: DecisionLabel): Settled | null
     case "failed":
       return { label: label || "Thực hiện lỗi", tone: "muted" };
     case "needs_reconciliation":
-      return { label: label || "Cần đối soát với hệ ngoài", tone: "muted" };
+      return { label: label || "Cần đối soát với hệ ngoài", tone: "muted", ...(state === card.state && card.resolve?.length ? { resolve: card.resolve } : {}) };
   }
   if (!local) return null;
   return { label: local.message, tone: local.message === "Đã bỏ đề xuất" ? "muted" : "ok", approvalId: local.approvalId };
