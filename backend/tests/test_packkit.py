@@ -205,6 +205,57 @@ def test_pack_dev_refuses_production_and_unsafe_db_targets(made: Path) -> None:
                                "BARISTA_OWNER_DATABASE_URL": "postgresql://barista_owner:x@db.example.com:5432/barista_erp_packdev"})
 
 
+@pytest.mark.parametrize("url", [
+    "postgresql://u:p@localhost:5432/barista_erp_packdev?host=db.example.com",      # libpq: ?host= đè phần host của URL
+    "postgresql://u:p@localhost:5432/barista_erp_packdev?hostaddr=203.0.113.7",
+    "postgresql://u:p@localhost:5432/barista_erp_packdev?dbname=barista_prod",      # ?dbname= đè đường dẫn
+    "postgresql://u:p@localhost:5432/barista_erp_packdev?service=prod",
+    "postgresql://u:p@localhost:5432/barista_erp_packdev?port=6432",
+    "postgresql://u:p@/barista_erp_packdev",                                         # host rỗng ⇒ PGHOST / PGSERVICE / socket
+    "postgresql:///barista_erp_packdev",
+    "postgresql://u:p@localhost:5432/barista_erp_dev_template",                      # DB khuôn của dev_reset.sh (runbook 18)
+    "postgresql://u:p@localhost:5432/barista_erp_packdev_template",
+    "postgresql://u:p@db.example.com:5432/barista_erp_packdev",
+    "mysql://u:p@localhost:5432/barista_erp_packdev",
+])
+def test_pack_dev_url_guard_refuses_libpq_overrides_empty_host_and_template(url: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """Rà 22/11: hàng rào DB của ``pack.sh dev`` không được qua mặt bằng tham số libpq / host rỗng, và không nhận DB khuôn; lỗi in ra không lộ mật khẩu."""
+    with pytest.raises(SystemExit):
+        packkit._check_dev_url(url, "BARISTA_DATABASE_URL")
+    assert ":p@" not in capsys.readouterr().err
+
+
+def test_pack_dev_url_guard_accepts_plain_local_dev_urls_and_derives_admin_on_the_same_port() -> None:
+    assert packkit._check_dev_url("postgresql://localhost:5432/barista_erp_packdev", "X") == "barista_erp_packdev"
+    assert packkit._check_dev_url("postgresql://barista_owner:x@127.0.0.1:6543/barista_erp_dev_a1", "X") == "barista_erp_dev_a1"
+    assert packkit._check_dev_url("postgresql://u@[::1]/barista_erp", "X") == "barista_erp"
+    assert not packkit.DEV_DB_RE.fullmatch("barista_erp_dev_template")
+    # URL quản trị nối CÙNG máy chủ + cổng với đích (không mặc định localhost:5432), giữ tên / mật khẩu của BARISTA_TEST_ADMIN_URL
+    assert packkit._admin_url("postgresql://o:x@127.0.0.1:6543/barista_erp_packdev", "") == "postgresql://127.0.0.1:6543/postgres"
+    assert packkit._admin_url("postgresql://o:x@localhost/barista_erp_packdev", "postgresql://pg:s@localhost:5432/postgres") == \
+        "postgresql://pg:s@localhost:5432/postgres"
+    assert packkit._admin_url("postgresql://o@[::1]:6000/barista_erp_packdev", "") == "postgresql://[::1]:6000/postgres"
+    assert packkit._mask_url("postgresql://o:secret@localhost/x") == "postgresql://o:***@localhost/x"
+
+
+@pytest.mark.parametrize("line", [
+    "BARISTA_ENV=production",
+    "export BARISTA_ENV=production",
+    "BARISTA_ENV=production # ghi chú",
+    "BARISTA_ENV='production'",
+    'export BARISTA_ENV="production"  # ghi chú',
+    "  BARISTA_ENV = production",
+])
+def test_pack_dev_reads_barista_env_from_dotenv_variants(line: str, tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(f"# đầu file\nBARISTA_FILES_DIR=/tmp/x\n{line}\n", encoding="utf-8")
+    assert packkit._dotenv(tmp_path / ".env")["BARISTA_ENV"] == "production"
+
+
+def test_pack_dev_dotenv_keeps_hash_inside_values(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("A='x # y'\nB=abc#def\n", encoding="utf-8")
+    assert packkit._dotenv(tmp_path / ".env") == {"A": "x # y", "B": "abc#def"}
+
+
 async def test_pack_dev_installs_migrates_enables_and_preserves_existing_db_data(made: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """``pack.sh dev --no-serve``: cài gói vào môi trường riêng, chạy migration + bật cho công ty mẫu mà KHÔNG xoá dữ liệu đang có, in đúng lệnh mở web theo cổng và chạy lại được."""
     import os
