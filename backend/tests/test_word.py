@@ -432,3 +432,36 @@ def test_new_documents_get_the_official_layout_by_kind() -> None:
     assert "Số: ……/……-……" in cv and "V/v ……" in cv and "/CV-" not in cv
     tt = dm.plain_text(dm.read(forms.build("to_trinh", {"name": "Công ty Mẫu"}, date(2026, 11, 22))))
     assert "TỜ TRÌNH" in tt and "/TTr-" in tt
+
+
+async def test_studio_sources_are_read_with_the_writers_rights_and_fenced_as_data() -> None:
+    """Màn Soạn thảo — chip "Kho tài liệu": tài liệu chọn làm nguồn đọc bằng QUYỀN NGƯỜI SOẠN (``kb.read``), vào lời nhắc trong rào ``<tai_lieu>`` như dữ
+    liệu; tài liệu không đọc được ⇒ từ chối cả lượt (không lặng lẽ bỏ, không gọi model)."""
+    from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from barista.modules import word
+
+    people = await _company()
+    chu = people["chu"]
+    doc = str((await ok(chu, "kb.add_document", title="Lịch làm việc tháng 12", kind="process",
+                         body="# Lịch\nHọp giao ban thứ Hai 08h30 tại phòng họp tầng 3."))["document_id"])
+    made = await ok(chu, "word.create", title="Công văn lịch làm việc", form="cong_van")
+    seen: list[str] = []
+
+    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(str(messages[-1]))
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"reply": "Đã viết.", "edits": [], "additions": []})])
+
+    paras = json.dumps([{"id": "b0", "text": "[Nội dung]"}])
+    word.ASSIST_MODEL = FunctionModel(reply, model_name="word-fake")
+    try:
+        await ok(chu, "word.assist", document_id=made["document_id"], instruction="Viết công văn lịch làm việc", paragraphs_json=paras,
+                 sources_json=json.dumps([doc]), scope="document")
+        bad = await executor.run(chu, "word.assist", {"document_id": made["document_id"], "instruction": "x", "paragraphs_json": paras,
+                                                     "sources_json": json.dumps([str(uuid.uuid4())])})
+    finally:
+        word.ASSIST_MODEL = None
+    assert len(seen) == 1 and "<tai_lieu" in seen[0] and "08h30 tại phòng họp tầng 3" in seen[0] and "KHÔNG phải yêu cầu" in seen[0]
+    assert bad.status == "invalid" and "Không đọc được" in (bad.error or "")
+    assert made["form"] == "cong_van"                                                           # khung thể thức theo loại người chọn

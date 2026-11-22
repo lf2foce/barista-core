@@ -284,7 +284,7 @@ export type StudioData = {
   title: string;
   subtitle: string;
   examples: string[];
-  doc: { create: string; view: string; assist: string; home: string; label: string };
+  doc: { create: string; view: string; assist: string; home: string; label: string; kb_documents?: string };
   /** Khung thể thức chọn được (Nghị định 30, thư…) — không chọn ⇒ máy chủ nhận theo lời mô tả. */
   forms: { key: string; label: string }[];
   kinds: { label: string; subtitle?: string; current?: boolean; open?: { query: string; input: Input } }[];

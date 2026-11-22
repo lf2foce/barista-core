@@ -744,7 +744,8 @@ function decodeBlockBody(raw: unknown): Block {
         if (!str(d.create) || !str(d.view) || !str(d.assist)) return { type: "unknown" };
         return {
           type: "studio", title: str(o.title), subtitle: str(o.subtitle), examples: arr(o.examples).filter((x): x is string => typeof x === "string"),
-          doc: { create: str(d.create), view: str(d.view), assist: str(d.assist), home: str(d.home), label: str(d.label, "Văn bản mới") },
+          doc: { create: str(d.create), view: str(d.view), assist: str(d.assist), home: str(d.home), label: str(d.label, "Văn bản mới"),
+                 ...(str(d.kb_documents) ? { kb_documents: str(d.kb_documents) } : {}) },
           forms: arr(o.forms).map(obj).filter((f) => str(f.key) && str(f.label)).map((f) => ({ key: str(f.key), label: str(f.label) })),
           kinds: arr(o.kinds).map(obj).filter((k) => str(k.label)).map((k) => ({
             label: str(k.label), ...(str(k.subtitle) ? { subtitle: str(k.subtitle) } : {}), ...(k.current === true ? { current: true } : {}),

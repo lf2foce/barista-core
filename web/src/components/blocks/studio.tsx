@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { ArrowUp, Check, ChevronDown, FileText, History, MessageSquarePlus } from "lucide-react";
 import { applyAll, collect } from "@/components/blocks/word-assist";
 import { loadWord, WordEditor, type WordHandle } from "@/components/blocks/word-doc";
-import { CopyButton, Failed, UserBubble, Working } from "@/components/blocks/composer";
+import { CopyButton, Failed, KbPicker, UserBubble, Working, type KbRef } from "@/components/blocks/composer";
 import { useDesk } from "@/components/desk/desk-context";
 import { ScreensMenu } from "@/components/desk/screens-menu";
 import { useFrameActions } from "@/components/desk/frame-context";
@@ -56,7 +56,8 @@ export function StudioBlock({ block }: { block: StudioData }) {
   const [docs, setDocs] = useState<DocRef[]>([]);
   const [fresh, setFresh] = useState(false);
   const handle = useRef<WordHandle | null>(null);
-  const [form, setForm] = useState("");   // khung thể thức người chọn ở chip "Loại"; "" ⇒ máy chủ nhận theo lời mô tả
+  const [form, setForm] = useState("");
+  const [sources, setSources] = useState<KbRef[]>([]);   // tài liệu kho làm nguồn — gửi kèm MỌI lượt nhắn tới khi bỏ chọn (tối đa 3)   // khung thể thức người chọn ở chip "Loại"; "" ⇒ máy chủ nhận theo lời mô tả
   const [pct, setPct] = useState(40);     // bề ngang ngăn trò chuyện (%) — kéo đường chia như Soạn với AI
   const row = useRef<HTMLDivElement>(null);
   const end = useRef<HTMLDivElement>(null);
@@ -112,7 +113,8 @@ export function StudioBlock({ block }: { block: StudioData }) {
         return;
       }
       const { paras, scope } = collect(root, h.range());
-      const r = await api.command(block.doc.assist, { document_id: doc.documentId, instruction: text, paragraphs_json: JSON.stringify(paras), scope }, newKey());
+      const r = await api.command(block.doc.assist, { document_id: doc.documentId, instruction: text, paragraphs_json: JSON.stringify(paras), scope,
+                                                     sources_json: JSON.stringify(sources.map((x) => x.id)) }, newKey());
       if (r.status !== "ok") {
         say({ role: "agent", text: r.error || "Agent chưa trả lời được", error: true });
         return;
@@ -245,7 +247,7 @@ export function StudioBlock({ block }: { block: StudioData }) {
             </div>
           </div>
         </div>
-        <StudioInput block={block} hasDraft={hasDraft} busy={busy} form={form} setForm={setForm} onSend={(t) => void send(t)} />
+        <StudioInput block={block} hasDraft={hasDraft} busy={busy} form={form} setForm={setForm} sources={sources} setSources={setSources} onSend={(t) => void send(t)} />
       </section>
 
       {hasDraft && word ? (
@@ -338,8 +340,9 @@ function DocsMenu({ docs, currentId, disabled, onOpen, onNew }: { docs: DocRef[]
 }
 
 /** Ô nhập — cùng hàng chip + ô viên (mic · gửi) với Soạn với AI. Chip "Loại" nói đang soạn loại nào và mở các cách soạn khác. */
-function StudioInput({ block, hasDraft, busy, form, setForm, onSend }: {
-  block: StudioData; hasDraft: boolean; busy: boolean; form: string; setForm: (f: string) => void; onSend: (t: string) => void;
+function StudioInput({ block, hasDraft, busy, form, setForm, sources, setSources, onSend }: {
+  block: StudioData; hasDraft: boolean; busy: boolean; form: string; setForm: (f: string) => void;
+  sources: KbRef[]; setSources: (s: KbRef[]) => void; onSend: (t: string) => void;
 }) {
   const desk = useDesk();
   const [draft, setDraft] = useState("");
@@ -362,7 +365,8 @@ function StudioInput({ block, hasDraft, busy, form, setForm, onSend }: {
   return (
     <div className="flex flex-col gap-1.5 px-3 pt-1 pb-3">
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-2">
-        {hasDraft ? null : <div className="flex flex-wrap items-center gap-1.5 px-1">
+        <div className="flex flex-wrap items-center gap-1.5 px-1">
+        {hasDraft ? null : <>
           <Popover open={kindOpen} onOpenChange={setKindOpen}>
             <PopoverTrigger className={cn("t12m inline-flex h-7 items-center gap-1 rounded-full border border-hairline bg-surface px-2.5 text-foreground hover:bg-accent", RING)}>
               <FileText className="size-3.5 text-primary" aria-hidden />
@@ -390,7 +394,19 @@ function StudioInput({ block, hasDraft, busy, form, setForm, onSend }: {
               ))}
             </PopoverContent>
           </Popover>
-        </div>}
+        </>}
+          {/* nguồn cho agent: tài liệu kho (đúng quyền kệ) — giữ qua các lượt nhắn, bỏ từng cái */}
+          {block.doc.kb_documents && sources.length < 3 ? (
+            <KbPicker query={block.doc.kb_documents} picked={null} onPick={(d) => { if (d && !sources.some((x) => x.id === d.id)) setSources([...sources, d]); }} />
+          ) : null}
+          {sources.map((x) => (
+            <span key={x.id} className="t12m inline-flex h-7 max-w-[14rem] items-center gap-1 rounded-full border border-primary/40 bg-primary/10 pr-1 pl-2.5 text-primary">
+              <span className="truncate">{x.title}</span>
+              <button type="button" onClick={() => setSources(sources.filter((y) => y.id !== x.id))} aria-label={`Bỏ tài liệu ${x.title}`}
+                      className={cn("grid size-5 place-items-center rounded-full hover:bg-primary/15", RING)}>×</button>
+            </span>
+          ))}
+        </div>
         <div className={cn(COMPOSER_PILL, "pl-3")}>
           <textarea ref={ta} value={draft} rows={1} autoFocus onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}

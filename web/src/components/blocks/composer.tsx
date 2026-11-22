@@ -39,7 +39,7 @@ async function loadComposer(query: string, sid: string): Promise<ComposerData | 
   return c?.type === "composer" ? c : null;
 }
 
-type KbRef = { id: string; title: string; shelf: string };
+export type KbRef = { id: string; title: string; shelf: string };
 
 /**
  * Ấn phẩm kiểu Data Analyst Artifact Canvas (phenau_v3):
@@ -722,7 +722,7 @@ export function Working({ status, steps }: { status: string; steps: LiveStep[] }
 /** Chọn tài liệu từ Kho tài liệu để gắn làm NGUỒN cho lượt soạn (gửi mã tài liệu, máy chủ kiểm quyền đọc + đưa cho AI). Truy vấn danh sách do khối gửi
  *  (`commands.kb_documents`, đúng quyền kệ của người dùng); không xem được kho ⇒ báo gọn, không vỡ ô nhập. Danh sách lấy trọn một trang (máy chủ trả tới 1.000
  *  tài liệu), lọc theo chữ gõ, chỉ hiện 50 dòng đầu — còn nữa thì nhắc gõ để thu hẹp. */
-function KbPicker({ query, picked, onPick }: { query: string; picked: KbRef | null; onPick: (d: KbRef | null) => void }) {
+export function KbPicker({ query, picked, onPick }: { query: string; picked: KbRef | null; onPick: (d: KbRef | null) => void }) {
   const [open, setOpen] = useState(false);
   const [docs, setDocs] = useState<KbRef[] | null>(null);
   const [failed, setFailed] = useState(false);
