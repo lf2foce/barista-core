@@ -239,7 +239,9 @@ __version__ = "1.79.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                         1.79 (CHỈ THÊM, rà 22/11): CỬA SOẠN CHUNG ``papers.studio`` (màn "Soạn" của phân hệ Văn bản & tài liệu) + điểm cắm ``papers.authoring``: gói khai
 #                              ``@m.plug("papers.authoring", nhãn)``, đầu vào ``NoInput``, trả DANH SÁCH ô ``{title, subtitle?, module?, open: {query, input}}``; lõi bỏ (ghi log) kết quả sai
 #                              hình và ẩn ô người mở không chạy được ``open.query``. Khối ``composer`` (web vẽ): mỗi mục ``kinds`` thêm ``paper`` ("deck" · "page") + ``example``,
-#                              khối thêm ``default_kind`` — web không viết cứng khoá loại ấn phẩm; ``stream`` là đường luồng bắt buộc (vắng / sai ⇒ web báo lỗi). Không migration
+#                              khối thêm ``default_kind`` — web không viết cứng khoá loại ấn phẩm; ``stream`` là đường luồng bắt buộc (vắng / sai ⇒ web báo lỗi).
+#                              ``Module.command(prepare_writes=False)``: bước ``prepare`` CHỈ ĐỌC — thẻ đề xuất không chiếm ``running`` trước khi gọi, lỗi mạng để thẻ chờ
+#                              (mặc định True: lỗi lưng chừng ⇒ cần đối soát, ADR 0200 bổ sung 22/11). Không migration
 
 __all__ = [
     "VN",
