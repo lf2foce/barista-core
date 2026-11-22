@@ -152,3 +152,13 @@ def test_only_the_connector_framework_opens_a_webhook_door() -> None:
     đang cài — nhận webhook qua bộ nối (``Connector.webhook`` + ``hook_parse``), không tự mở ``Module.inbound`` với bảng khoá / kết nối riêng."""
     assert set(registry.INBOUND) <= {"connectors"}, f"gói tự mở cửa webhook: {sorted(set(registry.INBOUND) - {'connectors'})} — dùng khung kết nối (runbook 22)"
     assert set(registry.INBOUND_VERIFY) <= {"connectors"}, sorted(registry.INBOUND_VERIFY)
+
+
+def test_pack_grants_only_open_the_packs_own_resources() -> None:
+    """``Pack.grants`` = quyền cho vai của gói KHÁC lên tài nguyên CỦA GÓI NÀY (registry). Lõi cài dòng quyền khi gói của TÀI NGUYÊN bật — khai quyền lên tài
+    nguyên của gói khác (vd Kế toán) sẽ mở quyền đó ở MỌI công ty bật gói kia trên cùng bản cài, kể cả công ty không bật gói khai (bản cài nhiều công ty — premerge
+    23/11). Cần quyền lên tài nguyên khác ⇒ vai của gói tự khai (``Role.grants``), hoặc chủ tài khoản cấp trong app."""
+    from barista import presets
+    bad = [f"{p.key}: {role} · {res} (thuộc gói {presets.resource_pack(res)})"
+           for p in registry.PACKS.values() for role, res, _scope, _actions in p.grants if presets.resource_pack(res) != p.key]
+    assert not bad, "Pack.grants lên tài nguyên của gói khác:\n" + "\n".join(bad)
