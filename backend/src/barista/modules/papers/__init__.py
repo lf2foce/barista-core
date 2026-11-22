@@ -651,7 +651,7 @@ def _authoring_tile(x: Any) -> dict[str, Any] | None:
     return x
 
 
-@m.query("studio", resource=None, title="Soạn", agent="deny")
+@m.query("studio", resource=None, title="Soạn thảo", agent="deny")
 async def studio(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     """Điểm bắt đầu soạn. Gói đang bật góp trình soạn bằng quyền người mở (điểm cắm ``papers.authoring`` — api 1.79): mỗi phần cắm trả DANH SÁCH ô; kết quả sai
     hình bị bỏ + ghi log (một gói lỗi không làm hỏng màn), ô người mở không chạy được ``open.query`` không hiện (bấm vào chỉ gặp "không có quyền")."""
@@ -669,7 +669,24 @@ async def studio(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
             elif can_run(ctx.p, tile["open"]["query"]):
                 items.append(tile)
     blocks = [ui.b_tiles(items)] if items else [ui.b_callout("muted", "Chưa có cách soạn nào cho bạn", "Hỏi quản trị bật gói soạn thảo hoặc cấp quyền giấy tờ.")]
+    # "SOẠN VỚI AGENT" (0251 lát 2): có trình soạn nhận mở VĂN BẢN MỚI (ô khai ``studio``) ⇒ màn là agent bên trái + văn bản mới bên phải — vào là viết,
+    # không chọn loại trước. Cách soạn khác (giấy theo mẫu, ấn phẩm…) thành lựa chọn "Loại" ngay ở ô nhập. Ô ``tiles`` giữ cho app chưa vẽ khối ``studio``.
+    doc = next((t for t in items if isinstance(t.get("studio"), dict) and t["studio"].get("create") and t["studio"].get("view")), None)
+    if doc is not None and can_run(ctx.p, str(doc["studio"]["view"])):
+        studio_block = {"type": "studio", "title": "Bạn cần soạn gì?",
+                        "subtitle": "Mô tả bằng lời tự nhiên — agent viết thẳng vào văn bản bên phải. Bôi đen một đoạn rồi bảo agent sửa đúng đoạn đó.",
+                        "examples": list(STUDIO_EXAMPLES), "doc": {k: str(v) for k, v in doc["studio"].items() if isinstance(v, str)},
+                        "forms": [x for x in doc["studio"].get("forms") or [] if isinstance(x, dict) and x.get("key") and x.get("label")],
+                        "kinds": [{"label": doc["studio"].get("label") or doc["title"], "current": True},
+                                  {"label": f"Mở {doc['title'][:1].lower() + doc['title'][1:]} đã có", "open": doc["open"]},
+                                  *({"label": t["title"], "subtitle": t.get("subtitle", ""), "open": t["open"]} for t in items if t is not doc)]}
+        blocks = [studio_block, *blocks]
+        return ui.card("Soạn thảo", blocks, subtitle="Nói với agent — văn bản hiện ra bên cạnh, sửa tiếp bằng lời.", icon="square.and.pencil")
     return ui.card("Soạn", blocks, subtitle="Chọn cách bắt đầu hoặc mở một văn bản đã soạn.", icon="square.and.pencil")
+
+
+STUDIO_EXAMPLES = ("Công văn gửi đối tác về lịch làm việc tháng tới", "Thư cảm ơn khách hàng đã tin dùng dịch vụ",
+                   "Biên bản họp giao ban tuần, có mục việc cần làm", "Tờ trình xin duyệt chi phí cho sự kiện của công ty")
 
 
 # ---- Màn hình (0069): module tự khai phân hệ / góp màn vào phân hệ khác; workspaces.py chỉ ráp và lọc theo quyền
@@ -678,7 +695,7 @@ ISSUE_ROW = tuple(A("papers.issue", f["issue"], bind={"paper_id": "id"}, when={"
 DISCARD_ROW = tuple(A("papers.void", f["discard"], bind={"paper_id": "id"}, when={"can_discard": [True], "family": [k]}, style="destructive")
                     for k, f in FAMILIES.items())
 m.screens("docs", (
-    Screen("authoring", "Soạn", "square.and.pencil", "papers.studio"),
+    Screen("authoring", "Soạn thảo", "square.and.pencil", "papers.studio", full_frame=True),   # agent + văn bản: tự vẽ trọn khung như Soạn với AI
     # MỘT màn cho mọi giấy tờ, lọc theo họ (ADR 0251). Nút tạo DUY NHẤT ở đây: công văn (văn bản công ty, không có hồ sơ). Chứng từ lập TỪ
     # HỒ SƠ (nút trên thẻ hồ sơ của gói, ``papers.start_draft``), không còn hộp chọn mẫu + chọn hồ sơ từ danh sách dài. Khoá cũ ⇒ ``aliases`` giữ ghim.
     Screen("papers", "Giấy tờ & công văn", "doc.richtext", "papers.list", aliases=("compose",),

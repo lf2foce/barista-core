@@ -15,7 +15,7 @@ export const FrameShellProvider = FrameCtx.Provider;
 
 /** Trang tự vẽ khung: thẻ có khối soạn với AI. Một chỗ định nghĩa — dùng cho cả phân hệ một màn (FullFrame) lẫn thẻ trong khung làm việc. */
 export function isSelfFramed(page: Page | null | undefined): boolean {
-  return page?.kind === "card" && page.blocks.some((b) => b.type === "composer");
+  return page?.kind === "card" && page.blocks.some((b) => b.type === "composer" || b.type === "studio");
 }
 
 /** Nội dung báo cho thẻ bọc ngoài rằng nó tự vẽ khung (hoặc thôi) — ngoài khung làm việc thì không làm gì. */

@@ -304,6 +304,10 @@ def _para_format(st: _Styles, p: Any) -> dict[str, Any]:
                 out["line_pt"] = int(line) / 20
             else:
                 out["line"] = round(int(line) / 240, 2)
+    bdr = _first(props, "w:pBdr")
+    bottom = bdr.find(qn("w:bottom")) if bdr is not None else None
+    if bottom is not None and bottom.get(VAL) not in (None, "nil", "none"):
+        out["rule"] = True   # đường kẻ ngang dưới đoạn (vd dưới tiêu ngữ / tên cơ quan — Nghị định 30): chỉ để HIỆN, sửa không đụng tới
     name = st.name(p).lower()
     if name.startswith("heading ") and name[8:].isdigit():
         out["heading"] = min(6, int(name[8:]))

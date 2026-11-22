@@ -17,7 +17,7 @@ type Para = { id: string; text: string };
 type Undo = { edits: { el: HTMLElement; html: string }[]; added: HTMLElement[] };
 
 /** Các đoạn sửa được (mã gốc, lần gặp đầu) — trong vùng chọn nếu có, không thì cả văn bản. */
-function collect(sheet: HTMLElement, range: Range | null): { paras: Para[]; scope: "selection" | "document" } {
+export function collect(sheet: HTMLElement, range: Range | null): { paras: Para[]; scope: "selection" | "document" } {
   const all = [...sheet.querySelectorAll<HTMLElement>("[data-seg] > p[data-id]")];
   const seen = new Set<string>();
   const uniq = all.filter((p) => !seen.has(p.dataset.id!) && seen.add(p.dataset.id!));
@@ -47,6 +47,39 @@ function newParaAfter(ref: HTMLElement, model: HTMLElement, text: string): HTMLE
   p.appendChild(span);
   ref.after(p);
   return p;
+}
+
+/** Áp TẤT CẢ đề xuất lên trang giấy (màn "Soạn": agent viết thẳng, người hoàn tác bằng phiên bản) — cùng cách đặt chữ / thêm đoạn như "Áp dụng". Trả số mục đã áp. */
+export function applyAll(root: HTMLElement, result: AssistResult): number {
+  const find = (id: string) => root.querySelector<HTMLElement>(`[data-seg] > p[data-id="${CSS.escape(id)}"]`);
+  let n = 0;
+  for (const e of result.edits) {
+    const p = find(e.id);
+    if (!p) continue;
+    const [head, ...rest] = splitParagraphs(e.text);
+    setText(p, head);
+    flash(p);
+    let tail = p;
+    for (const line of rest) {
+      tail = newParaAfter(tail, p, line);
+      flash(tail);
+    }
+    n += 1;
+  }
+  const tail = new Map<string, HTMLElement>();
+  for (const a of result.additions) {
+    const ref = tail.get(a.after) ?? find(a.after);
+    const model = find(a.after) ?? ref;
+    if (!ref || !model) continue;
+    let last = ref;
+    for (const line of splitParagraphs(a.text)) {
+      last = newParaAfter(last, model, line);
+      flash(last);
+    }
+    tail.set(a.after, last);
+    n += 1;
+  }
+  return n;
 }
 
 function flash(el: HTMLElement) {

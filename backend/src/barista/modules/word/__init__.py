@@ -39,10 +39,12 @@ from barista.api import (
     convert,
     field,
     files,
+    today,
     ui,
     web,
 )
 from barista.modules.word import docx_model as dm
+from barista.modules.word import forms
 
 log = logging.getLogger("barista.word")
 
@@ -115,6 +117,8 @@ async def add(ctx: Ctx, inp: AddIn) -> dict[str, Any]:
 
 class CreateIn(Input):
     title: str = field("Tên văn bản", "", max_length=200, help="Trống = “Văn bản mới” — đổi tên ngay trên trang soạn")
+    form: str = field("Khung thể thức", "", max_length=40, hidden=True, help="Khoá khung (forms.FORMS); trống ⇒ nhận theo lời mô tả")
+    brief: str = field("Lời mô tả", "", max_length=2000, hidden=True, audit=False)
 
 
 @m.command("create", resource=None, title="Tạo văn bản Word mới", agent="deny")
@@ -124,9 +128,12 @@ async def create(ctx: Ctx, inp: CreateIn) -> dict[str, Any]:
     if int(await ctx.val("SELECT count(*) FROM word.documents WHERE archived_at IS NULL") or 0) >= MAX_DOCS:
         raise Invalid(f"Đã có {MAX_DOCS} văn bản — cất bớt văn bản cũ rồi thêm tiếp")
     title = (inp.title.strip() or "Văn bản mới")[:200]
+    # KHUNG THỂ THỨC (0251 lát 2): code dựng bố cục theo loại (người chọn, hoặc nhận theo lời mô tả) — AI chỉ viết chữ vào khung. Không loại nào khớp ⇒ trang trắng
+    key = inp.form if inp.form in forms.FORMS else forms.infer(inp.brief or inp.title) if (inp.brief or inp.form) else ""
+    data = forms.build(key, await _letterhead(ctx), today()) if key else dm.blank()
     did = await ctx.val("INSERT INTO word.documents (title, origin) VALUES (%s, %s) RETURNING id", (title, "Tạo mới"))
-    await _add_version(ctx, did, 1, dm.blank(), _filename(title), "Tạo mới")
-    return {"document_id": did, "title": title, "summary": f"Đã tạo văn bản “{title}”"}
+    await _add_version(ctx, did, 1, data, _filename(title), "Tạo mới" + (f" · {forms.FORMS[key].label}" if key and key != "trang" else ""))
+    return {"document_id": did, "title": title, "form": key, "summary": f"Đã tạo văn bản “{title}”"}
 
 
 class SendIn(Input):
@@ -277,7 +284,14 @@ Bạn nhận yêu cầu của người dùng và danh sách đoạn văn, mỗi 
 - "additions": đoạn MỚI cần thêm (vd viết tiếp, thêm điều khoản) — trả mã đoạn đứng ngay trước chỗ thêm và chữ của đoạn mới, theo thứ tự đọc.
 - Chỉ dùng mã đoạn có trong danh sách. Giữ nguyên số liệu, tên riêng, ngày tháng, số hiệu văn bản trừ khi người dùng bảo đổi; không bịa thông tin mới.
 - Chữ thuần, không dùng Markdown (không **, không #, không gạch đầu dòng tự thêm). Giữ văn phong hành chính / hợp đồng nếu văn bản là loại đó.
-- "reply": một hai câu nói ngắn đã làm gì (hoặc trả lời câu hỏi nếu người dùng chỉ hỏi về văn bản — khi đó edits / additions để trống)."""
+- "reply": một hai câu nói ngắn đã làm gì (hoặc trả lời câu hỏi nếu người dùng chỉ hỏi về văn bản — khi đó edits / additions để trống).
+- Văn bản có KHUNG THỂ THỨC (bảng đầu: tên cơ quan, số ký hiệu, quốc hiệu, tiêu ngữ, ngày tháng; tên loại; bảng cuối: nơi nhận, chữ ký): GIỮ NGUYÊN
+  quốc hiệu, tiêu ngữ, tên loại, ngày tháng và vị trí các đoạn; chỉ thay "……" bằng nội dung khi biết (trích yếu "V/v …" / "Về việc …", "Kính gửi: …",
+  nơi nhận, chức vụ người ký). Đoạn "[Nội dung]" là chỗ viết NỘI DUNG: sửa đoạn đó thành đoạn nội dung đầu tiên (edits) và thêm các đoạn tiếp theo NGAY SAU
+  nó (additions, theo thứ tự). Không thêm đoạn nội dung vào trong bảng khung. Văn bản hành chính theo Nghị định 30/2020/NĐ-CP: câu chữ ngắn gọn, rõ
+  nghĩa, đúng văn phong hành chính.
+- Văn bản của CÔNG TY người dùng: dùng đúng "Thông tin công ty" được cho (tên, địa chỉ, mã số thuế). KHÔNG viết chỗ giữ kiểu [Tên công ty], [Ngày]…; thông tin
+  chưa có (tên người nhận, ngày cụ thể, số tiền…) thì để "……" cho người điền và nói rõ trong "reply" là còn chỗ nào cần điền."""
 
 
 class AssistPara(BaseModel):
@@ -321,6 +335,24 @@ def _assist_paras(raw: str) -> list[AssistPara]:
     return items
 
 
+async def _letterhead(ctx: Ctx) -> dict[str, Any]:
+    e = await ctx.one("SELECT name, address, tax_code FROM core.legal_entities WHERE id = core.default_entity()")
+    return {"name": (e or {}).get("name") or "", "address": (e or {}).get("address") or "", "tax_code": (e or {}).get("tax_code") or ""}
+
+
+@m.query("letterhead", resource=None, title="Thông tin công ty để soạn văn bản", agent="deny")
+async def letterhead(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    """Pháp nhân mặc định của công ty người gọi (tên, địa chỉ, mã số thuế) — trợ lý soạn thảo viết đúng tên công ty thay vì chỗ giữ. Thông tin công ty, ai
+    trong công ty cũng thấy trên giấy tờ; chưa khai ⇒ rỗng."""
+    return await _letterhead(ctx)
+
+
+def _company_line(c: dict[str, Any]) -> str:
+    parts = [f"tên: {c['name']}" if c.get("name") else "", f"địa chỉ: {c['address']}" if c.get("address") else "",
+             f"mã số thuế: {c['tax_code']}" if c.get("tax_code") else ""]
+    return "; ".join(x for x in parts if x) or "chưa khai — để \"……\" chỗ tên / địa chỉ công ty"
+
+
 async def _assist(prep: Prep, inp: AssistIn) -> dict[str, Any]:
     """Bước CHUẨN BỊ (ADR 0200): kiểm văn bản là của người gọi (truy vấn nhẹ, quyền người gọi) rồi gọi model NGOÀI transaction DB (không giữ kết nối / khoá dòng lúc chờ)."""
     if not inp.instruction.strip():
@@ -330,7 +362,12 @@ async def _assist(prep: Prep, inp: AssistIn) -> dict[str, Any]:
     where = "các đoạn người dùng đang chọn" if inp.scope == "selection" else "toàn bộ văn bản"
     body = "\n".join(f"[{x.id}] {x.text}" for x in items)
     try:
-        out = await ai.run(prep, f"Yêu cầu: {inp.instruction.strip()}\n\nPhạm vi: {where}.\n\nCác đoạn:\n{body}", instructions=ASSIST_RULES,
+        company = await prep.query("word.letterhead")
+    except Exception:   # không đọc được thông tin công ty không làm hỏng lượt soạn — model để "……"
+        company = {}
+    try:
+        out = await ai.run(prep, f"Yêu cầu: {inp.instruction.strip()}\n\nThông tin công ty: {_company_line(company)}.\n\nPhạm vi: {where}.\n\nCác đoạn:\n{body}",
+                           instructions=ASSIST_RULES,
                            output_type=AssistOut, category="word:assist", modules=["word"], model=ASSIST_MODEL)
     except Denied:
         raise   # công ty tắt AI / hết hạn mức: câu của lõi đã rõ
@@ -453,8 +490,12 @@ async def http_pdf(document_id: UUID, request: web.Request, version: int = 0) ->
 
 @m.plug("papers.authoring", "Soạn hoặc mở file Word")
 async def authoring(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    # ``studio``: màn "Soạn" mở thẳng một VĂN BẢN MỚI bên phải + agent bên trái (0251 lát 2) — tạo lúc người gửi câu đầu, mở bằng ``view``
     return [{"title": "Văn bản Word", "subtitle": "Soạn trang trắng hoặc mở file .docx · sửa trực tiếp và nhờ trợ lý",
-             "module": "word", "open": {"query": "word.home", "input": {}}}]
+             "module": "word", "open": {"query": "word.home", "input": {}},
+             "studio": {"create": "word.create", "view": "word.view", "assist": "word.assist", "home": "word.home", "label": "Văn bản mới",
+                        # khung thể thức chọn được ở chip "Loại" (không chọn ⇒ máy chủ nhận theo lời mô tả — ``forms.infer``)
+                        "forms": [{"key": f.key, "label": f.label} for f in forms.FORMS.values()]}}]
 
 
 # 0231: không còn phân hệ riêng — sửa file Word là một việc của VĂN BẢN (hợp đồng, công văn, mẫu giấy tờ gắn hồ sơ — 0229), nằm cùng Giấy tờ trong phân hệ

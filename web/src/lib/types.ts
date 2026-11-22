@@ -84,6 +84,8 @@ export type ScreenSpec = {
   badge?: string;
   /** Bộ lọc xếp thành cột bên trái (báo cáo quản trị — 0166); không có ⇒ hàng trên đầu như cũ. */
   filters_side?: boolean;
+  /** Màn TỰ VẼ TRỌN khung làm việc (không thẻ bọc, không đầu khung) — như phân hệ một màn; vd "Soạn" (agent + văn bản). */
+  full_frame?: boolean;
   /** Bấm MỘT lần vào dòng (core 12/11/2026): "open" ⇒ mở `open`; tên lệnh ⇒ form của nút đó trong `row_actions`. Không có ⇒ bấm chỉ chọn dòng.
    *  Server chỉ gửi khi người xem chạy được đích. */
   row_click?: string;
@@ -274,7 +276,28 @@ export type Compact = { shown: number; total: number | null };
 export type DetailField = { label: string; value: Json; format: string; open?: OpenRef; action?: ActionSpec; placeholder?: string };
 /** Mẩu chữ của tờ giấy (0251): chữ của mẫu `{t}`; ô `{t, k, layer}` — `record` số từ hồ sơ (khoá), `company` thông tin công ty, `missing` ô trống (chạm điền), `person` người nhập. */
 export type SheetRun = { t: string; k?: string; layer?: string };
-export type SheetBlock = { type: string; text: string; runs?: SheetRun[]; columns?: string[]; rows?: string[][]; total?: string[]; align?: string[] };
+/** `slot`: khối là ĐOẠN TỰ DO của mẫu (0251 lát 2) — `hint` viết gì, `empty` chưa viết (tờ giấy vẽ chỗ trống, bản in bỏ). */
+export type SheetBlock = { type: string; text: string; runs?: SheetRun[]; columns?: string[]; rows?: string[][]; total?: string[]; align?: string[]; slot?: string; hint?: string; empty?: boolean };
+/** MÀN "SOẠN" (0251 lát 2): agent bên trái + VĂN BẢN MỚI bên phải. `doc`: thao tác của trình soạn nhận mở văn bản mới (tạo lúc gửi câu đầu, mở,
+ *  trợ lý viết) — server gửi tên thao tác, web không viết cứng. `kinds`: cách soạn khác thành lựa chọn "Loại" (mở màn của nó). */
+export type StudioData = {
+  title: string;
+  subtitle: string;
+  examples: string[];
+  doc: { create: string; view: string; assist: string; home: string; label: string };
+  /** Khung thể thức chọn được (Nghị định 30, thư…) — không chọn ⇒ máy chủ nhận theo lời mô tả. */
+  forms: { key: string; label: string }[];
+  kinds: { label: string; subtitle?: string; current?: boolean; open?: { query: string; input: Input } }[];
+};
+/** "SOẠN VỚI AGENT" (0251 lát 2): tờ giấy đang lập nói cho khung chat — dòng "Về", lần sửa cuối, chip do server chọn (`ask` gửi vào chat nguyên văn ·
+ *  `action` mở form điền), nút sửa đoạn tại chỗ (`write`, khoá đoạn điền ở `key`), ngữ cảnh gửi kèm câu hỏi (`context`). */
+export type SheetCompose = {
+  about: string;
+  status: string;
+  chips: { label: string; ask?: string; action?: ActionSpec }[];
+  write?: ActionSpec;
+  context: { query: string; input: Input; title: string };
+};
 /** CHÍNH TỜ GIẤY (0251) — màn mặc định của giấy lập từ hồ sơ. `actions`: nút điền ô thiếu (khoá ô = `preset.key`). */
 export type Sheet = {
   title: string;
@@ -287,6 +310,7 @@ export type Sheet = {
   legend: { layer: string; label: string }[];
   /** Chạm số từ hồ sơ ⇒ mở hồ sơ để sửa (số không sửa trên giấy). */
   open?: OpenRef;
+  compose?: SheetCompose;
 };
 /** `table` (0102): bảng thật trong văn bản (vd bảng phí của công văn) — vẽ bảng, không ghép chữ có dấu |. */
 export type SectionTable = { columns: string[]; rows: string[][]; total: string[] };
@@ -410,6 +434,7 @@ export type Block = (
   | { type: "choices"; title: string; questions: Question[]; submit: string; prefix: string }
   | ({ type: "composer" } & ComposerData)
   | ({ type: "word" } & WordData)
+  | ({ type: "studio" } & StudioData)
   | ({ type: "picker" } & PickerData)
   /** Khối tải sau (ui.b_later): chỗ của các khối truy vấn `query` trả — thẻ tự tải theo thứ tự khối (chỉ khi gọi `api.page`, `?later=1`) */
   | { type: "later"; query: string; input: Input; title: string; part?: string }

@@ -22,6 +22,7 @@ export const ChartBody = dynamic(() => import("./chart-body").then((m) => m.Char
 export const CalendarBlock = dynamic(() => import("./calendar").then((m) => m.CalendarBlock), { loading: Pending });
 export const ComposerBlock = dynamic(() => import("./composer").then((m) => m.ComposerBlock), { loading: Pending });
 export const WordDocBlock = dynamic(() => import("./word-doc").then((m) => m.WordDocBlock), { loading: Pending });
+export const StudioBlock = dynamic(() => import("./studio").then((m) => m.StudioBlock), { loading: Pending });
 export const DashboardEditor = dynamic(() => import("@/components/pages/dashboard-editor").then((m) => m.DashboardEditor), { loading: Pending });
 export const ImportWizard = dynamic(() => import("@/components/forms/import-wizard").then((m) => m.ImportWizard), { loading: Pending });
 // hộp thoại: chỉ dựng khi mở ⇒ lúc tải không cần chỗ giữ

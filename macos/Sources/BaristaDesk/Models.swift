@@ -142,6 +142,8 @@ struct ScreenSpec: Decodable, Identifiable, Hashable {
     var row_click: String? = nil
     /// Màn kiểu báo cáo BI (0166): bộ lọc là CỘT bên trái, nội dung bên phải (hẹp ⇒ bộ lọc lên trên).
     var filters_side: Bool? = nil
+    /// Màn tự vẽ trọn khung làm việc (không thẻ bọc) — vd "Soạn"; chỉ web vẽ, app khác bỏ qua.
+    var full_frame: Bool? = nil
     var id: String { key }
 }
 

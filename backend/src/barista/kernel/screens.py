@@ -100,6 +100,7 @@ class Screen:
     ask: Ask | None = None   # nút "nhờ trợ lý" trên thanh công cụ (vd "Tạo app" ⇒ mở trình tạo app)
     pinnable: bool = True   # False ⇒ không tự ghim khi vai chưa có màn ghim (màn thiết lập / việc ít dùng — vẫn ở menu)
     badge: str = ""   # nhãn nhỏ cạnh tên màn trên menu (vd "Thử nghiệm") — chỉ THÊM trường vào manifest, app cũ bỏ qua
+    full_frame: bool = False   # màn TỰ VẼ trọn khung làm việc (không thẻ bọc, không đầu khung) như một phân hệ riêng — vd "Soạn" (agent + văn bản): chỉ THÊM, app cũ vẽ như màn thường
     filters_side: bool = False   # bộ lọc của màn xếp thành CỘT BÊN TRÁI (như bộ lọc của báo cáo BI) thay vì hàng trên đầu — chỉ web vẽ; app cũ / native vẫn hiện bộ lọc ở đầu (0166)
     # BẤM MỘT LẦN vào dòng làm gì (12/11/2026): "open" = mở ``open`` (chi tiết); tên lệnh của MỘT nút trong ``row_actions`` = mở form nút đó. Trống ⇒ bấm chỉ chọn
     # dòng (như trước). Bấm vẫn CHỌN dòng (thanh thao tác của dòng còn sau khi đóng chi tiết); chọn mà không mở: ⌘/Ctrl-bấm hoặc phím cách (web), ⌘-bấm (Mac)

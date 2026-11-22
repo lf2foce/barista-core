@@ -21,6 +21,7 @@ import type {
   ListAttach,
   DetailPage,
   Sheet,
+  SheetCompose,
   Input,
   Paging,
   Json,
@@ -481,6 +482,7 @@ export function decodeSheet(raw: unknown): Sheet | null {
         text: str(bo.text),
         ...(Array.isArray(bo.runs) ? { runs: arr(bo.runs).map((r) => { const ro = obj(r); return { t: str(ro.t), ...(typeof ro.k === "string" ? { k: ro.k, layer: str(ro.layer, "record") } : {}) }; }) } : {}),
         ...(Array.isArray(bo.columns) ? { columns: strs(bo.columns), rows: arr(bo.rows).map(strs), total: strs(bo.total), align: strs(bo.align) } : {}),
+        ...(typeof bo.slot === "string" && bo.slot ? { slot: bo.slot, hint: str(bo.hint), ...(bo.empty === true ? { empty: true } : {}) } : {}),
       };
     }),
     signers: strs(raw.signers),
@@ -490,6 +492,20 @@ export function decodeSheet(raw: unknown): Sheet | null {
     ...(isObj(raw.open) && typeof raw.open.query === "string" && raw.open.query
       ? { open: { query: raw.open.query, input: obj(raw.open.input) as Input, ...(typeof raw.open.title === "string" ? { title: raw.open.title } : {}) } }
       : {}),
+    ...(decodeSheetCompose(raw.compose) ? { compose: decodeSheetCompose(raw.compose)! } : {}),
+  };
+}
+
+/** Phần "Soạn với agent" của tờ giấy (0251 lát 2) — thiếu ngữ cảnh ⇒ không có (tờ giấy vẫn vẽ như cũ). */
+export function decodeSheetCompose(raw: unknown): SheetCompose | null {
+  if (!isObj(raw) || !isObj(raw.context) || typeof raw.context.query !== "string" || !raw.context.query) return null;
+  return {
+    about: str(raw.about),
+    status: str(raw.status),
+    chips: arr(raw.chips).map(obj).filter((c) => str(c.label) && (typeof c.ask === "string" || isObj(c.action)))
+      .map((c) => ({ label: str(c.label), ...(typeof c.ask === "string" && c.ask ? { ask: c.ask } : {}), ...(isObj(c.action) ? { action: decodeAction(c.action) } : {}) })),
+    ...(isObj(raw.write) ? { write: decodeAction(raw.write) } : {}),
+    context: { query: raw.context.query, input: obj(raw.context.input) as Input, title: str(raw.context.title) },
   };
 }
 
@@ -723,6 +739,19 @@ function decodeBlockBody(raw: unknown): Block {
         return { type: "composer", ...decodeComposer(o) };
       case "word":
         return { type: "word", ...decodeWord(o) };
+      case "studio": {
+        const d = obj(o.doc);
+        if (!str(d.create) || !str(d.view) || !str(d.assist)) return { type: "unknown" };
+        return {
+          type: "studio", title: str(o.title), subtitle: str(o.subtitle), examples: arr(o.examples).filter((x): x is string => typeof x === "string"),
+          doc: { create: str(d.create), view: str(d.view), assist: str(d.assist), home: str(d.home), label: str(d.label, "Văn bản mới") },
+          forms: arr(o.forms).map(obj).filter((f) => str(f.key) && str(f.label)).map((f) => ({ key: str(f.key), label: str(f.label) })),
+          kinds: arr(o.kinds).map(obj).filter((k) => str(k.label)).map((k) => ({
+            label: str(k.label), ...(str(k.subtitle) ? { subtitle: str(k.subtitle) } : {}), ...(k.current === true ? { current: true } : {}),
+            ...(isObj(k.open) && str(k.open.query) ? { open: { query: str(k.open.query), input: obj(k.open.input) as Input } } : {}),
+          })),
+        };
+      }
       case "later":
         return typeof o.query === "string" && o.query
           ? { type: "later", query: o.query, input: obj(o.input) as Input, title: str(o.title), ...(typeof o.part === "string" && o.part ? { part: o.part } : {}) }

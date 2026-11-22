@@ -603,6 +603,34 @@ function LiveBubble({ turn }: { turn: LiveTurn }) {
   );
 }
 
+/** "SOẠN VỚI AGENT" (0251 lát 2): khung đang mở một thứ đang lập (tờ giấy) ⇒ dòng "Về: …" + chip SERVER chọn (đoạn chưa viết ⇒ nhờ agent viết · ô còn
+ *  thiếu ⇒ mở form điền). Câu hỏi gửi kèm ngữ cảnh đó (``desk.working``) — trợ lý vẫn làm bằng công cụ thường, quyền người hỏi. */
+function WorkingBar({ busy }: { busy: boolean }) {
+  const desk = useDesk();
+  const chat = useChat();
+  const w = desk.working;
+  if (!w) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="t12 flex items-center gap-1.5 truncate px-1 text-muted-foreground">
+        <Sparkles className="size-3.5 shrink-0" aria-hidden />
+        <span className="truncate">Về: <span className="text-foreground">{w.about}</span></span>
+      </p>
+      {w.chips.length ? (
+        <div className="no-scrollbar flex gap-1.5 overflow-x-auto">
+          {w.chips.map((c) => (
+            <button key={c.label} type="button" disabled={busy && !!c.ask}
+                    onClick={() => (c.ask ? chat.send(c.ask) : c.action ? desk.openForm(c.action, { onDone: () => void desk.refreshInbox() }) : undefined)}
+                    className="t12 shrink-0 rounded-full border border-border bg-surface px-2.5 py-1.5 whitespace-nowrap outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+              {c.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function Composer({ pending, docs, setDocs }: {
   pending: ReturnType<typeof usePendingImages>; docs: ChatDocument[]; setDocs: (d: ChatDocument[]) => void;
 }) {
@@ -648,7 +676,8 @@ function Composer({ pending, docs, setDocs }: {
   return (
     // ô nhập NỔI trên nền màn (kiểu ChatGPT, anh Anh 18/11): không dải nền / đường kẻ riêng; ảnh · chữ · mic · gửi nằm trong MỘT viên
     <div className="flex flex-col gap-1.5 px-3 pt-1 pb-3">
-      {chat.messages.length > 0 && !has && !busy && chat.suggestions.length ? (
+      {desk.working && !chat.builder ? <WorkingBar busy={busy} /> : null}
+      {chat.messages.length > 0 && !has && !busy && chat.suggestions.length && !desk.working ? (
         <div className="no-scrollbar flex gap-1.5 overflow-x-auto">
           {chat.suggestions.map((s) => (
             <button key={s} type="button" onClick={() => chat.send(s)} className="t12 shrink-0 rounded-full border border-border bg-surface px-2.5 py-1.5 whitespace-nowrap hover:bg-accent">

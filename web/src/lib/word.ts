@@ -5,6 +5,8 @@ export type WordFormat = { b: boolean; i: boolean; u: boolean; s: boolean; sz: n
 export type WordRun = WordFormat & { src: number; text: string; img: string | null; w: number; h: number };
 export type WordParaStyle = {
   align: string; indL: number; indR: number; indFirst: number; spBefore: number; spAfter: number; line: number | null; linePt: number | null; heading: number;
+  /** Đường kẻ ngang dưới đoạn (vd dưới tiêu ngữ — Nghị định 30): chỉ hiện. */
+  rule?: boolean;
 };
 export type WordList = { label: string; level: number; indL: number; hang: number };
 export type WordPara = { t: "p"; id: string; locked: string; style: WordParaStyle; list: WordList | null; runs: WordRun[]; base: WordFormat };
@@ -65,6 +67,7 @@ function block(x: unknown, depth: number): WordBlock | null {
       align: ["left", "center", "right", "justify"].includes(str(st.align)) ? str(st.align) : "", indL: num(st.ind_l), indR: num(st.ind_r), indFirst: num(st.ind_first),
       spBefore: num(st.sp_before), spAfter: num(st.sp_after), line: typeof st.line === "number" && st.line > 0 ? st.line : null,
       linePt: typeof st.line_pt === "number" && st.line_pt > 0 ? st.line_pt : null, heading: Math.trunc(num(st.heading)),
+      ...(st.rule === true ? { rule: true } : {}),
     },
     list: li ? { label: str(li.label).slice(0, 40), level: Math.trunc(num(li.level)), indL: num(li.ind_l), hang: num(li.hang) } : null,
     runs: arr(o.runs).map((r) => {

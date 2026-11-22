@@ -111,6 +111,7 @@ def _screen(p: Principal, s: Screen) -> dict[str, Any] | None:
         **({} if s.pinnable else {"pinnable": False}),
         **({"badge": s.badge} if s.badge else {}),
         **({"filters_side": True} if s.filters_side else {}),
+        **({"full_frame": True} if s.full_frame else {}),
         "filters": primary_filters([f for f in field_specs(op, p.vocab) if not f["hidden"] and f["key"] not in s.input] + list(s.fields)),
         "input": ui.jsonable_input(s.input),   # đầu vào cố định (0098) — app gửi kèm mọi lần chạy truy vấn của màn
         "ask": {"title": s.ask.title, "prompt": s.ask.prompt, **({"mode": s.ask.mode} if s.ask.mode else {}),

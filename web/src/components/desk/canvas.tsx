@@ -22,7 +22,7 @@ import { ProposalRow, ResolveActions } from "./chat-cards";
 import { BriefView, SettledLine } from "./brief";
 import { FullFrameProvider } from "./full-frame";
 import { FrameHeadProvider, FrameShellProvider, useFrameHead } from "./frame-context";
-import { useSolo } from "./solo";
+import { useFullScreen, useSolo } from "./solo";
 import { ClampNote } from "@/components/clamp-note";
 
 /** Khung làm việc: thứ trợ lý vừa đụng tới (hoặc màn bấm mở nhanh) bung ra thành THẺ LỚN; thẻ cũ lùi xuống kệ "Đã mở trước đó". */
@@ -30,10 +30,12 @@ export function CanvasView() {
   const desk = useDesk();
   const chat = useChat();
   const solo = useSolo();
+  const fullScreen = useFullScreen();
   const hero = desk.canvas.find((c) => c.id === desk.activeId);
   const shelf = chat.builder ? [] : desk.canvas.filter((c) => c.id !== hero?.id);   // trình tạo: chỉ app đang dựng
   // phân hệ một màn: màn là CẢ khung (không đầu khung, không thẻ bọc) — màn tự vẽ các ngăn của mình (FullFrame)
-  const bare = !!solo && hero?.kind === "screen" && hero.id === solo.id;
+  // …hoặc màn tự khai ``full_frame`` (vd Soạn: agent + văn bản) — trọn khung dù phân hệ có nhiều màn
+  const bare = hero?.kind === "screen" && ((!!solo && hero.id === solo.id) || fullScreen?.id === hero.id);
   if (bare) {
     // phân hệ một màn: màn là CẢ khung — không đầu khung, không đệm, không kệ; màn tự vẽ ngăn của mình (FullFrame)
     return (
@@ -287,8 +289,28 @@ function FrameContent({ item }: { item: CanvasItem }) {
   const spec = desk.screenFor(card.query ?? "");
   // cùng truy vấn với một màn ghim ⇒ có luôn bộ lọc, nút thao tác dòng, xuất Excel của màn đó
   if (spec) return <ScreenView spec={spec} initialFilters={card.input ?? {}} initialPage={card.page ?? null} onChanged={() => void desk.refreshInbox()} />;
+  if (card.page?.kind === "detail" && card.page.sheet?.compose && card.query) return <LiveSheetPage card={card} />;
   if (card.page) return <StaticPage page={card.page} />;
   return <Empty text="Thẻ không có nội dung" />;
+}
+
+/** TỜ GIẤY ĐANG LẬP (0251 lát 2 "Soạn với agent"): chat bên cạnh viết đoạn / điền ô ⇒ mỗi lần một lệnh chạy xong (``desk.changes``) đọc lại đúng
+ *  trang đó bằng quyền người xem — số trên giấy luôn sống, không có gì để đồng bộ. Lỗi tải lại ⇒ giữ bản đang có. */
+function LiveSheetPage({ card }: { card: ChatCard }) {
+  const desk = useDesk();
+  const [page, setPage] = useState(card.page!);
+  const [rev, setRev] = useState(0);
+  const { changes } = desk;
+  useEffect(() => {
+    if (!changes && !rev) return;
+    let alive = true;
+    void api.query(card.query!, card.input ?? {}).then((p) => alive && setPage(p)).catch(() => null);
+    return () => {
+      alive = false;
+    };
+  }, [changes, rev, card.query, card.input]);
+  if (page.kind !== "detail") return <StaticPage page={page} />;
+  return <DetailView page={page} onChanged={() => setRev((n) => n + 1)} />;
 }
 
 /** Trang không gắn màn ghim nào (gợi ý căn, profile căn, kết quả tìm…): vẽ thẳng KPI + bảng / chi tiết / thẻ. */

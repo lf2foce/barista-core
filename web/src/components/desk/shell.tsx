@@ -19,7 +19,7 @@ import { ChatProvider, useChat } from "./chat-context";
 import { DeskProvider, useDesk } from "./desk-context";
 import { MessagesColumn, MessagesDetail } from "./messages";
 import { Rail } from "./rail";
-import { useSolo } from "./solo";
+import { useFullScreen, useSolo } from "./solo";
 import { WorkspaceColumn } from "./workspace-column";
 
 /**
@@ -40,6 +40,7 @@ function Shell() {
   const desk = useDesk();
   const chat = useChat();
   const solo = useSolo();
+  const fullScreen = useFullScreen();   // màn tự vẽ trọn khung (vd Soạn) đang mở ⇒ như phân hệ một màn
   const colWidth = useColumnWidth(desk.section.kind === "workspace" ? "menu" : "chat");   // cột chọn màn hẹp hơn cột trò chuyện; kéo mép để đổi
   // phần vẽ biểu đồ không nằm trong JS tải lần đầu; tải sẵn ngay sau lần vẽ đầu, song song với lúc chờ dữ liệu màn chủ (không đợi dữ liệu về rồi mới tải mã)
   useEffect(preloadCharts, []);
@@ -90,7 +91,7 @@ function Shell() {
   const sec = desk.section;
   // "Tin nhắn" kiểu app chat: cột là danh sách, bên phải là mục đang chọn (thông báo / cuộc trò chuyện) thay cho khung làm việc
   const detail = sec.kind === "messages" && desk.messagesPane.kind !== "list";
-  const showRight = showCanvas || detail || desk.canvasMax || !!solo;   // phân hệ một màn: không có cột danh sách, màn dùng trọn khung
+  const showRight = showCanvas || detail || desk.canvasMax || !!solo || !!fullScreen;   // phân hệ một màn / màn trọn khung: không có cột danh sách
   return (
     // điện thoại (< 640px): thanh bên trái 80px thành THANH DƯỚI một hàng cuộn ngang — nội dung lấy lại trọn bề ngang (rà bố cục 18/11)
     <main className="flex h-full min-h-0 overflow-hidden max-sm:flex-col">
@@ -101,6 +102,9 @@ function Shell() {
           showRight ? "hidden" : "block",
           desk.canvasMax && "min-[980px]:hidden",
           solo && "!hidden",
+          // màn trọn khung (vd Soạn): màn rộng (≥ 1600px) vẫn giữ cột danh sách màn bên cạnh — đủ chỗ, chuyển màn một lần bấm; hẹp hơn thì cột nhường chỗ,
+          // danh sách màn ở menu đầu ngăn của màn (ScreensMenu)
+          fullScreen && "max-[1599px]:!hidden",
         )}
         style={{ "--col-w": colWidth.css } as React.CSSProperties}
       >

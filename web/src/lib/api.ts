@@ -347,7 +347,8 @@ export async function* chatStream(
   threadId: string | null,
   signal?: AbortSignal,
   images: { media_type: string; data: string }[] = [],
-  opts?: { mode?: string; app_id?: string | null; turn_key?: string; subject?: { kind: string; id: string; title: string } | null; documents?: ChatDocument[] },
+  opts?: { mode?: string; app_id?: string | null; turn_key?: string; subject?: { kind: string; id: string; title: string } | null; documents?: ChatDocument[];
+          working?: { query: string; input: Input; title: string } | null },
 ): AsyncGenerator<StreamEvent> {
   const body: Record<string, Json> = { message };
   if (threadId) body.thread_id = threadId;
@@ -356,6 +357,8 @@ export async function* chatStream(
   // chế độ trò chuyện (0098): "builder" = trình tạo app (lời dặn + công cụ riêng, cuộc trò chuyện riêng); app_id ⇒ đang làm trên app đó
   if (opts?.mode) body.mode = opts.mode;
   if (opts?.app_id) body.app_id = opts.app_id;
+  // đang lập ở khung làm việc (0251 lát 2): "giấy này / đoạn này" là về nó — chỉ ngữ cảnh, trợ lý vẫn đọc / sửa bằng công cụ, quyền người hỏi
+  if (opts?.working) body.working = { query: opts.working.query, input: opts.working.input, title: opts.working.title };
   if (opts?.turn_key) body.turn_key = opts.turn_key;   // mã lượt ⇒ bấm "Dừng" được (stopTurn)
   // ảnh (0050): model đọc trong lượt này, server không lưu byte ảnh
   if (images.length) body.images = images.map((i) => ({ media_type: i.media_type, data: i.data }));

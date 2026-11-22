@@ -7,6 +7,8 @@ Thân mẫu là Markdown rút gọn — đọc được, so sánh được giữ
   Bộ lọc: ``{{khoá|chu}}`` số tiền bằng chữ · ``{{khoá|dai}}`` ngày viết dài ("ngày 08 tháng 11 năm 2026").
 * Ô kiểu bảng (``rows``, vd lịch đóng tiền) đứng MỘT MÌNH trên một dòng ⇒ thành bảng.
 * Mục có điều kiện: ``{{#if khoá}}`` … ``{{/if}}`` / ``{{#unless khoá}}`` … ``{{/unless}}``, mỗi dấu một dòng riêng; lồng được.
+* ĐOẠN TỰ DO (0251 lát 2): ``{{doan:khoá|gợi ý}}`` đứng MỘT MÌNH trên một dòng = chỗ agent / người lập viết một đoạn chữ cho riêng giấy này (vd ghi chú
+  theo yêu cầu của khách). Mẫu quyết đoạn tự do nằm ĐÂU; điều khoản chuẩn vẫn là chữ của mẫu. Đoạn chưa viết không in (không chặn phát hành).
 
 Giá trị điền vào SAU khi đã tách khối ⇒ chữ trong hồ sơ (kể cả "{{…}}") không bao giờ thành cú pháp mẫu. Ô thiếu giá trị hiện "……" và được
 liệt kê — bản có ô thiếu không ban hành được.
@@ -31,6 +33,8 @@ OPEN = re.compile(r"^\{\{#(if|unless)\s+(" + KEY + r")\s*\}\}$")
 CLOSE = re.compile(r"^\{\{/(if|unless)\s*\}\}$")
 CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")   # ký tự điều khiển (trừ tab / xuống dòng): Word / XML không nhận
 SOLO = re.compile(r"^\{\{\s*(" + KEY + r")\s*\}\}$")
+SLOT = re.compile(r"^\{\{\s*doan:(" + KEY + r")\s*(?:\|\s*([^{}|]{1,160}?))?\s*\}\}$")
+PARAGRAPH_MAX = 2000   # một đoạn tự do — đủ một ghi chú / điều khoản riêng, không thành cả văn bản
 
 
 class TemplateError(ValueError):
@@ -67,6 +71,7 @@ class Block:
     text: str = ""
     line: int = 0
     when: tuple[tuple[bool, str], ...] = field(default=())   # (phủ định?, khoá) — mọi điều kiện bao quanh phải đúng
+    hint: str = ""                # chỉ ``slot``: gợi ý viết gì (hiện ở chỗ trống + cho agent)
 
 
 def parse(body: str) -> list[Block]:
@@ -99,6 +104,13 @@ def parse(body: str) -> list[Block]:
             out.append(Block("heading", s[3:].strip(), n, when))
         elif s.startswith("- "):
             out.append(Block("bullet", s[2:].strip(), n, when))
+        elif m := SLOT.match(s):
+            if any(b.type == "slot" and b.text == m[1] for b in out):
+                raise TemplateError(f"Dòng {n}: đoạn tự do {m[1]} đã có ở trên — mỗi đoạn một khoá")
+            out.append(Block("slot", m[1], n, when, (m[2] or "").strip()))
+            continue
+        elif "doan:" in s and "{{" in s:
+            raise TemplateError(f"Dòng {n}: đoạn tự do phải đứng riêng một dòng, dạng {{{{doan:khoá|gợi ý}}}}")
         elif m := SOLO.match(s):
             out.append(Block("solo", m[1], n, when))
         else:
@@ -123,12 +135,19 @@ def used(blocks: list[Block]) -> dict[str, set[str]]:
     for b in blocks:
         for _, k in b.when:
             out.setdefault(k, set())
+        if b.type == "slot":
+            continue   # đoạn tự do không phải ô của danh mục
         if b.type == "solo":
             out.setdefault(b.text, set()).add("")
         else:
             for k, f in TOKEN.findall(b.text):
                 out.setdefault(k, set()).add(f)
     return out
+
+
+def slots(blocks: list[Block]) -> dict[str, str]:
+    """Đoạn tự do của mẫu: khoá → gợi ý (theo thứ tự trong mẫu)."""
+    return {b.text: b.hint for b in blocks if b.type == "slot"}
 
 
 def validate(blocks: list[Block], catalog: dict[str, Field]) -> list[str]:
@@ -145,7 +164,9 @@ def validate(blocks: list[Block], catalog: dict[str, Field]) -> list[str]:
             elif FILTERS[flt] != f.kind:
                 errs.append(f"|{flt} chỉ dùng cho ô kiểu {KINDS[FILTERS[flt]]} — {k} là {KINDS[f.kind]}")
     for b in blocks:
-        if b.type != "solo":
+        if b.type == "slot" and b.text in catalog:
+            errs.append(f"dòng {b.line}: đoạn tự do {b.text} trùng khoá một ô của danh mục — đặt khoá khác")
+        if b.type not in ("solo", "slot"):
             for k, _ in TOKEN.findall(b.text):
                 if (f := catalog.get(k)) and f.kind == "rows":
                     errs.append(f"dòng {b.line}: ô bảng {{{{{k}}}}} phải đứng riêng một dòng")
@@ -232,8 +253,12 @@ def _table(f: Field, rows: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
-def fill(blocks: list[Block], catalog: dict[str, Field], values: dict[str, Any], marks: dict[str, int] | None = None) -> Filled:
-    """``marks``: ô người nhập ⇒ số chú thích in ngay sau giá trị ("[1]"); danh sách chú thích do bên gọi in cuối văn bản."""
+def fill(blocks: list[Block], catalog: dict[str, Field], values: dict[str, Any], marks: dict[str, int] | None = None,
+         paragraphs: dict[str, str] | None = None) -> Filled:
+    """``marks``: ô người nhập ⇒ số chú thích in ngay sau giá trị ("[1]"); danh sách chú thích do bên gọi in cuối văn bản.
+    ``paragraphs``: chữ đã viết của ĐOẠN TỰ DO (khoá → chữ). Đoạn đã viết ⇒ đoạn văn lớp ``ai`` (``slot`` = khoá); chưa viết ⇒ khối giữ chỗ
+    ``{"type": "para", "text": "", "slot", "hint", "empty": True}`` — tờ giấy đang lập vẽ chỗ trống, bản in / bản chốt bỏ qua (``printable``)."""
+    paragraphs = paragraphs or {}
     marks = marks or {}
     missing: list[str] = []
     out: list[dict[str, Any]] = []
@@ -276,6 +301,12 @@ def fill(blocks: list[Block], catalog: dict[str, Field], values: dict[str, Any],
             continue
         if b.type == "title":
             title = sub(b.text)
+        elif b.type == "slot":
+            written = CONTROL.sub("", paragraphs.get(b.text) or "").strip()
+            if written:
+                out.append({"type": "para", "text": written, "slot": b.text, "hint": b.hint, "runs": [{"t": written, "k": b.text, "layer": "ai"}]})
+            else:
+                out.append({"type": "para", "text": "", "slot": b.text, "hint": b.hint, "empty": True})
         elif b.type == "solo":
             f = catalog.get(b.text)
             v = values.get(b.text)
@@ -290,7 +321,12 @@ def fill(blocks: list[Block], catalog: dict[str, Field], values: dict[str, Any],
                 out.append(block("para", "{{" + b.text + "}}"))
         else:
             out.append(block(b.type, b.text))
-    return Filled(title, out, missing, to_markdown(title, out))
+    return Filled(title, out, missing, to_markdown(title, printable(out)))
+
+
+def printable(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Khối in được: bỏ chỗ giữ của đoạn tự do chưa viết (tờ giấy đang lập vẫn vẽ chỗ trống)."""
+    return [b for b in blocks if not b.get("empty")]
 
 
 def to_markdown(title: str, blocks: list[dict[str, Any]]) -> str:

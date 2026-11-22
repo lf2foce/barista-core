@@ -440,3 +440,54 @@ async def test_the_issue_button_carries_the_basis_of_the_sheet_it_sits_on(who: W
     stale = await executor.run(admin, "papers.issue", {"paper_id": pid2}, expect_basis=seen2)
     assert stale.status == "conflict" and "Căn cứ đã đổi từ lúc bạn xem" in (stale.error or "")
     assert await owner_val("SELECT status FROM papers.documents WHERE id = %s", (pid2,)) == "draft"
+
+
+async def test_free_paragraph_written_by_the_agent_is_on_the_sheet_and_only_written_text_is_issued(who: Who) -> None:
+    """0251 lát 2 "Soạn với agent": mẫu khai ĐOẠN TỰ DO ``{{doan:khoá|gợi ý}}``; tờ giấy đang lập vẽ chỗ trống + chip nhờ agent viết; trợ lý viết thẳng được
+    (bản đang lập, viết lại được), người sửa tại chỗ; chữ đã viết vào căn cứ phát hành và bản chốt — đoạn chưa viết không in."""
+    admin, sale = await who("admin"), await who("sale1")
+    await slip_template(admin)
+    body = SLIP + "\n{{doan:thoa_thuan|Thoả thuận riêng theo yêu cầu của khách}}\nPhiếu lập thành 02 bản."
+    assert (await executor.run(admin, "papers.create_template", {"name": "Phiếu có đoạn tự do", "key": "phieu_doan_tu_do", "subject_kind": pack.ORDER,
+                                                                  "abbr": "PDT", "body": body.replace("{{doan:thoa_thuan", "{{doan:order_code"),
+                                                                  "signers": "A | B"})).status == "invalid"   # khoá đoạn trùng ô danh mục
+    t = await ok(admin, "papers.create_template", name="Phiếu có đoạn tự do", key="phieu_doan_tu_do", subject_kind=pack.ORDER, abbr="PDT", body=body,
+                 signers="BÊN CUNG CẤP | BÊN ĐẶT HÀNG")
+    await ok(admin, "papers.publish_template", template_id=str(t["template_id"]))
+    code = await new_order(admin, sale)
+    pid = str((await ok(sale, "papers.start_draft", template_id=str(t["template_id"]), ref=code))["paper_id"])
+
+    sheet = (await q(sale, "papers.view", paper_id=pid))["sheet"]
+    slot = next(b for b in sheet["blocks"] if b.get("slot") == "thoa_thuan")
+    assert slot["empty"] is True and slot["hint"] == "Thoả thuận riêng theo yêu cầu của khách"
+    comp = sheet["compose"]
+    assert comp["context"] == {"query": "papers.view", "input": {"paper_id": pid}, "title": comp["context"]["title"]}
+    assert comp["write"]["command"] == "papers.write_paragraph" and comp["status"].startswith("Đang lập · tự lưu")
+    assert any("thoa_thuan" in (c.get("ask") or "") for c in comp["chips"])                         # chip nhờ agent viết đoạn chưa viết
+    assert any((c.get("action") or {}).get("command") == "papers.set_field" for c in comp["chips"])   # chip điền ô còn thiếu
+    assert "Thoả thuận riêng" not in docx_text((await q(sale, "papers.export", paper_id=pid))["docx_b64"])   # chưa viết ⇒ không in
+
+    # trợ lý viết THẲNG (agent="allow"): bản đang lập, chưa cấp số
+    r = await executor.run(sale.as_agent(), "papers.write_paragraph", {"paper_id": pid, "key": "thoa_thuan", "text": "Khách thanh toán theo tiến độ dự án."})
+    assert r.status == "ok", r.error
+    assert (await executor.run(sale, "papers.write_paragraph", {"paper_id": pid, "key": "khong_co", "text": "x"})).status == "not_found"
+    page = await q(sale, "papers.view", paper_id=pid)
+    written = next(b for b in page["sheet"]["blocks"] if b.get("slot") == "thoa_thuan")
+    assert written["text"] == "Khách thanh toán theo tiến độ dự án." and written["runs"][0]["layer"] == "ai" and "empty" not in written
+    assert any(lg["layer"] == "ai" for lg in page["sheet"]["legend"])
+    by = await owner_val("SELECT value->>'by' FROM papers.entries WHERE document_id = %s AND key = 'thoa_thuan' ORDER BY entered_at DESC LIMIT 1", (pid,))
+    assert by == "agent"
+
+    # người sửa tại chỗ (dòng mới, giữ lịch sử); căn cứ phát hành gồm chữ đoạn ⇒ sửa sau khi xem thì nút cũ hết hiệu lực
+    await ok(sale, "papers.set_field", paper_id=pid, key="customer_address", value="Số 9 phố Mẫu, Hà Nội")
+    seen = await q(admin, "papers.view", paper_id=pid)
+    btn = next(a for a in seen["actions"] if a["command"] == "papers.issue")
+    await ok(sale, "papers.write_paragraph", paper_id=pid, key="thoa_thuan", text="Khách thanh toán 30% khi ký, phần còn lại theo tiến độ.")
+    stale = await executor.run(admin, "papers.issue", {"paper_id": pid}, expect_basis=executor.basis_of_token(btn["basis"]))
+    assert stale.status == "conflict"
+    out = await issued(admin, pid)
+    assert out["symbol"].startswith("01/PDT-")
+    text = docx_text((await q(admin, "papers.export", paper_id=pid))["docx_b64"])
+    assert "Khách thanh toán 30% khi ký" in text and "tiến độ dự án." not in text
+    assert (await executor.run(sale, "papers.write_paragraph", {"paper_id": pid, "key": "thoa_thuan", "text": "sửa sau phát hành"})).status == "invalid"
+    assert "compose" not in (await q(admin, "papers.view", paper_id=pid))["sheet"]                  # đã cấp số ⇒ hết "Soạn với agent"

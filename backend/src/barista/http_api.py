@@ -791,6 +791,16 @@ async def chat_stream(request: Request, body: Annotated[dict[str, Any], Body()],
                        f"(subject_kind={subj['kind']}, subject_id={UUID(str(subj.get('id')))}). Câu hỏi về “trao đổi này” là về luồng đó.")
         except ValueError:
             pass
+    # ĐANG MỞ Ở KHUNG LÀM VIỆC (0251 lát 2 "Soạn với agent"): app gửi truy vấn + đầu vào của thứ đang mở bên cạnh (vd tờ giấy đang lập) ⇒ "giấy này /
+    # đoạn này" là về nó. Chỉ là NGỮ CẢNH chữ: trợ lý vẫn đọc / sửa bằng công cụ thường, quyền người hỏi; truy vấn lạ / đầu vào quá dài thì bỏ qua.
+    working = body.get("working")
+    if mode == "assistant" and isinstance(working, dict) and (wop := registry.get(str(working.get("query") or ""))) is not None and wop.kind == "query":
+        winp = json.dumps(working.get("input") if isinstance(working.get("input"), dict) else {}, ensure_ascii=False)
+        if len(winp) <= 400:
+            title = " ".join(str(working.get("title") or wop.title).split())[:120]
+            context = (context + " " if context else "") + (
+                f"Người dùng đang mở “{title}” ở khung làm việc bên cạnh (đọc bằng công cụ {chat.tool_name(wop.name)} với {winp}). "
+                "“Giấy này / đoạn này / cái này” là về nó — đọc lại trước khi sửa, sửa bằng công cụ của chính nó.")
     key = str(body.get("turn_key") or "")[:64]   # mã lượt app tạo ⇒ bấm "Dừng" được
     held = standing.for_request(request.headers, p, epoch)   # kiểm lại tư cách trước mỗi công cụ của lượt (khoá / đổi vai / đăng xuất giữa lượt)
     return _ndjson(lambda emit: chat.chat_turn(p, message, emit=emit, thread_id=thread_id, images=images, mode=mode, context=context,

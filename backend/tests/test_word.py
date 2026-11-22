@@ -403,3 +403,32 @@ async def test_a_company_without_the_pack_has_none_of_it() -> None:
     assert (await executor.query(an, "word.list", {})).status != "ok"
     r = await executor.run(an, "word.add", {"filename": "a.docx", "data_b64": base64.b64encode(_sample()).decode()})
     assert r.status != "ok"
+
+
+def test_new_documents_get_the_official_layout_by_kind() -> None:
+    """Màn "Soạn" (0251 lát 2): CODE dựng khung thể thức theo loại (Nghị định 30 / thư), AI chỉ viết chữ vào — khung đọc lại được, loại nhận theo lời
+    mô tả, ngày ghi đúng thể thức (ngày < 10 và tháng 1, 2 có số 0), tên công ty do code điền, công văn không có tên loại trong ký hiệu."""
+    from datetime import date
+
+    from barista.modules.word import forms
+
+    assert forms.infer("Công văn gửi đối tác về lịch làm việc") == "cong_van"
+    assert forms.infer("Tờ trình xin duyệt chi phí sự kiện") == "to_trinh"
+    assert forms.infer("Biên bản họp giao ban tuần") == "bien_ban"
+    assert forms.infer("Thư cảm ơn khách hàng") == "thu"
+    assert forms.infer("viết giúp một đoạn giới thiệu") == "trang"
+    assert forms._date_line(date(2026, 2, 5)) == "……, ngày 05 tháng 02 năm 2026"
+    assert forms._date_line(date(2026, 11, 22)) == "……, ngày 22 tháng 11 năm 2026"
+    for key in forms.FORMS:
+        model = dm.read(forms.build(key, {"name": "Công ty Mẫu"}, date(2026, 11, 22)))
+        text = dm.plain_text(model)
+        if key == "trang":
+            assert not any(b["t"] == "table" for b in model["blocks"])
+            continue
+        assert "CÔNG TY MẪU" in text and forms.BODY in text and model["blocks"][0]["t"] == "table"
+        if key != "thu":
+            assert "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM" in text and "Độc lập - Tự do - Hạnh phúc" in text
+    cv = dm.plain_text(dm.read(forms.build("cong_van", {"name": "Công ty Mẫu"}, date(2026, 11, 22))))
+    assert "Số: ……/……-……" in cv and "V/v ……" in cv and "/CV-" not in cv
+    tt = dm.plain_text(dm.read(forms.build("to_trinh", {"name": "Công ty Mẫu"}, date(2026, 11, 22))))
+    assert "TỜ TRÌNH" in tt and "/TTr-" in tt

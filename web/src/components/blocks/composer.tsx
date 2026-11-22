@@ -459,7 +459,7 @@ type Recipe = ReturnType<typeof useRecipe>;
 /** Thanh "Trò chuyện | Bản xem" (màn hẹp): tablist đúng chuẩn — tab đang chọn nhận Tab, ← → Home End đổi tab. Thanh có ở CẢ hai ngăn (ngăn kia ẩn ở màn hẹp) ⇒
  *  đổi tab xong đưa tiêu điểm sang tab cùng tên của thanh ở ngăn vừa hiện. */
 const VIEWS = ["chat", "draft"] as const;
-function ViewTabs({ id, where, view, onView, fresh }: {
+export function ViewTabs({ id, where, view, onView, fresh }: {
   id: string; where: "chat" | "draft"; view: "chat" | "draft"; onView: (v: "chat" | "draft") => void; fresh: boolean;
 }) {
   const go = (v: "chat" | "draft") => {
@@ -577,7 +577,7 @@ function Conversation({ doc, live, local, showDraft, draftOpen, onRetry, onExamp
   );
 }
 
-function UserBubble({ text, block, mode }: { text: string; block: string; mode: string }) {
+export function UserBubble({ text, block, mode }: { text: string; block: string; mode: string }) {
   return (
     <div className="flex justify-end pl-12">
       <div className="flex max-w-full flex-col items-end gap-1">
@@ -590,7 +590,7 @@ function UserBubble({ text, block, mode }: { text: string; block: string; mode: 
   );
 }
 
-function CopyButton({ text }: { text: string }) {
+export function CopyButton({ text }: { text: string }) {
   const desk = useDesk();
   return (
     <button type="button" aria-label="Sao chép" title="Sao chép"
@@ -673,7 +673,7 @@ function OverflowActions({ pages, onFit, busy }: { pages: ComposerOverflowPage[]
   );
 }
 
-function Failed({ text, steps = [], onRetry }: { text: string; steps?: { title: string; status: string; reason?: string }[]; onRetry?: () => void }) {
+export function Failed({ text, steps = [], onRetry }: { text: string; steps?: { title: string; status: string; reason?: string }[]; onRetry?: () => void }) {
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-warn/40 bg-warn/10 px-3 py-2" role="alert">
       <p className="t14 flex items-start gap-2 select-text">
@@ -706,7 +706,7 @@ function Steps({ steps, className }: { steps: (LiveStep | { title: string; statu
   );
 }
 
-function Working({ status, steps }: { status: string; steps: LiveStep[] }) {
+export function Working({ status, steps }: { status: string; steps: LiveStep[] }) {
   return (
     <div className="flex flex-col gap-2 px-1" role="status">
       <p className="flex items-center gap-2">

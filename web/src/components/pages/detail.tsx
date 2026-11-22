@@ -218,6 +218,7 @@ const LAYER: Record<string, string> = {
   company: "border-b border-dashed border-neutral-400",
   missing: "rounded bg-amber-300/60 px-1 text-amber-900",   // tờ giấy luôn nền sáng (cả giao diện tối) ⇒ màu chữ cố định, không theo dark
   person: "border-b border-violet-500/60 bg-violet-500/10",
+  ai: "rounded bg-fuchsia-500/10 ring-1 ring-fuchsia-500/30",   // đoạn tự do agent / người lập viết (0251 lát 2) — sửa thoải mái
 };
 
 /** CHÍNH TỜ GIẤY (0251): nền giấy, chữ chia mẩu theo lớp — số từ hồ sơ (khoá, sửa ở hồ sơ) · ô thiếu (chạm điền) · người nhập. Server quyết hết; ô thiếu
@@ -225,6 +226,16 @@ const LAYER: Record<string, string> = {
 function SheetView({ sheet, onChanged }: { sheet: Sheet; onChanged?: () => void }) {
   const desk = useDesk();
   const fills = new Map<string, ActionSpec>(sheet.actions.map((a) => [String(a.preset.key ?? ""), a]));
+  const compose = sheet.compose;
+  const { setWorking } = desk;
+  // "Soạn với agent" (0251 lát 2): tờ giấy đang lập ⇒ khung chat bên cạnh biết đang lập gì (dòng "Về", chip); rời tờ giấy ⇒ thôi
+  const composeKey = compose ? JSON.stringify(compose) : "";
+  useEffect(() => {
+    if (!compose) return;
+    setWorking(compose);
+    return () => setWorking(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- theo nội dung (server gửi bản mới mỗi lần tải lại), không theo tham chiếu
+  }, [composeKey, setWorking]);
   const runs = (b: Sheet["blocks"][number]) =>
     (b.runs ?? [{ t: b.text }]).map((r, i) => {
       if (!r.k) return <span key={i}>{r.t}</span>;
@@ -249,12 +260,22 @@ function SheetView({ sheet, onChanged }: { sheet: Sheet; onChanged?: () => void 
     });
   return (
     <div className="flex flex-col gap-2">
+      {compose ? (
+        <div className="mx-auto flex w-full max-w-[720px] items-center gap-2">
+          {/* lối vào rõ ràng: cột trái chuyển sang chat trợ lý (dòng "Về" + chip của tờ giấy này hiện ở ô chat) */}
+          <button type="button" onClick={() => desk.ask("")} className={cn(actionClass("primary"), "h-8 px-3")}>
+            <Sparkles className="size-3.5" aria-hidden /> Soạn với agent
+          </button>
+          <span className="t12 flex-1 text-right text-muted-foreground">{compose.status}</span>
+        </div>
+      ) : null}
       <article className="t14 mx-auto flex w-full max-w-[720px] flex-col gap-2 rounded-lg border border-border bg-[#fbfaf6] p-8 text-neutral-900 select-text">
         {sheet.draftMark ? <p className="t12m self-end text-neutral-500">{sheet.draftMark}</p> : null}
         <h2 className="t16 text-center">{sheet.title}</h2>
         <p className="t12 text-center text-neutral-500">{sheet.number}</p>
         {sheet.blocks.map((b, i) =>
-          b.type === "heading" ? <h3 key={i} className="t14m mt-2">{runs(b)}</h3>
+          b.slot ? <SlotParagraph key={`${b.slot}-${i}`} block={b} write={compose?.write} onChanged={onChanged} />
+          : b.type === "heading" ? <h3 key={i} className="t14m mt-2">{runs(b)}</h3>
           : b.type === "table" && b.columns ? <PaperTable key={i} block={b} />
           : <p key={i} className={cn("leading-relaxed", b.type === "bullet" && "pl-4")}>{b.type === "bullet" ? "– " : null}{runs(b)}</p>)}
         {sheet.notes.map((n) => <p key={n} className="t12 text-neutral-500">{n}</p>)}
@@ -270,6 +291,72 @@ function SheetView({ sheet, onChanged }: { sheet: Sheet; onChanged?: () => void 
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** ĐOẠN TỰ DO trên tờ giấy (0251 lát 2): chưa viết ⇒ chỗ trống có gợi ý; đã viết ⇒ đoạn tô lớp "agent viết". Bấm ⇒ sửa tay ngay tại chỗ (lệnh
+ *  `papers.write_paragraph` server gửi ở `compose.write`) hoặc "Bảo agent sửa" (đưa câu mở đầu vào ô chat bên cạnh). Không có nút ghi ⇒ chỉ đọc. */
+function SlotParagraph({ block, write, onChanged }: { block: Sheet["blocks"][number]; write?: ActionSpec; onChanged?: () => void }) {
+  const desk = useDesk();
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(block.text);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const what = block.hint || "Đoạn tự do";
+  const askAgent = () =>
+    desk.ask(block.empty ? `Viết đoạn “${what}” trên giấy này (đoạn ${block.slot}): ` : `Sửa đoạn “${what}” trên giấy này (đoạn ${block.slot}): `);
+  const save = async () => {
+    if (!write) return;
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api.command(write.command, { ...write.preset, key: block.slot ?? "", text }, crypto.randomUUID());
+      if (r.status === "ok") {
+        setEditing(false);
+        onChanged?.();
+        void desk.refreshInbox();
+      } else setError(r.error || r.status);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Không lưu được");
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-1.5 rounded-md bg-fuchsia-500/5 p-2 ring-1 ring-fuchsia-500/40">
+        <label className="t12m text-neutral-600" htmlFor={`slot-${block.slot}`}>{what}</label>
+        <textarea id={`slot-${block.slot}`} value={text} onChange={(e) => setText(e.target.value)} rows={4} maxLength={2000} autoFocus
+                  className="t14 w-full resize-y rounded-md border border-neutral-300 bg-white p-2 leading-relaxed text-neutral-900 outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-500/50" />
+        {error ? <p className="t12 text-red-700" role="alert">{error}</p> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" disabled={busy} onClick={() => void save()} className={cn(actionClass("primary"), "h-8 px-3")}>{busy ? "Đang lưu…" : "Lưu đoạn"}</button>
+          <button type="button" disabled={busy} onClick={() => { setEditing(false); askAgent(); }} className={cn(actionClass("default"), "h-8 px-3")}>
+            <Sparkles className="size-3.5" aria-hidden /> Bảo agent sửa
+          </button>
+          <button type="button" disabled={busy} onClick={() => { setText(block.text); setEditing(false); setError(""); }} className="t12m h-8 rounded-md px-2 text-neutral-500 hover:bg-neutral-200/60">
+            Huỷ
+          </button>
+        </div>
+      </div>
+    );
+  }
+  if (!write) return block.empty ? null : <p className={cn("leading-relaxed", LAYER.ai, "px-1")}>{block.text}</p>;
+  return block.empty ? (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-fuchsia-500/50 px-2 py-1.5">
+      <span className="t12 flex-1 text-neutral-500">{what} — chưa viết</span>
+      <button type="button" onClick={askAgent} className="t12m inline-flex items-center gap-1 rounded-md px-2 py-1 text-fuchsia-800 outline-none hover:bg-fuchsia-500/10 focus-visible:ring-2 focus-visible:ring-fuchsia-500/50">
+        <Sparkles className="size-3.5" aria-hidden /> Nhờ agent viết
+      </button>
+      <button type="button" onClick={() => setEditing(true)} className="t12m rounded-md px-2 py-1 text-neutral-600 outline-none hover:bg-neutral-200/60 focus-visible:ring-2 focus-visible:ring-fuchsia-500/50">
+        Tự viết
+      </button>
+    </div>
+  ) : (
+    <button type="button" onClick={() => { setText(block.text); setEditing(true); }} title="Đoạn tự do — bấm để sửa, hoặc bảo agent sửa"
+            className={cn("t14 w-full cursor-text px-1 text-left leading-relaxed outline-none hover:bg-fuchsia-500/15 focus-visible:ring-2 focus-visible:ring-fuchsia-500/50", LAYER.ai)}>
+      {block.text}
+    </button>
   );
 }
 

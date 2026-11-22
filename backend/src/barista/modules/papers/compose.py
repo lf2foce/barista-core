@@ -45,6 +45,7 @@ from barista.modules.papers import (
 from barista.modules.papers.template import (
     CONTROL,
     KINDS,
+    PARAGRAPH_MAX,
     Field,
     TemplateError,
     empty,
@@ -54,6 +55,8 @@ from barista.modules.papers.template import (
     mark,
     parse,
     parse_value,
+    printable,
+    slots,
     used,
     validate,
 )
@@ -160,7 +163,8 @@ async def _write_rev(ctx: Ctx, doc_id: Any, rev: int, rows: dict[str, dict[str, 
 
 
 def _content(t: dict[str, Any], filled: Any, notes: list[str]) -> dict[str, Any]:
-    return {"title": filled.title, "blocks": filled.blocks, "signers": list(t["signers"]), "template": f"{t['name']} — mẫu v{t['version']}",
+    """Nội dung IN / CHỐT của giấy — bỏ chỗ giữ của đoạn tự do chưa viết (``printable``)."""
+    return {"title": filled.title, "blocks": printable(filled.blocks), "signers": list(t["signers"]), "template": f"{t['name']} — mẫu v{t['version']}",
             "notes": notes}
 
 
@@ -507,10 +511,10 @@ class Sheet:
 
 
 async def _sheet(ctx: Ctx, subj: Subject, blocks: list[Any], rec: dict[str, Any], draft_on: date,
-                 entries: dict[str, dict[str, Any]]) -> Sheet:
+                 entries: dict[str, dict[str, Any]], paragraphs: dict[str, str] | None = None) -> Sheet:
     rows = _rows(subj, list(used(blocks)), rec, await _common(ctx, rec.get("entity_id"), draft_on), entries)
     marks, notes = await _notes(ctx, rows)
-    filled = fill(blocks, subj.fields, {k: r["value"] for k, r in rows.items()}, marks)
+    filled = fill(blocks, subj.fields, {k: r["value"] for k, r in rows.items()}, marks, paragraphs)
     for b in filled.blocks:   # lớp của tờ giấy: ô CÔNG TY (pháp nhân, tài khoản…) tách khỏi số từ hồ sơ — sửa ở hai chỗ khác nhau
         for r in b.get("runs", ()):
             if r.get("k") in COMMON_KEYS and r.get("layer") == "record":
@@ -535,6 +539,17 @@ async def _entries(ctx: Ctx, doc_id: Any, subj: Subject) -> dict[str, dict[str, 
                        "display": r["display"], "origin": "person", "source": {"person": True}, "reason": r["reason"],
                        "entered_by": r["entered_by"], "entered_at": r["entered_at"]}
             for r in got if r["key"] in subj.fields and subj.fields[r["key"]].person and r["key"] not in COMMON_KEYS}
+
+
+async def _paragraphs(ctx: Ctx, doc_id: Any, blocks: list[Any]) -> dict[str, str]:
+    """ĐOẠN TỰ DO đã viết của giấy (0251 lát 2) — dòng mới nhất mỗi khoá đoạn của mẫu (cùng sổ ``papers.entries``: ai viết, lúc nào; viết lại = dòng
+    mới, giữ lịch sử). Khoá đoạn không trùng khoá ô (mẫu kiểm lúc lưu) nên không lẫn với dữ kiện người nhập."""
+    keys = list(slots(blocks))
+    if not keys:
+        return {}
+    got = await ctx.all("""SELECT DISTINCT ON (key) key, value FROM papers.entries WHERE document_id = %s AND key = ANY(%s)
+                           ORDER BY key, entered_at DESC, id DESC""", (doc_id, keys))
+    return {r["key"]: str((r["value"] or {}).get("text") or "") if isinstance(r["value"], dict) else "" for r in got}
 
 
 async def _template_of(ctx: Ctx, d: dict[str, Any]) -> tuple[dict[str, Any], Subject, list[Any]]:
@@ -568,7 +583,7 @@ async def live(ctx: Ctx, d: dict[str, Any]) -> tuple[dict[str, Any], Subject, di
     """Giấy chưa cấp số theo SỐ MỚI NHẤT, bằng quyền NGƯỜI ĐANG XEM / BẤM (0251) — mở, tải, ban hành đều qua đây."""
     t, subj, blocks = await _template_of(ctx, d)
     rec = await _record_of(ctx, d)
-    return t, subj, rec, await _sheet(ctx, subj, blocks, rec, _draft_on(d), await _entries(ctx, d["id"], subj))
+    return t, subj, rec, await _sheet(ctx, subj, blocks, rec, _draft_on(d), await _entries(ctx, d["id"], subj), await _paragraphs(ctx, d["id"], blocks))
 
 
 async def live_document(ctx: Ctx, d: dict[str, Any]) -> dict[str, Any]:
@@ -619,7 +634,8 @@ async def issue_basis(ctx: Ctx, paper_id: UUID) -> dict[str, str]:
         rec = await _record_of(ctx, d, clicker=True)
     except (NotFound, Invalid):
         return {}   # hồ sơ mất / trỏ chỗ khác ⇒ handler báo lỗi rõ
-    return sheet_basis(subj, d, await _sheet(ctx, subj, blocks, rec, _draft_on(d), await _entries(ctx, d["id"], subj)))
+    return sheet_basis(subj, d, await _sheet(ctx, subj, blocks, rec, _draft_on(d), await _entries(ctx, d["id"], subj),
+                                             await _paragraphs(ctx, d["id"], blocks)))
 
 
 class SetField(Input):
@@ -666,6 +682,39 @@ async def set_field(ctx: Ctx, inp: SetField) -> dict[str, Any]:
     return {"paper_id": d["id"], "key": inp.key, "summary": f"{f.label}: {fmt(value, f.kind)}"}
 
 
+class WriteParagraph(Input):
+    paper_id: UUID = ffield("Giấy", hidden=True)
+    key: str = ffield("Đoạn", hidden=True, max_length=60)
+    text: str = ffield("Nội dung đoạn", max_length=PARAGRAPH_MAX, help="Chữ in đúng như vậy trên giấy — để trống là bỏ đoạn này")
+
+
+@m.command("write_paragraph", resource="papers", title="Viết đoạn tự do trên giấy", agent="allow", risk="low", shows=("papers.view", "paper_id"),
+           purpose="Viết / sửa một đoạn chữ riêng cho giấy này ở chỗ mẫu cho phép (vd ghi chú theo yêu cầu khách).",
+           reversible="Viết lại hoặc xoá đoạn bất kỳ lúc nào trước khi phát hành; giấy chưa cấp số, chưa ai thấy ngoài người lập.")
+async def write_paragraph(ctx: Ctx, inp: WriteParagraph) -> dict[str, Any]:
+    """ĐOẠN TỰ DO (0251 lát 2): agent hoặc người lập viết / sửa một đoạn ở chỗ ``{{doan:khoá|gợi ý}}`` của mẫu — chỉ chỗ mẫu cho phép, chỉ giấy chưa cấp số.
+    Điều khoản chuẩn và số liệu không sửa ở đây (số từ hồ sơ, ô thiếu ``set_field``). Trợ lý viết thẳng được (rủi ro thấp: bản đang lập, viết lại được);
+    PHÁT HÀNH vẫn do người bấm và căn cứ của nút phát hành gồm cả chữ đoạn này (người phát hành đúng chữ đã thấy)."""
+    d = await ctx.one("SELECT * FROM papers.documents WHERE id = %s AND template_version_id IS NOT NULL FOR UPDATE", (inp.paper_id,))
+    if d is None:
+        raise NotFound("Không thấy giấy lập theo mẫu")
+    await require_seen(ctx, d)
+    if d["status"] != "draft":
+        raise Invalid("Giấy đã cấp số — không viết thêm được")
+    if not can_fill(ctx, d):
+        raise Denied("Chỉ người lập giấy hoặc người có thẩm quyền loại giấy này viết được")
+    _, _, blocks = await _template_of(ctx, d)
+    hints = slots(blocks)
+    if inp.key not in hints:
+        raise NotFound("Mẫu này không có đoạn tự do đó" + (f" — có: {', '.join(hints)}" if hints else " — mẫu không cho viết đoạn tự do"))
+    text = CONTROL.sub("", inp.text).strip()
+    by = "agent" if ctx.p.via == "agent" else "person"
+    await ctx.exec("INSERT INTO papers.entries (document_id, key, value, display, entered_by) VALUES (%s, %s, %s, %s, %s)",
+                   (d["id"], inp.key, Jsonb({"text": text, "by": by}), text[:200], ctx.p.user_id))
+    label = hints[inp.key] or inp.key
+    return {"paper_id": d["id"], "key": inp.key, "summary": f"Đã viết đoạn “{label}”" if text else f"Đã bỏ đoạn “{label}”"}
+
+
 # ── Ai thấy bản soạn: bản soạn chép số liệu hồ sơ ⇒ chỉ người ĐỌC ĐƯỢC hồ sơ nguồn (quyền của chính họ, hỏi gói qua điểm cắm) mới thấy ──
 
 async def seen(ctx: Ctx, docs: list[dict[str, Any]]) -> set[str]:
@@ -708,6 +757,30 @@ async def _belongs(ctx: Ctx, d: dict[str, Any], subj: Subject | None, title: str
     return ui.field("Thuộc", text, open={**opened, "title": label} if opened else None)
 
 
+async def _compose_panel(ctx: Ctx, d: dict[str, Any], subj: Subject, sheet: Sheet, can_write: bool) -> dict[str, Any]:
+    """"SOẠN VỚI AGENT" (0251 lát 2) — phần tờ giấy đang lập nói cho khung chat bên cạnh: đang lập gì (dòng "Về: …"), lần sửa cuối ("Đang lập · tự
+    lưu"), và CHIP do code chọn (không model): đoạn tự do nào chưa viết ⇒ nhờ agent viết; ô nào còn thiếu ⇒ chạm điền. Nút sửa đoạn tại chỗ
+    (``write``) chỉ có khi người xem được viết. App gửi ``ask`` vào chat nguyên văn — agent làm bằng công cụ thường, quyền người hỏi."""
+    last = await ctx.val("SELECT max(entered_at) FROM papers.entries WHERE document_id = %s", (d["id"],)) or d["created_at"]
+    chips: list[dict[str, Any]] = []
+    for b in sheet.filled.blocks:
+        if not b.get("slot"):
+            continue
+        what = b.get("hint") or "đoạn tự do"
+        if b.get("empty"):
+            chips.append({"label": f"Viết: {what[:1].lower() + what[1:]}", "ask": f"Viết đoạn “{what}” trên giấy này (đoạn {b['slot']})."})
+        else:
+            chips.append({"label": f"Gọn lại: {what[:1].lower() + what[1:]}", "ask": f"Viết lại đoạn “{what}” trên giấy này ngắn gọn, rõ hơn (đoạn {b['slot']})."})
+    for k in sheet.missing:
+        f = subj.fields[k]
+        if f.person and can_write:
+            chips.append({"label": f"Điền: {f.label}", "action": ui.act("papers.set_field", f"Điền: {f.label}", {"paper_id": str(d["id"]), "key": k}, "primary")})
+    return {"about": f"{d['kind_label']} — {d['ref']}", "paper_id": str(d["id"]), "status": f"Đang lập · tự lưu {last.astimezone(zone()):%H:%M}",
+            "chips": chips[:6],
+            **({"write": ui.act("papers.write_paragraph", "Sửa đoạn", {"paper_id": str(d["id"])})} if can_write else {}),
+            "context": {"query": "papers.view", "input": {"paper_id": str(d["id"])}, "title": f"{d['kind_label']} {d['ref']} (đang lập)"}}
+
+
 def _source(r: dict[str, Any], names: dict[str, str]) -> str:
     if r["origin"] == "person":
         return f"{r['display']} — {names.get(str(r['entered_by']), 'người nhập')} nhập {_when(r['entered_at'])}" + (f" · {r['reason']}" if r["reason"] else "")
@@ -726,10 +799,12 @@ async def draft_page(ctx: Ctx, d: dict[str, Any]) -> dict[str, Any]:
     sections: list[dict[str, Any]] = []
     actions: list[dict[str, Any]] = []
     fills: list[dict[str, Any]] = []
+    compose: dict[str, Any] | None = None
     if d["status"] == "draft" and subj is not None:
         _, subj, rec, sheet = await live(ctx, d)   # MỘT lượt đọc hồ sơ cho cả tờ giấy lẫn căn cứ của nút (sheet_basis) — không đọc lại
         head.append(await _belongs(ctx, d, subj, rec.get("title") or ""))
         content = _content({"name": t["name"], "version": t["version"], "signers": d["content"].get("signers", [])}, sheet.filled, sheet.notes)
+        content["blocks"] = sheet.filled.blocks   # tờ giấy ĐANG LẬP vẽ cả chỗ trống của đoạn tự do chưa viết (bản in / bản chốt thì bỏ)
         rows = sheet.rows
         fill_ok = can_fill(ctx, d)
         if rec.get("blocked"):
@@ -751,6 +826,7 @@ async def draft_page(ctx: Ctx, d: dict[str, Any]) -> dict[str, Any]:
                                                      else None)]))
         if can_issue(ctx, d) and not rec.get("blocked"):
             actions.append(issue_action(d, executor.basis_token(sheet_basis(subj, d, sheet))))
+        compose = await _compose_panel(ctx, d, subj, sheet, fill_ok)
     else:
         content = d["content"]
         rows = {r["key"]: r for r in await ctx.all("SELECT * FROM papers.fields WHERE document_id = %s AND rev = %s", (d["id"], d["rev"]))}
@@ -762,7 +838,10 @@ async def draft_page(ctx: Ctx, d: dict[str, Any]) -> dict[str, Any]:
              "blocks": content.get("blocks", []), "signers": content.get("signers", []), "notes": content.get("notes", []), "actions": fills,
              "legend": [{"layer": "record", "label": f"Số từ {(subj.label if subj else 'hồ sơ').lower()} — sửa ở hồ sơ, chạm để mở"},
                         {"layer": "company", "label": "Thông tin công ty — sửa ở Quản trị"},
-                        {"layer": "missing", "label": "Còn thiếu — chạm để điền"}, {"layer": "person", "label": "Người nhập trên giấy (ghi tên, căn cứ)"}],
+                        {"layer": "missing", "label": "Còn thiếu — chạm để điền"}, {"layer": "person", "label": "Người nhập trên giấy (ghi tên, căn cứ)"},
+                        *([{"layer": "ai", "label": "Đoạn tự do — agent viết, sửa thoải mái"}]
+                          if any(b.get("slot") for b in content.get("blocks", [])) else [])],
+             **({"compose": compose} if compose else {}),
              # chạm số từ hồ sơ ⇒ mở đúng hồ sơ để sửa (cùng đích với dòng "Thuộc") — số không sửa trên giấy
              **({"open": head[0]["open"]} if head and head[0].get("open") else {})}
     names = {str(u["id"]): u["name"] for u in await ctx.all("SELECT id, name FROM core.users WHERE id = ANY(%s)",

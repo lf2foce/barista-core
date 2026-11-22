@@ -185,9 +185,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       // hỏi từ khối trao đổi (shareTarget) ⇒ gửi kèm loại + mã đối tượng: trợ lý đọc đúng luồng đó bằng quyền người hỏi (0115)
       const st = desk.shareTarget;
       const subject = !b && st ? { kind: st.subjectKind, id: st.subjectId, title: st.title } : null;
-      runTurn(chatStream(text, threadRef.current, undefined, images, { ...(b ? { mode: "builder", app_id: b.appId } : {}), turn_key: turnKey.current, subject, documents }));
+      const working = !b && desk.working ? desk.working.context : null;
+      runTurn(chatStream(text, threadRef.current, undefined, images, { ...(b ? { mode: "builder", app_id: b.appId } : {}), turn_key: turnKey.current, subject, documents, working }));
     },
-    [runTurn, desk.shareTarget],
+    [runTurn, desk.shareTarget, desk.working],
   );
 
   const newThread = useCallback(() => {

@@ -9,7 +9,7 @@ import { newKey } from "@/lib/idempotency";
 import { leaveSession, takePrimedDesk } from "@/lib/session";
 import type { OpenRecord } from "@/lib/documents";
 import { decodeInbox, noticeIdsForSubject, talkAvailable, talkItemFor, type Section, type TalkInbox, type TalkItem } from "@/lib/talk";
-import type { ActionSpec, ChatCard, DeskPage, Input, Json, Manifest, Notice, Row, ScreenSpec, SessionInfo, UndoSpec } from "@/lib/types";
+import type { ActionSpec, ChatCard, DeskPage, Input, Json, Manifest, Notice, Row, ScreenSpec, SessionInfo, SheetCompose, UndoSpec } from "@/lib/types";
 import { useCallHub } from "@/components/call/call-provider";
 
 // Trạng thái dùng chung của một người × một công ty (Desk.swift): manifest, khung làm việc (thẻ + màn), hộp thông báo, hộp thoại.
@@ -26,6 +26,16 @@ export type ToastState = { id: number; text: string; isError: boolean; undo?: Un
 export type MessagesPane = { kind: "list" } | { kind: "notices" } | { kind: "thread"; item: TalkItem };
 
 const RAIL_KEY = "barista-rail-hidden";
+const LAST_SCREEN_KEY = "barista-last-screen";   // phân hệ → khoá màn dùng gần nhất (chỉ tiện cho người này, mất cũng không sao)
+
+function lastScreens(): Record<string, string> {
+  try {
+    const v = JSON.parse(localStorage.getItem(LAST_SCREEN_KEY) ?? "{}");
+    return v && typeof v === "object" ? (v as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
 function readRailHidden(): boolean {
   try {
     return localStorage.getItem(RAIL_KEY) === "1";
@@ -34,7 +44,9 @@ function readRailHidden(): boolean {
   }
 }
 
-export const cardItemId = (c: ChatCard) => `card:${c.id}`;
+// tờ giấy ĐANG LẬP (0251 lát 2): mỗi lần trợ lý sửa lại phát một thẻ trang mới ⇒ cùng một tờ giấy = MỘT ô trên khung (theo truy vấn + đầu vào), tự tải lại
+export const cardItemId = (c: ChatCard) =>
+  c.page?.kind === "detail" && c.page.sheet?.compose && c.query ? `live:${c.query}:${JSON.stringify(c.input ?? {})}` : `card:${c.id}`;
 export const screenItemId = (s: ScreenSpec) => `screen:${s.query}:${s.key}`;
 
 type DeskValue = {
@@ -114,6 +126,9 @@ type DeskValue = {
   ask: (prompt: string) => void;
   shareTarget: { subjectKind: string; subjectId: string; title: string } | null;
   setShareTarget: (t: DeskValue["shareTarget"]) => void;
+  /** "Soạn với agent" (0251 lát 2): thứ đang lập ở khung (tờ giấy) — chat hiện dòng "Về" + chip và gửi ngữ cảnh kèm câu hỏi. */
+  working: SheetCompose | null;
+  setWorking: (w: SheetCompose | null) => void;
   /** Hồ sơ nhận tệp đang mở trên khung (ADR 0249) — khối "Tệp" của thẻ báo lên khi hiện, gỡ khi đóng; tài liệu thả vào chat mặc định gắn vào đây. */
   openRecord: OpenRecord | null;
   setOpenRecord: (r: OpenRecord | null, owner?: string) => void;
@@ -173,6 +188,7 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
   const [unread, setUnread] = useState(0);
   const [askPrompt, setAskPrompt] = useState<{ text: string; n: number } | null>(null);
   const [shareTarget, setShareTarget] = useState<DeskValue["shareTarget"]>(null);
+  const [working, setWorking] = useState<SheetCompose | null>(null);
   const [openRecord, setOpenRecordState] = useState<OpenRecord | null>(null);
   const [recordFilesRev, setRecordFilesRev] = useState(0);
   // khối gỡ chỉ được gỡ CHÍNH hồ sơ nó báo (thẻ khác vừa mở đã thay thì giữ)
@@ -207,6 +223,18 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
     setActiveId(item.id);
   }, []);
   const openScreen = useCallback((spec: ScreenSpec) => openItem({ id: screenItemId(spec), kind: "screen", spec }, true), [openItem]);
+  // nhớ màn dùng gần nhất của phân hệ đang chọn (màn đang hiện trên khung thuộc phân hệ đó) — lần sau vào phân hệ chọn sẵn màn này
+  useEffect(() => {
+    if (section.kind !== "workspace" || !activeId) return;
+    const ws = manifest?.workspaces.find((w) => w.key === section.key);
+    const s = ws?.screens.find((x) => screenItemId(x) === activeId);
+    if (!s) return;
+    try {
+      localStorage.setItem(LAST_SCREEN_KEY, JSON.stringify({ ...lastScreens(), [section.key]: s.key }));
+    } catch {
+      /* không lưu được — vẫn dùng bình thường */
+    }
+  }, [section, activeId, manifest]);
   const openScreenFresh = useCallback((spec: ScreenSpec) => {
     // đang mở ⇒ CHỈ tăng số làm mới (màn tải lại TẠI CHỖ, giữ nội dung + vị trí cuộn — không dựng lại khung, không nháy); chưa mở ⇒ mở
     const id = screenItemId(spec);
@@ -351,9 +379,16 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
     });
     setNarrowShowsCanvas(false);
     // phân hệ chỉ có MỘT màn ⇒ không có danh sách để chọn: mở thẳng màn đó (khung dùng trọn chỗ — Shell / useSolo)
+    // …hoặc màn ĐẦU của phân hệ tự vẽ trọn khung (`full_frame`, vd Soạn) ⇒ vào phân hệ là vào thẳng màn đó; các màn khác ở menu đầu ngăn của nó.
+    // Màn rộng (cột danh sách + khung cạnh nhau): chọn sẵn màn DÙNG GẦN NHẤT của phân hệ (chưa có ⇒ màn đầu) — khung không trống, không mất chỗ đang làm.
+    // Màn hẹp: giữ danh sách màn để chọn (tự mở sẽ che mất danh sách) — trừ hai trường hợp trên.
     if (s.kind === "workspace") {
-      const only = manifestRef.current?.workspaces.find((w) => w.key === s.key)?.screens;
-      if (only?.length === 1) openScreen(only[0]);
+      const screens = manifestRef.current?.workspaces.find((w) => w.key === s.key)?.screens ?? [];
+      const wide = typeof window !== "undefined" && window.matchMedia("(min-width: 980px)").matches;
+      const last = screens.find((x) => x.key === lastScreens()[s.key]);
+      if (screens.length === 1 || screens[0]?.full_frame) openScreen(last && wide ? last : screens[0]);
+      // chưa dùng màn nào: màn làm việc đầu tiên — không phải màn thiết lập (nhóm cột danh sách vốn gấp lại: "Thiết lập" / "Nâng cao")
+      else if (wide && screens.length) openScreen(last ?? screens.find((x) => x.group !== "Thiết lập" && x.group !== "Nâng cao") ?? screens[0]);
     }
   }, [openScreen]);
 
@@ -530,7 +565,7 @@ export function DeskProvider({ children }: { children: React.ReactNode }) {
     narrowShowsCanvas, setNarrowShowsCanvas,
     forms, openForm, closeForm, pages, openPage, closePage, imports, openImport, closeImport,
     toast, show, inboxCount, changes, deskPage, deskFailed, refreshDesk, refreshInbox, notices, unread, refreshNotices, openNotice, markAllNoticesRead,
-    askPrompt, ask, shareTarget, setShareTarget, openRecord, setOpenRecord, recordFilesRev, bumpRecordFiles,
+    askPrompt, ask, shareTarget, setShareTarget, working, setWorking, openRecord, setOpenRecord, recordFilesRev, bumpRecordFiles,
     confirmed,
     setConfirmed: (id, message, approvalId, status) => {
       setConfirmedMap((c) => ({ ...c, [id]: { message, approvalId, status } }));

@@ -25,7 +25,7 @@ import { Callout, ListBlock, StageList, StepStrip, TilesBlock } from "@/componen
 import { FindingCard } from "@/components/blocks/finding";
 import { RecordFilesBlock } from "@/components/blocks/record-files";
 import { ThreadBlock } from "@/components/blocks/thread";
-import { CalendarBlock, ComposerBlock, DashboardEditor, WordDocBlock } from "@/components/blocks/lazy";
+import { CalendarBlock, ComposerBlock, DashboardEditor, StudioBlock, WordDocBlock } from "@/components/blocks/lazy";
 import { useDesk } from "@/components/desk/desk-context";
 import { useChat } from "@/components/desk/chat-context";
 import { KpiRow, DataTable } from "./table";
@@ -198,6 +198,9 @@ export function CardView({ page: raw, onClose, onChanged, head }: { page: CardPa
   // Văn bản Word (0227): thẻ có khối word ⇒ chỉ vẽ khối đó (khối chữ còn lại là bản dự phòng cho app chưa vẽ được trình sửa)
   const word = page.blocks.find((b) => b.type === "word");
   if (word?.type === "word") return <WordDocBlock block={word} />;
+  // Màn "Soạn" (0251 lát 2): agent bên trái + văn bản mới bên phải — chỉ vẽ khối đó (ô tiles là bản dự phòng cho app chưa vẽ được)
+  const studio = page.blocks.find((b) => b.type === "studio");
+  if (studio?.type === "studio") return <StudioBlock block={studio} />;
   // Lịch (0240): khối tự vẽ thanh điều hướng + lưới giờ — chiếm trọn thẻ
   const calendar = page.blocks.find((b) => b.type === "calendar");
   if (calendar?.type === "calendar") return <CalendarBlock block={calendar} onChanged={onChanged} />;
