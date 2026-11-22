@@ -638,12 +638,25 @@ def _render_handout(d: dict[str, Any], s: dict[str, Any]) -> bytes:
     return buf.getvalue()
 
 
+@m.query("studio", resource=None, title="Soạn", agent="deny")
+async def studio(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    """Điểm bắt đầu soạn. Gói đang bật góp trình soạn bằng quyền người mở."""
+    items = []
+    if ctx.p.can("papers", "read"):
+        items.append({"title": "Văn bản theo mẫu", "subtitle": "Công văn, giấy tờ từ hồ sơ · kiểm tra nội dung và ban hành",
+                      "module": "papers", "open": {"query": "papers.list", "input": {}}})
+    items.extend(item for group in await ctx.plugs("papers.authoring") for item in group)
+    return ui.card("Soạn", [ui.b_tiles(items)],
+                   subtitle="Chọn cách bắt đầu hoặc mở một văn bản đã soạn.", icon="square.and.pencil")
+
+
 # ---- Màn hình (0069): module tự khai phân hệ / góp màn vào phân hệ khác; workspaces.py chỉ ráp và lọc theo quyền
 ISSUE_ROW = tuple(A("papers.issue", f["issue"], bind={"paper_id": "id"}, when={"can_issue": [True], "family": [k]}, style="primary")
                   for k, f in FAMILIES.items())
 DISCARD_ROW = tuple(A("papers.void", f["discard"], bind={"paper_id": "id"}, when={"can_discard": [True], "family": [k]}, style="destructive")
                     for k, f in FAMILIES.items())
 m.screens("docs", (
+    Screen("authoring", "Soạn", "square.and.pencil", "papers.studio"),
     # MỘT màn cho mọi giấy tờ, lọc theo họ (ADR 0251). Nút tạo DUY NHẤT ở đây: công văn (văn bản công ty, không có hồ sơ). Chứng từ lập TỪ
     # HỒ SƠ (nút trên thẻ hồ sơ của gói, ``papers.start_draft``), không còn hộp chọn mẫu + chọn hồ sơ từ danh sách dài. Khoá cũ ⇒ ``aliases`` giữ ghim.
     Screen("papers", "Giấy tờ & công văn", "doc.richtext", "papers.list", aliases=("compose",),

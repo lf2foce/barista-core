@@ -149,6 +149,9 @@ export function ComposerPaper({
 
       {/* Vùng trang thành phẩm */}
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-5 @3xl:px-8 @3xl:py-8">
+        {ready && (doc.stats.flagged > 0 || doc.stats.placeholders > 0) ? (
+          <div className="mx-auto mb-4 w-full max-w-[960px]" role="status"><DataWarning doc={doc} /></div>
+        ) : null}
         {(!live || live.blocks) && !live?.blocks && doc.layout.html ? (
           <div className="mx-auto w-full max-w-[960px] overflow-hidden rounded-sm border border-black/10 bg-white">
             <iframe
@@ -161,7 +164,6 @@ export function ComposerPaper({
         ) : isSlides && (!live || live.blocks) && blocks.length > 0 ? (
           /* Chế độ trình chiếu (DeckViewer kiểu phenau_v3): từng trang slide 16:9 sắc nét */
           <div className="mx-auto flex w-full max-w-[880px] flex-col gap-6">
-            {ready && (doc.stats.flagged > 0 || doc.stats.placeholders > 0) ? <DataWarning doc={doc} /> : null}
             {splitSlides(blocks).map((slideBlocks, idx, all) => (
               <article
                 key={slideBlocks[0]?.id ?? idx}
@@ -227,7 +229,6 @@ export function ComposerPaper({
               </header>
             ) : null}
 
-            {ready && (doc.stats.flagged > 0 || doc.stats.placeholders > 0) ? <DataWarning doc={doc} /> : null}
 
             {live && !live.blocks ? (
               <div className="flex flex-col gap-5 py-7" aria-label="AI đang viết">

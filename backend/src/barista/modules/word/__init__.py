@@ -451,6 +451,12 @@ async def http_pdf(document_id: UUID, request: web.Request, version: int = 0) ->
     return web.Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(name)}"})
 
 
+@m.plug("papers.authoring", "Soạn hoặc mở file Word")
+async def authoring(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    return [{"title": "Văn bản Word", "subtitle": "Soạn trang trắng hoặc mở file .docx · sửa trực tiếp và nhờ trợ lý",
+             "module": "word", "open": {"query": "word.home", "input": {}}}]
+
+
 # 0231: không còn phân hệ riêng — sửa file Word là một việc của VĂN BẢN (hợp đồng, công văn, mẫu giấy tờ gắn hồ sơ — 0229), nằm cùng Giấy tờ trong phân hệ
 # "Văn bản & tài liệu" (khoá "docs"), ngay sau giấy tờ, trước kho tài liệu.
 m.screens("docs", (

@@ -22,6 +22,19 @@ from tests.conftest import ok, q
 PEOPLE = [("chu", "Trần Minh Khôi", "admin", "QT", True), ("an", "Lê Hoài An", "staff", "HCNS", False), ("binh", "Đỗ Thanh Bình", "staff", "HCNS", False)]
 
 
+async def test_authoring_entry_uses_only_enabled_editors() -> None:
+    domain = f"authoring-{uuid.uuid4().hex[:8]}.demo"
+    tid = await seed.create_tenant("Công ty thử soạn", domain, people=PEOPLE, packs=("word",))
+    person = await seed.who(tid, "chu", domain)
+    page = await q(person, "papers.studio")
+    destinations = [item["open"]["query"] for block in page["blocks"] if block["type"] == "tiles" for item in block["items"]]
+    assert "word.home" in destinations
+    await ok(person, "admin.set_pack", pack="word", enabled=False)
+    page = await q(await seed.who(tid, "chu", domain), "papers.studio")
+    destinations = [item["open"]["query"] for block in page["blocks"] if block["type"] == "tiles" for item in block["items"]]
+    assert "word.home" not in destinations
+
+
 def _sample() -> bytes:
     d = Document()
     d.add_heading("Hợp đồng dịch vụ", 1)

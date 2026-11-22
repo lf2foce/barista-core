@@ -434,8 +434,12 @@ export function WordEditor({ initial, notify, full = false }: { initial: WordDat
           {ribbon && <div className="flex flex-wrap items-center gap-1 border-t border-hairline pt-1.5">{ribbon}</div>}
         </div>
         {problem}
-        {helper && <div className="max-h-[50vh] rounded-xl border border-border bg-surface p-3">{helper}</div>}
-        <FitWidth width={data.page.w} fixed={null}>{paper}</FitWidth>
+        <div className="@container flex min-h-0 flex-1 flex-col gap-3">
+          <div className="flex min-h-0 flex-col gap-3 @3xl:flex-row">
+            {helper && <aside aria-label="Trợ lý soạn văn bản" className="flex max-h-[65vh] min-h-0 shrink-0 flex-col rounded-xl border border-border bg-surface p-3 @3xl:w-[320px]">{helper}</aside>}
+            <div className="min-w-0 flex-1"><FitWidth width={data.page.w} fixed={null}>{paper}</FitWidth></div>
+          </div>
+        </div>
         {data.notes.map((n, i) => <p key={i} className="t12 text-muted-foreground">{n}</p>)}
       </div>
     );
@@ -456,12 +460,12 @@ export function WordEditor({ initial, notify, full = false }: { initial: WordDat
         {actions}
       </header>
       {ribbon && <div className="flex flex-wrap items-center gap-1 border-b border-border bg-surface px-3 py-1.5">{ribbon}</div>}
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        {helper && <aside aria-label="Trợ lý soạn văn bản" className="flex max-h-[45vh] shrink-0 flex-col overflow-y-auto border-b border-border bg-surface p-4 md:max-h-none md:w-[340px] md:border-r md:border-b-0">{helper}</aside>}
         <div className="min-h-0 min-w-0 flex-1 overflow-auto bg-foreground/5">
           {problem && <div className="mx-auto max-w-3xl px-4 pt-4">{problem}</div>}
           <FitWidth width={data.page.w} fixed={zoom === null ? null : zoom / 100} bare>{paper}</FitWidth>
         </div>
-        {helper && <div className="flex w-[340px] shrink-0 flex-col border-l border-border bg-surface p-4">{helper}</div>}
       </div>
       <footer className="t12 flex items-center gap-3 border-t border-border bg-surface px-4 py-1.5 text-muted-foreground">
         <span>{words.toLocaleString("vi-VN")} từ</span>

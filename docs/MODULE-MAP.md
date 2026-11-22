@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-17 gói · 29 module · 1008 thao tác (285 nội bộ) · 21 bên nghe sự kiện.
+17 gói · 29 module · 1010 thao tác (286 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
@@ -51,14 +51,14 @@
 | `memory` | Trí nhớ | `base` | `memory` | `modules/memory.py` | 4 | 4 | 1 |
 | `mgmt` | Báo cáo quản trị | `mgmt` | `mgmt` | `modules/mgmt.py` | 2 | 3 | 0 |
 | `mkt` | Marketing | `marketing` | `mkt` | `modules/mkt/` (3 file) | 15 | 32 | 16 |
-| `papers` | Giấy tờ | `base` | `papers` | `modules/papers/` (3 file) | 11 | 15 | 3 |
+| `papers` | Giấy tờ | `base` | `papers` | `modules/papers/` (3 file) | 11 | 16 | 3 |
 | `parties` | Cá nhân & tổ chức | `directory` | `parties` | `modules/parties.py` | 20 | 16 | 19 |
 | `pay` | Lương & thù lao | `pay` | `pay` | `modules/pay/` (7 file) | 15 | 17 | 7 |
 | `schedule` | Lịch & nguồn lực | `schedule` | `schedule` | `modules/schedule/` (5 file) | 18 | 16 | 6 |
 | `talk` | Trao đổi | `talk` | `talk` | `modules/talk.py` | 17 | 18 | 7 |
 | `timekeeping` | Chấm công | `timekeeping` | `timekeeping` | `modules/timekeeping/` (8 file) | 22 | 16 | 8 |
 | `training` | Đào tạo | `training` | `training` | `modules/training.py` | 8 | 7 | 0 |
-| `word` | Văn bản Word | `word` | `word` | `modules/word/` (2 file) | 8 | 5 | 0 |
+| `word` | Văn bản Word | `word` | `word` | `modules/word/` (2 file) | 8 | 6 | 1 |
 | `work` | Việc theo dõi | `base` | `work` | `modules/work.py` | 6 | 5 | 3 |
 
 ## Từng module
@@ -393,6 +393,7 @@
   - `papers.save_draft` → `paper_draft`
 - **Gọi họ thao tác bằng quyền hệ thống:** `plug`
 - **Điểm cắm của module này** (điểm ← thao tác cắm vào):
+  - `papers.authoring` ← `word.plug_authoring`
   - `papers.field_catalog` ← —
   - `papers.field_values` ← —
   - `papers.subject_options` ← —
@@ -489,6 +490,7 @@
 
 - **Mã:** `word/__init__.py`, `word/docx_model.py`
 - **Tài nguyên quyền:** —
+- **Cắm vào:** `papers.authoring`
 
 ### `work` — Việc theo dõi
 
