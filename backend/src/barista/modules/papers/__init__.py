@@ -701,12 +701,16 @@ DISCARD_ROW = tuple(A("papers.void", f["discard"], bind={"paper_id": "id"}, when
 m.screens("docs", (
     # agent + văn bản: tự vẽ trọn khung; chỉ khi có gói cắm trình soạn văn bản mới (vd Văn bản Word) — không thì ẩn, phân hệ mở như thường
     Screen("authoring", "Soạn thảo", "square.and.pencil", "papers.studio", full_frame=True, needs_plug="papers.studio_doc"),
+), rank=-3)
+# THỨ TỰ phân hệ (anh Anh 23/11, thay 0231): Soạn thảo (khi có trình soạn) → Kho tài liệu (màn chủ phân hệ, rank 0 — không có gói soạn thảo thì phân hệ là
+# "tải tài liệu lên rồi đọc", màn đầu là kho) → Giấy tờ & công văn → Sửa file Word
+m.screens("docs", (
     # MỘT màn cho mọi giấy tờ, lọc theo họ (ADR 0251). Nút tạo DUY NHẤT ở đây: công văn (văn bản công ty, không có hồ sơ). Chứng từ lập TỪ
     # HỒ SƠ (nút trên thẻ hồ sơ của gói, ``papers.start_draft``), không còn hộp chọn mẫu + chọn hồ sơ từ danh sách dài. Khoá cũ ⇒ ``aliases`` giữ ghim.
     Screen("papers", "Giấy tờ & công văn", "doc.richtext", "papers.list", aliases=("compose",),
            actions=(A("papers.draft_letter", style="primary"),),
            row_actions=ISSUE_ROW + DISCARD_ROW, row_click="open", open=Open("papers.view", {"paper_id": "id"}, "Xem giấy tờ")),
-), rank=-3)   # 0231: văn bản có số hiệu đứng ĐẦU phân hệ "Văn bản & tài liệu" (trước kho tài liệu — màn của chủ phân hệ, rank 0)
+), rank=1)
 m.screens("work", (
     Screen("papers_pending", "Giấy chờ ban hành / phát hành", "checkmark.seal", "papers.pending", desk=Desk("decide", say=_attn_pending, rank=120),
            row_actions=ISSUE_ROW, row_click="open", open=Open("papers.view", {"paper_id": "id"}, "Xem giấy")),

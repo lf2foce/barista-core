@@ -553,4 +553,4 @@ m.screens("docs", (
            open=Open("word.view", {"document_id": "id"}, "Văn bản"),
            row_actions=(A("word.rename", "Đổi tên", bind={"document_id": "id", "title": "title"}),
                         A("word.archive", "Cất", bind={"document_id": "id"}, style="destructive"))),
-), rank=-1)
+), rank=2)   # sau Kho tài liệu (0) và Giấy tờ (1) — thứ tự 23/11

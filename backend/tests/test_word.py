@@ -43,9 +43,9 @@ async def test_authoring_entry_uses_only_enabled_editors() -> None:
     page = await q(person, "papers.studio")
     destinations = [item["open"]["query"] for block in page["blocks"] if block["type"] == "tiles" for item in block["items"]]
     assert "word.home" not in destinations
-    # tắt gói ⇒ màn Soạn thảo không lên menu (Screen(needs_plug=)) — phân hệ mở như thường, màn đầu là Giấy tờ & công văn
-    keys = [x["key"] for x in docs_screens(person)]
-    assert "authoring" not in keys and keys[0] == "papers"
+    # tắt gói ⇒ màn Soạn thảo không lên menu (Screen(needs_plug=)) — phân hệ mở như thường, màn làm việc đầu là Kho tài liệu (thứ tự 23/11)
+    work = [x["key"] for x in docs_screens(person) if x.get("group") not in ("Thiết lập", "Nâng cao")]
+    assert "authoring" not in work and work[:2] == ["kb", "papers"]
 
 
 async def test_authoring_entry_drops_malformed_plug_results_and_tiles_the_viewer_cannot_open(monkeypatch: pytest.MonkeyPatch) -> None:
