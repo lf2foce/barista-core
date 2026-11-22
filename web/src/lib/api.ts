@@ -385,13 +385,15 @@ export async function* decideStream(cardId: string, decision: "confirm" | "dismi
   yield* ndjson(res.body);
 }
 
-/** Soạn với AI dạng LUỒNG (trò chuyện): soạn mới `{kind, brief}` hoặc nói tiếp `{session_id, instruction, block?, mode?, retry?}`.
- *  Mỗi dòng NDJSON là tiến trình: session · status · step · data · blocks · done / error. */
+/** Soạn với AI dạng LUỒNG (trò chuyện): soạn mới `{kind?, brief, kb_documents?}` (thiếu `kind` ⇒ máy chủ nhận loại từ lời mô tả; `kb_documents` = mã tài liệu
+ *  kho làm nguồn) hoặc nói tiếp `{session_id, instruction, block?, mode?, retry?}`. Mỗi dòng NDJSON là tiến trình: session · status · step · data · blocks · done / error.
+ *  `path` = đường máy chủ gửi trong khối (`stream`) — bắt buộc; sai ⇒ báo lỗi, không tự rẽ sang đường của gói nào. */
 export type ComposeTurnBody =
-  | { kind: string; brief: string }
+  | { kind?: string; brief: string; kb_documents?: string[] }
   | { session_id: string; instruction: string; block?: string; mode?: string; retry?: boolean };
-export async function* composeStream(body: ComposeTurnBody, signal?: AbortSignal, path = "/v1/compose/stream"): AsyncGenerator<StreamEvent> {
-  const res = await post(path.startsWith("/v1/") ? path : "/v1/compose/stream", body, {}, signal);
+export async function* composeStream(body: ComposeTurnBody, path: string, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
+  if (!path.startsWith("/v1/")) throw new ApiError("Máy chủ chưa gửi đường soạn của màn này — tải lại trang hoặc báo quản trị", 0);
+  const res = await post(path, body, {}, signal);
   if (!res.ok || !res.body) throw new ApiError(await detailOf(res, `Không soạn được (${res.status})`), res.status);
   yield* ndjson(res.body);
 }

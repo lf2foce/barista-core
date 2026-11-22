@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowUp, BookOpen, Check, ChevronDown, ChevronRight, CircleAlert, Copy, FileText, FolderOpen, History, MessageSquarePlus,
   RotateCcw, Sparkles, Square, Trash2, X,
@@ -8,9 +8,9 @@ import {
 import { api, composeStream, type ComposeTurnBody } from "@/lib/api";
 import { saveBlob } from "@/lib/download";
 import { newKey } from "@/lib/idempotency";
-import { applyComposeEvent, currentOverflow, groupSteps, liveTurn, overflowActions, retryTarget, type LiveStep, type LiveTurn } from "@/lib/composer";
+import { applyComposeEvent, currentOverflow, groupSteps, liveTurn, overflowActions, pickDocs, retryTarget, startBody, type LiveStep, type LiveTurn } from "@/lib/composer";
 import { datetime, text as jsonText } from "@/lib/format";
-import type { ComposerData, ComposerOverflowBlock, ComposerOverflowPage, ComposerTurn, Input, Option } from "@/lib/types";
+import type { ComposerData, ComposerKind, ComposerOverflowBlock, ComposerOverflowPage, ComposerTurn, Input, Option } from "@/lib/types";
 import { actionClass } from "@/components/primitives";
 import { useDesk } from "@/components/desk/desk-context";
 import { useFrameActions } from "@/components/desk/frame-context";
@@ -23,29 +23,8 @@ import { cn } from "@/lib/utils";
 import { ComposerPaper } from "./composer-paper";
 
 const CONTINUE = "Tiếp tục: làm nốt phần còn thiếu, dùng số liệu đã lấy được.";
-const EXAMPLES: { kind: string; text: string }[] = [
-  { kind: "brochure", text: "Tờ giới thiệu sản phẩm đang bán, kèm bảng giá" },
-  { kind: "slides", text: "Slide giới thiệu công ty cho buổi gặp khách hàng mới" },
-  { kind: "flyer", text: "Tờ rơi ưu đãi tháng này cho sản phẩm bán chạy nhất" },
-  { kind: "post", text: "Bài đăng giới thiệu sản phẩm mới, kèm lời kêu gọi" },
-];
 const SELECT = "t14 h-9 w-full rounded-lg border border-border bg-surface px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60";
-
-function inferKind(prompt: string, fallback: string, offered: Set<string>): string {
-  const s = prompt.trim().toLowerCase();
-  const rules: [string, string[]][] = [
-    ["slides", ["slide", "thuyết trình", "trình bày", "deck"]],
-    ["flyer", ["tờ rơi", "flyer"]],
-    ["post", ["bài đăng", "facebook", "linkedin", "bài viết"]],
-    ["memo", ["hồ sơ chào bán", "investment memorandum"]],
-    ["teaser", ["tóm tắt 4 trang", "teaser"]],
-    ["brochure", ["tờ giới thiệu", "brochure"]],
-  ];
-  for (const [k, words] of rules) {
-    if (offered.has(k) && words.some((w) => s.startsWith(w))) return k;
-  }
-  return fallback;
-}
+const RING = "outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function base64Blob(b64: string, type: string): Blob {
   const bin = atob(b64);
@@ -73,8 +52,9 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [local, setLocal] = useState<{ user: LiveTurn; error: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [kind, setKind] = useState(block.kind || "brochure");
-  const [kindLocked, setKindLocked] = useState(false);   // người tự bấm chọn loại ⇒ giữ nguyên, không tự suy theo câu gõ
+  const [kind, setKind] = useState(block.kind || block.default_kind);
+  // người tự bấm chọn loại ⇒ gửi đúng loại đó; chưa chọn ⇒ KHÔNG gửi, máy chủ nhận loại từ lời mô tả (web không đoán theo chữ gõ — rà 22/11)
+  const [kindLocked, setKindLocked] = useState(false);
   const [kbRef, setKbRef] = useState<KbRef | null>(null);
   const [stopping, setStopping] = useState(false);
   const [draftOpen, setDraftOpen] = useState(block.blocks.length > 0);
@@ -84,6 +64,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
   const full = useFullFrame();
   const c = doc.commands;
   const viewQuery = c.view ?? "";
+  const tabsId = useId();
 
   const [seen, setSeen] = useState(block);
   if (seen !== block) {
@@ -126,29 +107,25 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
     return () => clearInterval(t);
   }, [doc.status, doc.fitting, doc.session_id, live, reload]);
 
-  async function send(text: string, opts: { block?: string; mode?: string; retry?: boolean; kindOverride?: string } = {}) {
+  async function send(text: string, opts: { block?: string; mode?: string; retry?: boolean; kind?: string } = {}) {
     const raw = text.trim();
     if (!raw || live) return;
     const sid = doc.session_id;
-    const offered = new Set(doc.kinds.map((k) => k.key));
-    const chosenKind = opts.kindOverride ?? (kindLocked ? kind : inferKind(raw, kind, offered));
-    if (!sid && chosenKind !== kind) setKind(chosenKind);
-    const fullText = !sid && kbRef ? `${raw}\n\n(Tham khảo và trích số/thông tin từ tài liệu trong kho: “${kbRef.title}”)` : raw;
     const body: ComposeTurnBody = sid
-      ? { session_id: sid, instruction: fullText, block: opts.block ?? "", mode: opts.mode ?? "rewrite", retry: !!opts.retry }
-      : { kind: chosenKind, brief: fullText };
+      ? { session_id: sid, instruction: raw, block: opts.block ?? "", mode: opts.mode ?? "rewrite", retry: !!opts.retry }
+      : startBody(raw, opts.kind ?? (kindLocked ? kind : null), kbRef ? [kbRef.id] : []);
     let turn = liveTurn(raw, opts.block ?? "", opts.mode ?? "");
     setLocal(null);
     setLive(turn);
-    if (!sid) setKbRef(null);
     try {
-      for await (const ev of composeStream(body, undefined, doc.stream)) {
+      for await (const ev of composeStream(body, doc.stream)) {
         turn = applyComposeEvent(turn, ev);
         setLive(turn);
       }
     } catch (e) {
       turn = { ...turn, done: true, error: e instanceof Error ? e.message : "Không soạn được — thử lại" };
     }
+    if (!sid && turn.sessionId) setKbRef(null);   // tài liệu đã đi cùng bản soạn (máy chủ giữ cho lượt thử lại); chưa tạo được bản ⇒ giữ để gửi lại
     if (turn.sessionId) await reload(turn.sessionId);
     if (turn.blocks?.length && !turn.error) {
       setDraftOpen(true);
@@ -232,6 +209,7 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
     if (live) return;
     setLocal(null);
     setKindLocked(false);
+    setKind(doc.default_kind);
     setKbRef(null);
     setDoc({
       ...doc, session_id: "", title: "Ấn phẩm mới", brief: "", version: 0, status: "new", status_label: "", error: "",
@@ -250,7 +228,9 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
   const recipe = useRecipe(doc, kind, !!live, (sid) => void reload(sid));
   const panes = hasDraft && draftOpen;
   const showDraft = () => { setView("draft"); setDraftOpen(true); };
-  const tabs = hasDraft ? <ViewTabs view={view} onView={(v) => (v === "draft" ? showDraft() : setView("chat"))} fresh={!!live && live.data.length > 0 && !live.blocks} /> : null;
+  const onView = (v: "chat" | "draft") => (v === "draft" ? showDraft() : setView("chat"));
+  const newData = !!live && live.data.length > 0 && !live.blocks;
+  const tabs = (where: "chat" | "draft") => (hasDraft ? <ViewTabs id={tabsId} where={where} view={view} onView={onView} fresh={newData} /> : null);
   const docs = <HistoryMenu doc={doc} disabled={!!live} onOpen={open} onNew={fresh} onDelete={remove} />;
   const title = live?.blocks ? live.title || doc.title : doc.session_id ? doc.title : "Ấn phẩm mới";
   const frameActions = useFrameActions();
@@ -258,7 +238,8 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
   return (
     <div ref={row} className={cn("@container relative flex min-h-0 flex-1", full ? "" : "min-h-[min(75vh,680px)] overflow-hidden rounded-xl border border-hairline")}
          style={{ "--draft": `${100 - pct}%` } as React.CSSProperties}>
-      <section className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", panes && "@3xl:flex-none @3xl:basis-(--draft)",
+      <section id={`${tabsId}-panel-chat`} role={hasDraft ? "tabpanel" : undefined}
+               className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", panes && "@3xl:flex-none @3xl:basis-(--draft)",
                              hasDraft && view === "draft" && "@max-3xl:hidden")} aria-label="Trò chuyện với AI">
         <header className={cn(PANE_HEADER, "px-3")}>
           {full ? <RailToggle /> : null}
@@ -283,18 +264,19 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
           </HeaderGroup>
           {frameActions}
         </header>
-        {tabs}
+        {tabs("chat")}
         <Conversation
           doc={doc} live={live} local={local} showDraft={hasDraft ? showDraft : undefined} draftOpen={draftOpen}
           onRetry={(t, retry) => void send(t.text, { block: t.block, mode: t.mode, retry })}
-          onExample={(ex) => { setKind(ex.kind); setKindLocked(true); void send(ex.text, { kindOverride: ex.kind }); }}
+          onExample={(k) => { setKind(k.key); setKindLocked(true); void send(k.example, { kind: k.key }); }}
           onOpenHistory={(id) => void open(id)}
           onContinue={() => void send(CONTINUE)}
           onFit={(b) => { if (b.action) void send(b.action.input.instruction, { block: b.action.input.block, mode: b.action.input.mode }); }}
         />
         <ChatInput
-          doc={doc} hasDraft={hasDraft} kinds={doc.kinds} kind={kind}
+          doc={doc} hasDraft={hasDraft} kinds={doc.kinds} kind={kind} kindLocked={kindLocked}
           setKind={(k) => { setKind(k); setKindLocked(true); }}
+          autoKind={() => { setKind(doc.default_kind); setKindLocked(false); }}
           recipe={recipe} kbRef={kbRef} setKbRef={setKbRef}
           running={!!live} stopping={stopping} canStop={!!live?.sessionId}
           onSend={(t) => void send(t)} onStop={() => void stop()}
@@ -317,9 +299,10 @@ export function ComposerBlock({ block }: { block: ComposerData; onChanged?: () =
               <span className="w-px bg-hairline transition-colors group-hover:bg-primary group-focus-visible:w-0.5 group-focus-visible:bg-primary" />
             </div>
           ) : null}
-          <section className={cn("min-h-0 min-w-0 flex-1 flex-col border-l border-hairline bg-canvas", view === "draft" ? "flex" : "hidden", panes ? "@3xl:flex" : "@3xl:hidden")}
+          <section id={`${tabsId}-panel-draft`} role="tabpanel"
+                   className={cn("min-h-0 min-w-0 flex-1 flex-col border-l border-hairline bg-canvas", view === "draft" ? "flex" : "hidden", panes ? "@3xl:flex" : "@3xl:hidden")}
                    aria-label="Khung làm việc — ấn phẩm">
-            {tabs}
+            {tabs("draft")}
             <ComposerPaper
               doc={doc} live={live} busy={busy} title={title} docs={docs} frameActions={frameActions}
               onClose={() => { setDraftOpen(false); setView("chat"); }}
@@ -473,10 +456,28 @@ function useRecipe(doc: ComposerData, kind: string, disabled: boolean, onBuilt: 
 }
 type Recipe = ReturnType<typeof useRecipe>;
 
-function ViewTabs({ view, onView, fresh }: { view: "chat" | "draft"; onView: (v: "chat" | "draft") => void; fresh: boolean }) {
+/** Thanh "Trò chuyện | Bản xem" (màn hẹp): tablist đúng chuẩn — tab đang chọn nhận Tab, ← → Home End đổi tab. Thanh có ở CẢ hai ngăn (ngăn kia ẩn ở màn hẹp) ⇒
+ *  đổi tab xong đưa tiêu điểm sang tab cùng tên của thanh ở ngăn vừa hiện. */
+const VIEWS = ["chat", "draft"] as const;
+function ViewTabs({ id, where, view, onView, fresh }: {
+  id: string; where: "chat" | "draft"; view: "chat" | "draft"; onView: (v: "chat" | "draft") => void; fresh: boolean;
+}) {
+  const go = (v: "chat" | "draft") => {
+    onView(v);
+    requestAnimationFrame(() => document.getElementById(`${id}-${v}-tab-${v}`)?.focus());
+  };
+  const onKey = (e: React.KeyboardEvent) => {
+    const i = VIEWS.indexOf(view);
+    const next = e.key === "ArrowRight" ? VIEWS[(i + 1) % VIEWS.length] : e.key === "ArrowLeft" ? VIEWS[(i + VIEWS.length - 1) % VIEWS.length]
+      : e.key === "Home" ? VIEWS[0] : e.key === "End" ? VIEWS[VIEWS.length - 1] : null;
+    if (!next) return;
+    e.preventDefault();
+    go(next);
+  };
   const tab = (v: "chat" | "draft", label: string) => (
-    <button type="button" role="tab" aria-selected={view === v} onClick={() => onView(v)}
-            className={cn("t14m relative inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    <button type="button" role="tab" id={`${id}-${where}-tab-${v}`} aria-selected={view === v} aria-controls={`${id}-panel-${v}`} tabIndex={view === v ? 0 : -1}
+            onClick={() => go(v)} onKeyDown={onKey}
+            className={cn("t14m relative inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-full", RING,
                           view === v ? "bg-surface text-foreground" : "text-muted-foreground hover:text-foreground")}>
       {label}
       {v === "draft" && fresh && view !== "draft" ? <span className="size-1.5 rounded-full bg-primary" aria-label="đang có số liệu mới" /> : null}
@@ -496,7 +497,7 @@ function Conversation({ doc, live, local, showDraft, draftOpen, onRetry, onExamp
   doc: ComposerData; live: LiveTurn | null; local: { user: LiveTurn; error: string } | null;
   showDraft?: () => void; draftOpen: boolean;
   onRetry: (t: { text: string; block: string; mode: string }, retry: boolean) => void;
-  onExample: (ex: { kind: string; text: string }) => void;
+  onExample: (k: ComposerKind) => void;
   onOpenHistory: (id: string) => void;
   onContinue: () => void;
   onFit: (b: ComposerOverflowBlock) => void;
@@ -519,10 +520,10 @@ function Conversation({ doc, live, local, showDraft, draftOpen, onRetry, onExamp
                 </p>
               </div>
               <div className="grid gap-2 @lg:grid-cols-2">
-                {EXAMPLES.map((ex) => (
-                  <button key={ex.text} type="button" onClick={() => onExample(ex)}
+                {doc.kinds.filter((k) => k.example).slice(0, 4).map((k) => (
+                  <button key={k.key} type="button" onClick={() => onExample(k)}
                           className="t14 flex items-center justify-between gap-2 rounded-2xl border border-hairline bg-surface px-3.5 py-2.5 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
-                    <span className="line-clamp-2">{ex.text}</span>
+                    <span className="line-clamp-2">{k.example}</span>
                     <ArrowUp className="size-3.5 shrink-0 rotate-45 text-muted-foreground" aria-hidden />
                   </button>
                 ))}
@@ -718,27 +719,28 @@ function Working({ status, steps }: { status: string; steps: LiveStep[] }) {
   );
 }
 
-/** Chọn tài liệu từ Kho tài liệu (`kb.documents` — gói nền, đúng quyền kệ của người dùng) để gắn làm nguồn tham khảo cho lượt soạn. */
-function KbPicker({ picked, onPick }: { picked: KbRef | null; onPick: (d: KbRef | null) => void }) {
+/** Chọn tài liệu từ Kho tài liệu để gắn làm NGUỒN cho lượt soạn (gửi mã tài liệu, máy chủ kiểm quyền đọc + đưa cho AI). Truy vấn danh sách do khối gửi
+ *  (`commands.kb_documents`, đúng quyền kệ của người dùng); không xem được kho ⇒ báo gọn, không vỡ ô nhập. Danh sách lấy trọn một trang (máy chủ trả tới 1.000
+ *  tài liệu), lọc theo chữ gõ, chỉ hiện 50 dòng đầu — còn nữa thì nhắc gõ để thu hẹp. */
+function KbPicker({ query, picked, onPick }: { query: string; picked: KbRef | null; onPick: (d: KbRef | null) => void }) {
   const [open, setOpen] = useState(false);
   const [docs, setDocs] = useState<KbRef[] | null>(null);
+  const [failed, setFailed] = useState(false);
   const [q, setQ] = useState("");
   useEffect(() => {
     if (!open || docs !== null) return;
-    api.query("kb.documents", {}).then((page) => {
-      if (page.kind === "table") {
-        setDocs(page.rows.slice(0, 40).map((r) => ({
-          id: r.id,
-          title: jsonText(r.values.title) || jsonText(r.values.name),
-          shelf: jsonText(r.values.shelf_label) || jsonText(r.values.shelf),
-        })).filter((d) => d.id && d.title));
-      } else setDocs([]);
-    }, () => setDocs([]));
-  }, [open, docs]);
-  const shown = (docs ?? []).filter((d) => !q.trim() || d.title.toLowerCase().includes(q.trim().toLowerCase()));
+    api.query(query, {}).then((page) => {
+      setDocs(page.kind === "table" ? page.rows.map((r) => ({
+        id: r.id,
+        title: jsonText(r.values.title) || jsonText(r.values.name),
+        shelf: jsonText(r.values.shelf_name),
+      })).filter((d) => d.id && d.title) : []);
+    }, () => { setFailed(true); setDocs([]); });
+  }, [open, docs, query]);
+  const { shown, more } = pickDocs(docs ?? [], q);
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger className={cn("t12m inline-flex h-7 items-center gap-1 rounded-full border px-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      <PopoverTrigger className={cn("t12m inline-flex h-7 items-center gap-1 rounded-full border px-2.5", RING,
                                     picked ? "border-primary/40 bg-primary/10 text-primary" : "border-hairline bg-surface text-muted-foreground hover:bg-accent hover:text-foreground")}>
         <BookOpen className="size-3.5" aria-hidden />
         <span className="max-w-[14rem] truncate">{picked ? picked.title : "Kho tài liệu"}</span>
@@ -746,31 +748,33 @@ function KbPicker({ picked, onPick }: { picked: KbRef | null; onPick: (d: KbRef 
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(22rem,calc(100vw-1.5rem))] gap-2 p-2.5">
         <p className="t12m text-muted-foreground">Tham khảo từ Kho tài liệu (kệ bạn có quyền xem)</p>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm tên tài liệu…"
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm tên tài liệu…" aria-label="Tìm tài liệu trong kho"
                className="t14 h-8 w-full rounded-lg border border-border bg-surface px-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-        <ul className="flex max-h-56 flex-col gap-0.5 overflow-y-auto">
+        <ul className="flex max-h-56 flex-col gap-0.5 overflow-y-auto" aria-label="Tài liệu trong kho">
           {docs === null ? <li className="t12 px-2 py-2 text-muted-foreground">Đang tải…</li>
+            : failed ? <li className="t12 px-2 py-2 text-muted-foreground">Bạn chưa xem được Kho tài liệu — soạn không cần tài liệu, hoặc hỏi quản trị cấp quyền.</li>
             : !shown.length ? <li className="t12 px-2 py-2 text-muted-foreground">Chưa có tài liệu nào khớp.</li>
             : shown.map((d) => (
               <li key={d.id}>
-                <button type="button" onClick={() => { onPick(d); setOpen(false); }}
-                        className={cn("flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-accent", picked?.id === d.id && "bg-primary/10 text-primary")}>
+                <button type="button" onClick={() => { onPick(d); setOpen(false); }} aria-current={picked?.id === d.id ? "true" : undefined}
+                        className={cn("flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-accent", RING, picked?.id === d.id && "bg-primary/10 text-primary")}>
                   <span className="t14 truncate">{d.title}</span>
                   {d.shelf ? <span className="t12 shrink-0 text-muted-foreground">{d.shelf}</span> : null}
                 </button>
               </li>
             ))}
+          {more ? <li className="t12 px-2 py-1.5 text-muted-foreground">Còn {more} tài liệu khớp — gõ thêm để thu hẹp.</li> : null}
         </ul>
         {picked ? (
-          <button type="button" onClick={() => { onPick(null); setOpen(false); }} className="t12 self-start text-muted-foreground hover:text-foreground">Bỏ chọn tài liệu</button>
+          <button type="button" onClick={() => { onPick(null); setOpen(false); }} className={cn("t12 self-start rounded text-muted-foreground hover:text-foreground", RING)}>Bỏ chọn tài liệu</button>
         ) : null}
       </PopoverContent>
     </Popover>
   );
 }
 
-function ChatInput({ doc, hasDraft, kinds, kind, setKind, recipe, kbRef, setKbRef, running, stopping, canStop, onSend, onStop }: {
-  doc: ComposerData; hasDraft: boolean; kinds: ComposerData["kinds"]; kind: string; setKind: (k: string) => void;
+function ChatInput({ doc, hasDraft, kinds, kind, kindLocked, setKind, autoKind, recipe, kbRef, setKbRef, running, stopping, canStop, onSend, onStop }: {
+  doc: ComposerData; hasDraft: boolean; kinds: ComposerData["kinds"]; kind: string; kindLocked: boolean; setKind: (k: string) => void; autoKind: () => void;
   recipe: Recipe; kbRef: KbRef | null; setKbRef: (d: KbRef | null) => void;
   running: boolean; stopping: boolean; canStop: boolean;
   onSend: (text: string) => void; onStop: () => void;
@@ -789,7 +793,8 @@ function ChatInput({ doc, hasDraft, kinds, kind, setKind, recipe, kbRef, setKbRe
   const fresh = !doc.session_id;
   const fromRecord = fresh && recipe.ready;
   const has = draft.trim().length > 0 || fromRecord;
-  const kindLabel = kinds.find((k) => k.key === kind)?.label ?? kind;
+  // chưa chọn ⇒ máy chủ nhận loại từ lời mô tả (thiếu `kind` ở luồng soạn) — nói rõ trên ô chọn thay vì hiện một loại mà có thể không phải
+  const kindLabel = kindLocked ? kinds.find((k) => k.key === kind)?.label ?? kind : "Loại: tự nhận";
   const submit = () => {
     if (!has || running || recipe.busy) return;
     if (fromRecord) void recipe.build(draft);
@@ -808,20 +813,28 @@ function ChatInput({ doc, hasDraft, kinds, kind, setKind, recipe, kbRef, setKbRe
                 {kindLabel}
                 <ChevronDown className="size-3 text-muted-foreground" aria-hidden />
               </PopoverTrigger>
-              <PopoverContent align="start" className="w-56 gap-1 p-1.5">
-                {kinds.map((k) => (
-                  <button key={k.key} type="button" onClick={() => { setKind(k.key); setKindOpen(false); }}
-                          className={cn("t14 flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left hover:bg-accent", kind === k.key && "t14m bg-primary/10 text-primary")}>
-                    {k.label}
-                    {kind === k.key ? <Check className="size-3.5" aria-hidden /> : null}
-                  </button>
-                ))}
+              <PopoverContent align="start" className="w-64 gap-1 p-1.5">
+                <button type="button" onClick={() => { autoKind(); setKindOpen(false); }} aria-current={!kindLocked ? "true" : undefined}
+                        className={cn("t14 flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left hover:bg-accent", RING, !kindLocked && "t14m bg-primary/10 text-primary")}>
+                  Tự nhận theo lời mô tả
+                  {!kindLocked ? <Check className="size-3.5" aria-hidden /> : null}
+                </button>
+                {kinds.map((k) => {
+                  const on = kindLocked && kind === k.key;
+                  return (
+                    <button key={k.key} type="button" onClick={() => { setKind(k.key); setKindOpen(false); }} aria-current={on ? "true" : undefined}
+                            className={cn("t14 flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left hover:bg-accent", RING, on && "t14m bg-primary/10 text-primary")}>
+                      {k.label}
+                      {on ? <Check className="size-3.5" aria-hidden /> : null}
+                    </button>
+                  );
+                })}
               </PopoverContent>
             </Popover>
 
-            <KbPicker picked={kbRef} onPick={setKbRef} />
+            {doc.commands.kb_documents ? <KbPicker query={doc.commands.kb_documents} picked={kbRef} onPick={setKbRef} /> : null}
             {kbRef ? (
-              <button type="button" onClick={() => setKbRef(null)} aria-label="Bỏ chọn tài liệu" className="t12 grid size-6 place-items-center rounded-full text-muted-foreground hover:bg-foreground/5 hover:text-foreground">
+              <button type="button" onClick={() => setKbRef(null)} aria-label="Bỏ chọn tài liệu" className={cn("t12 grid size-6 place-items-center rounded-full text-muted-foreground hover:bg-foreground/5 hover:text-foreground", RING)}>
                 <X className="size-3" />
               </button>
             ) : null}

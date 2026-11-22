@@ -742,7 +742,7 @@ export type McpRequest = {
   auto?: boolean;
 };
 
-/** Soạn với AI (thử nghiệm — backend modules/compose): một khối của bản soạn. Số chỉ nằm ở khối `data` (trang bảng server dựng sẵn). */
+/** Khối `composer` (màn Ấn phẩm — gói ngoài vẽ bằng khối này, ADR 0254): một khối của bản soạn. Số chỉ nằm ở khối `data` (trang bảng server dựng sẵn). */
 export type ComposerItem = {
   id: string;
   type: string; // heading · paragraph · data · quote · image · placeholder (chỗ giữ "Cần ảnh…" — chỉ ở màn soạn) (lạ ⇒ bỏ qua)
@@ -769,7 +769,7 @@ export type ComposerItem = {
   illustration: string;
 };
 
-/** Phần bố cục do MÁY CHỦ xếp (backend modules/compose/layout.py) — web chỉ vẽ theo đây; mọi mã khối tra trong `blocks`. */
+/** Phần bố cục do MÁY CHỦ xếp (gói gửi trong khối `composer`) — web chỉ vẽ theo đây; mọi mã khối tra trong `blocks`. */
 export type ComposerSection =
   | { kind: "cover"; style: string; hero: string; text: string[] }
   | { kind: "flow"; ids: string[] }
@@ -808,8 +808,11 @@ export type ComposerData = {
   status: string;
   status_label: string;
   error: string;
-  /** loại ấn phẩm mời chọn — mỗi loại kèm mẫu + định dạng hợp nó (server quyết, một danh sách) */
-  kinds: { key: string; label: string; templates: { key: string; label: string }[]; formats: { key: string; label: string }[] }[];
+  /** loại ấn phẩm mời chọn — mỗi loại kèm mẫu + định dạng hợp nó (server quyết, một danh sách). Web KHÔNG biết khoá loại nào:
+   *  `paper` = cách vẽ bản xem ("deck": bộ trình chiếu, mỗi tiêu đề H1 một trang 16:9 · "page": tờ giấy), `example` = câu gợi ý ở màn trống (rỗng = không gợi ý). */
+  kinds: ComposerKind[];
+  /** loại khi người chưa chọn (nhãn ô chọn, lọc công thức); web chỉ gửi `kind` khi người chọn rõ — không gửi ⇒ máy chủ nhận loại từ lời mô tả */
+  default_kind: string;
   /** định dạng xuất của ấn phẩm này (đầu = chính) */
   formats: { key: string; label: string }[];
   subject: ComposerRef;
@@ -832,8 +835,13 @@ export type ComposerData = {
   note: string;
   brand: { color: string; font: string; footer: string; logo: string };
   commands: Record<string, string>;
-  /** đường HTTP luồng soạn do server gửi (bỏ viết cứng đường dẫn gói ở web; vắng ⇒ rơi về đường mặc định). */
-  stream?: string;
+  /** đường HTTP luồng soạn do server gửi (`/v1/…`) — bắt buộc; vắng / sai ⇒ rỗng và web báo lỗi khi gửi (không tự đoán đường của gói). */
+  stream: string;
+};
+
+export type ComposerKind = {
+  key: string; label: string; templates: { key: string; label: string }[]; formats: { key: string; label: string }[];
+  paper: "deck" | "page"; example: string;
 };
 
 /** Một lượt: người nói (yêu cầu / lời sửa, `block` khi sửa một khối) hoặc AI trả lời (`status` ready · failed + lý do, các bước đã chạy). */
@@ -854,7 +862,7 @@ export type ComposerTurn = {
 
 /** Trang tràn khung (mẫu nhiều trang cố định) — server đo, web chỉ vẽ lời báo + nút bấm. */
 export type ComposerOverflowPage = { page: number; lines: number; axis: string; blocks: ComposerOverflowBlock[] };
-/** Khối của trang tràn; `action` = lệnh bấm được (`compose.revise` + đầu vào viết sẵn: rút gọn đúng khối này), null = không có cách bấm một chạm. */
+/** Khối của trang tràn; `action` = lệnh bấm được (lệnh viết lại của gói + đầu vào viết sẵn: rút gọn đúng khối này), null = không có cách bấm một chạm. */
 export type ComposerOverflowBlock = {
   id: string; kind: string; label: string; culprit: boolean;
   action: { command: string; label: string; input: { session_id: string; block: string; mode: string; instruction: string } } | null;

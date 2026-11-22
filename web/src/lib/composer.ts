@@ -1,5 +1,6 @@
 import { decodeComposerItem } from "./decode";
-import type { ComposerItem, ComposerOverflowBlock, ComposerOverflowPage, ComposerTurn, StreamEvent } from "./types";
+import { fold } from "./form-ui";
+import type { ComposerData, ComposerItem, ComposerOverflowBlock, ComposerOverflowPage, ComposerTurn, StreamEvent } from "./types";
 
 /** Soạn với AI (thử nghiệm): tách chữ thành phần thường + chỗ giữ "[cần số liệu: …]" để tô — không đổi, không tính gì. */
 export function splitPlaceholders(text: string): { text: string; hole: boolean }[] {
@@ -96,4 +97,21 @@ export function currentOverflow(turns: ComposerTurn[], version: number): Compose
 /** Khối của trang tràn có nút bấm một chạm: khối gây tràn trước, tối đa `max` — bấm ⇒ gửi đúng `action.input.instruction` cho khối đó (lệnh `compose.revise`). */
 export function overflowActions(page: ComposerOverflowPage, max = 2): ComposerOverflowBlock[] {
   return page.blocks.filter((b) => b.action).sort((a, b) => Number(b.culprit) - Number(a.culprit)).slice(0, max);
+}
+
+/** Cách vẽ bản xem của ấn phẩm đang mở — theo `paper` máy chủ gửi cho loại đó (web không biết khoá loại nào là slide); loại lạ ⇒ tờ giấy. */
+export function paperOf(doc: Pick<ComposerData, "kind" | "kinds">): "deck" | "page" {
+  return doc.kinds.find((k) => k.key === doc.kind)?.paper ?? "page";
+}
+
+/** Thân lượt soạn MỚI: `kind` chỉ khi người chọn rõ (bấm ô chọn / câu gợi ý) — không thì máy chủ nhận loại từ lời mô tả; tài liệu kho đi bằng MÃ, không nối vào lời. */
+export function startBody(brief: string, kind: string | null, kbDocuments: string[]): { kind?: string; brief: string; kb_documents?: string[] } {
+  return { brief, ...(kind ? { kind } : {}), ...(kbDocuments.length ? { kb_documents: kbDocuments } : {}) };
+}
+
+/** Lọc danh sách tài liệu kho theo chữ gõ (bỏ dấu, từng từ) rồi cắt `max` dòng hiện; `more` = số dòng khớp còn ẩn (gõ thêm để thu hẹp). */
+export function pickDocs<T extends { title: string; shelf: string }>(docs: T[], q: string, max = 50): { shown: T[]; more: number } {
+  const words = fold(q).split(/\s+/).filter(Boolean);
+  const hit = words.length ? docs.filter((d) => { const t = fold(`${d.title} ${d.shelf}`); return words.every((w) => t.includes(w)); }) : docs;
+  return { shown: hit.slice(0, max), more: Math.max(0, hit.length - max) };
 }
