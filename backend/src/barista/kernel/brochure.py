@@ -5,7 +5,7 @@ Gói khai ``@m.plug("compose.brochure", …)`` (thao tác nội bộ, chạy b�
 
 * ``op == "kinds"`` ⇒ ``{"kinds": [kind(...), ...]}`` — các công thức gói này có (không có ⇒ ``None``). ``kind(…, subject="<module>.<loại>")`` = công thức
   nói về MỘT hồ sơ loại đó (ấn phẩm ghi lại hồ sơ nào); ``piece`` = loại ấn phẩm làm ra (mặc định tờ giới thiệu — loại quyết trang mẫu + định dạng, danh sách ở
-  ``modules/compose/kinds.py``); ``customer=True`` = nhận một khách (``lead_id``) để làm bản riêng.
+  ``kinds.py`` của gói Ấn phẩm); ``customer=True`` = nhận một khách (``lead_id``) để làm bản riêng.
 * ``op == "subjects"`` và ``kind`` là của gói ⇒ ``{"subjects": [{"value": <mã hồ sơ>, "label": <tên>}, …]}`` — hồ sơ người soạn ĐƯỢC XEM (RLS), lọc theo
   ``subject`` (chữ người gõ vào ô chọn); ``value`` nên là id (uuid) của hồ sơ. Ô "Hồ sơ" của màn soạn hỏi câu này — người chọn, không gõ mã (0225).
 * ``op == "build"`` và ``kind`` là của gói ⇒ ``recipe(...)`` cho hồ sơ ``subject`` (giá trị đã chọn); không phải của gói ⇒ ``None``.

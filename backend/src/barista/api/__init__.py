@@ -100,7 +100,7 @@ type Ctx = _Ctx
 # gọi model NGOÀI giao dịch.
 type Prep = _Prep
 
-__version__ = "1.78.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
+__version__ = "1.79.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
 #                         1.7: gộp ba nhánh cùng mang 1.6 — regulations.declare / compare / known_codes (0154) · Module.inbound (webhook VÀO từ nhà cung cấp) · Pack(records=…) cấu hình mặc định qua lệnh của module sở hữu (0153)
 #                              · Module.consumes nhận thêm họ outreach / doc_read / paper_draft — dịch vụ lõi mở cho gói ngoài (0155)
 #                         1.8: NeedsConfirmation — lệnh tự biết việc trợ lý định làm chạm lịch / dữ liệu của NGƯỜI KHÁC ⇒ cả lệnh thành thẻ đề xuất (0158)
@@ -234,6 +234,12 @@ __version__ = "1.78.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                         1.74: SỐ TÓM TẮT cho màn tổng hợp của gói (đọc bằng quyền người xem — ``ctx.call_as_optional(…, ctx.p)``): ``health.summary``, ``leadflow.summary``, ``acct.cashflow_projection``, ``core.approvals_summary`` — cùng con số màn của module đó hiện, không dựng màn; họ ``receivable`` nhận ``acct.receivable_totals`` (tổng phải thu / đã thu theo mã gốc của nguồn gọi — ô tổng của màn danh sách trên cả tập). Chỉ thêm, không migration
 #                         1.75 (ADR 0251, CHỈ THÊM): ``Module.command(basis_required=…)`` — người bấm phải nêu căn cứ đã thấy; ``ui.act(basis=…)`` nút trang mang căn cứ (app gửi lại ở ``X-Expect-Basis``); ``ui.field(open=, action=, placeholder=)`` ô trang chi tiết bấm được; ``papers.field_catalog`` nhận ``authority`` (tài nguyên thẩm quyền phát hành chứng từ của gói)
 #                         1.77 (ADR 0253, CHỈ THÊM): ``Module.command(subject=(loại, ô), purpose=, effect=, irreversible=, reversible=)`` — mô tả cho NGƯỜI DUYỆT: hồ sơ nào · vì sao · hệ quả · đảo được không; lõi dựng BẢN CHẠY THỬ CHUẨN (hồ sơ · cũ → mới từ ``ctx.track`` · vì sao · đảo được) cho thẻ đề xuất, thẻ buổi sáng, phiếu duyệt, thông báo; form_spec thêm ``confirm`` / ``effect``. Migration base/109 (cột ``preview``) — chỉ thêm, không bảo trì.
+#                         1.78 (ADR 0254, CHỈ THÊM): ``OpError`` lên ``barista.api`` (gói gọi ``ctx.call`` bắt chung một lớp lỗi nghiệp vụ) + họ mở ``brand`` (đọc nhận diện công ty ``admin.brand``
+#                              không cần lõi khai ``callers=`` tên gói) — đi cùng việc tách Ấn phẩm ra gói ngoài. Không migration
+#                         1.79 (CHỈ THÊM, rà 22/11): CỬA SOẠN CHUNG ``papers.studio`` (màn "Soạn" của phân hệ Văn bản & tài liệu) + điểm cắm ``papers.authoring``: gói khai
+#                              ``@m.plug("papers.authoring", nhãn)``, đầu vào ``NoInput``, trả DANH SÁCH ô ``{title, subtitle?, module?, open: {query, input}}``; lõi bỏ (ghi log) kết quả sai
+#                              hình và ẩn ô người mở không chạy được ``open.query``. Khối ``composer`` (web vẽ): mỗi mục ``kinds`` thêm ``paper`` ("deck" · "page") + ``example``,
+#                              khối thêm ``default_kind`` — web không viết cứng khoá loại ấn phẩm; ``stream`` là đường luồng bắt buộc (vắng / sai ⇒ web báo lỗi). Không migration
 
 __all__ = [
     "VN",

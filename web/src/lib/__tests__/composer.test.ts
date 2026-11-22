@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyComposeEvent, currentOverflow, groupSteps, liveTurn, overflowActions, retryTarget, splitPlaceholders } from "../composer";
+import { applyComposeEvent, currentOverflow, groupSteps, liveTurn, overflowActions, paperOf, pickDocs, retryTarget, splitPlaceholders, startBody } from "../composer";
 import { decodePage } from "../decode";
 
 describe("composer", () => {
@@ -92,6 +92,38 @@ describe("composer", () => {
     expect(old.blocks[0].from_record).toBe(false);
   });
 
+  it("loại ấn phẩm do máy chủ mô tả: cách vẽ, câu gợi ý, loại mặc định, đường luồng bắt buộc; bản cũ thiếu ⇒ loại đầu + tờ giấy", () => {
+    const page = decodePage({
+      kind: "card", title: "Ấn phẩm", blocks: [{
+        type: "composer", session_id: "", kind: "", default_kind: "b", stream: "/v1/x/stream",
+        kinds: [{ key: "a", label: "Trình chiếu", paper: "deck", example: "Làm bộ trình chiếu" }, { key: "b", label: "Tờ", paper: "lạ" }, { label: "thiếu khoá" }],
+        recipes: [{ key: "r", label: "Công thức" }],
+      }],
+    });
+    if (page.kind !== "card" || page.blocks[0].type !== "composer") throw new Error("composer");
+    const c = page.blocks[0];
+    expect(c.kinds.map((k) => [k.key, k.paper, k.example])).toEqual([["a", "deck", "Làm bộ trình chiếu"], ["b", "page", ""]]);
+    expect([c.kind, c.default_kind, c.stream, c.recipes[0].piece]).toEqual(["b", "b", "/v1/x/stream", "b"]);
+    expect(paperOf({ ...c, kind: "a" })).toBe("deck");
+    expect(paperOf({ ...c, kind: "lạ" })).toBe("page");
+    const old = decodePage({ kind: "card", title: "Cũ", blocks: [{ type: "composer", session_id: "s", stream: "http://evil/x", kinds: [{ key: "a", label: "A" }] }] });
+    if (old.kind !== "card" || old.blocks[0].type !== "composer") throw new Error("composer");
+    expect([old.blocks[0].default_kind, old.blocks[0].kind, old.blocks[0].stream, old.blocks[0].kinds[0].paper]).toEqual(["a", "a", "", "page"]);
+  });
+
+  it("thân lượt soạn mới: loại chỉ khi người chọn, tài liệu kho bằng mã, lời mô tả giữ nguyên", () => {
+    expect(startBody("Soạn tờ", null, [])).toEqual({ brief: "Soạn tờ" });
+    expect(startBody("Soạn tờ", "a", ["d1"])).toEqual({ brief: "Soạn tờ", kind: "a", kb_documents: ["d1"] });
+  });
+
+  it("lọc tài liệu kho: bỏ dấu, từng từ, hiện tối đa N dòng và đếm phần còn ẩn", () => {
+    const docs = Array.from({ length: 60 }, (_, i) => ({ id: `d${i}`, title: `Chính sách bán hàng ${i}`, shelf: i % 2 ? "Kinh doanh" : "Chung" }));
+    expect(pickDocs(docs, "").shown).toHaveLength(50);
+    expect(pickDocs(docs, "").more).toBe(10);
+    expect(pickDocs(docs, "chinh sach kinh").shown).toHaveLength(30);
+    expect(pickDocs(docs, "ban hang 59").shown.map((d) => d.id)).toEqual(["d59"]);
+  });
+
   it("giải mã lượt trò chuyện + lịch sử, thiếu trường ⇒ mặc định", () => {
     const page = decodePage({
       kind: "card", title: "Soạn", blocks: [{ type: "composer", session_id: "", turns: [{ role: "user", text: "Báo cáo" }, { role: "assistant", status: "failed", text: "Chưa cấu hình mô hình AI — báo quản trị", steps: [{ title: "Giao dịch" }] }, { role: "lạ" }],
@@ -102,7 +134,7 @@ describe("composer", () => {
     expect(c.turns.map((t) => t.role)).toEqual(["user", "assistant", "assistant"]);
     expect(c.turns[1].steps).toEqual([{ title: "Giao dịch", status: "ok" }]);
     expect(c.history[0]).toMatchObject({ id: "s1", status: "failed" });
-    expect(c.kind).toBe("brochure");   // thiếu loại ⇒ tờ giới thiệu ("Văn bản" không còn là loại soạn mới — 0249)
+    expect(c.kind).toBe("");   // thiếu loại + máy chủ không mời loại nào ⇒ rỗng (web không tự biết khoá loại — rà 22/11)
     expect(retryTarget(c.turns.slice(0, 2))?.text).toBe("Báo cáo");
     expect(retryTarget(c.turns.slice(0, 1))).toBeNull();
   });

@@ -60,3 +60,18 @@ def test_industry_module_keys_appear_only_in_the_style_fallback() -> None:
     seen = {str(p.relative_to(ROOT)) for p in files for _, line in _lines(p) if key.search(line)}
     assert seen <= STYLE_FALLBACK, f"khoá module ngành trong mã app ngoài bảng dự phòng: {sorted(seen - STYLE_FALLBACK)}"
     assert seen == STYLE_FALLBACK, f"bảng dự phòng đã hết khoá ngành — xoá ngoại lệ: {sorted(STYLE_FALLBACK - seen)}"
+
+
+# Khối ``composer`` (màn Ấn phẩm của một gói ngoài — ADR 0254): web chỉ vẽ theo ``kinds[].paper`` / ``kinds[].example`` / ``default_kind`` máy chủ gửi,
+# không biết khoá loại ấn phẩm nào (rà 22/11: bảng câu gợi ý, bảng đoán loại theo chữ gõ, ``kind === "slides"`` từng nằm ở web)
+COMPOSER_KIND_KEYS = ("slides", "flyer", "post", "memo", "teaser", "brochure", "document")
+COMPOSER_FILES = ("web/src/components/blocks/composer*.tsx", "web/src/lib/composer.ts", "web/src/lib/decode.ts")
+
+
+def test_the_composer_renderer_names_no_publication_kind() -> None:
+    files = sorted({p for g in COMPOSER_FILES for p in ROOT.glob(g)})
+    if not files:
+        pytest.skip("không có mã web trong bản kiểm này")
+    key = re.compile(r"[\"'`](" + "|".join(COMPOSER_KIND_KEYS) + r")[\"'`]")
+    bad = [f"{p.relative_to(ROOT)}:{i}: {m.group(0)}" for p in files for i, line in _lines(p) if (m := key.search(line))]
+    assert not bad, "web viết cứng khoá loại ấn phẩm — để máy chủ gửi trong khối composer:\n" + "\n".join(bad)

@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { saveBlob } from "@/lib/download";
-import { splitPlaceholders, type LiveTurn } from "@/lib/composer";
+import { paperOf, splitPlaceholders, type LiveTurn } from "@/lib/composer";
 import { cell, datetime, kpi as kpiValue } from "@/lib/format";
 import { documentFileUrl } from "@/lib/links";
 import type { ComposerData, ComposerItem, ComposerSection, Option } from "@/lib/types";
@@ -38,7 +38,7 @@ function Prose({ text }: { text: string }) {
   );
 }
 
-/** Tách khối thành từng slide 16:9 khi loại ấn phẩm là `slides`: mỗi tiêu đề H1 bắt đầu một trang slide mới. */
+/** Tách khối thành từng slide 16:9 khi máy chủ nói loại này vẽ dạng slide (`paper: "deck"`): mỗi tiêu đề H1 bắt đầu một trang slide mới. */
 function splitSlides(blocks: ComposerItem[]): ComposerItem[][] {
   const slides: ComposerItem[][] = [];
   for (const b of blocks) {
@@ -79,7 +79,8 @@ export function ComposerPaper({
   const activeShares = doc.shares.filter((x) => x.active).length;
   const hasLayout = !live?.blocks && !doc.layout.html && !!doc.layout.template && doc.layout.sections.length > 0;
   const hasCover = hasLayout && doc.layout.sections.some((s) => s.kind === "cover");
-  const isSlides = doc.kind === "slides" && !hasLayout && !doc.layout.html;
+  const slideKind = paperOf(doc) === "deck";
+  const isSlides = slideKind && !hasLayout && !doc.layout.html;
   const metaLine = [
     doc.version ? `Phiên bản ${doc.version}` : "",
     doc.stats.data ? `${doc.stats.data} bảng số liệu chốt` : "",
@@ -186,7 +187,7 @@ export function ComposerPaper({
                   ) : null}
                   {slideBlocks.map((b) => (
                     <BlockRow
-                      key={b.id} b={b} color={brandHex} busy={locked || !ready} kind="plain"
+                      key={b.id} b={b} color={brandHex} busy={locked || !ready}
                       onRevise={(instruction, mode) => onRevise(b.id, instruction, mode)}
                       onEdit={(text) => onEdit(b.id, text)}
                       onRemove={() => onRemove(b.id)}
@@ -262,7 +263,7 @@ export function ComposerPaper({
                 ) : (
                   blocks.map((b) => (
                     <BlockRow
-                      key={b.id} b={b} color={brandHex} busy={locked || !ready} kind={doc.kind}
+                      key={b.id} b={b} color={brandHex} busy={locked || !ready} slideBreaks={slideKind}
                       onRevise={(instruction, mode) => onRevise(b.id, instruction, mode)}
                       onEdit={(text) => onEdit(b.id, text)}
                       onRemove={() => onRemove(b.id)}
@@ -321,7 +322,7 @@ function VersionsPopover({ doc, locked, onRestore, onDownload }: {
                 <span className="min-w-0 flex-1">{v.note} <span className="text-muted-foreground">· {VIA[v.via] ?? v.via}</span></span>
                 {v.version !== doc.version ? (
                   <button type="button" title="Quay lại bản này" aria-label={`Quay lại bản ${v.version}`} disabled={locked} onClick={() => onRestore(v.version)}
-                          className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground">
+                          className="shrink-0 rounded p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
                     <RotateCcw className="size-3.5" aria-hidden />
                   </button>
                 ) : <span className="t12m shrink-0 text-primary">đang xem</span>}
@@ -335,7 +336,7 @@ function VersionsPopover({ doc, locked, onRestore, onDownload }: {
             <ul className="flex max-h-36 flex-col gap-0.5 overflow-y-auto">
               {doc.exports.map((e) => (
                 <li key={e.id}>
-                  <button type="button" onClick={() => onDownload(e.id)} className="t12 flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left hover:bg-foreground/5">
+                  <button type="button" onClick={() => onDownload(e.id)} className="t12 flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring">
                     <Download className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
                     <span className="min-w-0 flex-1 truncate">{e.filename}</span>
                     <span className="tnum text-muted-foreground">v{e.version}</span>
@@ -394,8 +395,8 @@ function SharePopover({ doc, locked, activeCount, onShare, onUnshare }: {
             <div className="flex items-center gap-1.5">
               <input readOnly value={url} aria-label="Link chia sẻ" onFocus={(e) => e.currentTarget.select()}
                      className="t12 h-8 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 outline-none" />
-              <button type="button" className={cn(actionClass("default"), "h-8 px-2")}
-                      onClick={() => { void navigator.clipboard?.writeText(url).then(() => setCopied(true)); }}>
+              <button type="button" className={cn(actionClass("default"), "h-8 px-2")} aria-label={copied ? "Đã chép link chia sẻ" : "Chép link chia sẻ"}
+                      title="Chép link" onClick={() => { void navigator.clipboard?.writeText(url).then(() => setCopied(true)); }}>
                 {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
               </button>
             </div>
@@ -504,7 +505,7 @@ function LayoutBody({ doc, title, metaLine, color, busy, onRevise, onEdit, onRem
     const b = by.get(id);
     if (!b) return null;
     return (
-      <BlockRow key={id} b={b} color={color} busy={busy} kind={doc.kind} slots={doc.layout.slots} onSlot={(slot) => onSlot(id, slot)} onCover={() => onCover(id)}
+      <BlockRow key={id} b={b} color={color} busy={busy} slideBreaks={paperOf(doc) === "deck"} slots={doc.layout.slots} onSlot={(slot) => onSlot(id, slot)} onCover={() => onCover(id)}
                 onRevise={(instruction, mode) => onRevise(id, instruction, mode)} onEdit={(text) => onEdit(id, text)} onRemove={() => onRemove(id)} {...extra} />
     );
   };
@@ -667,8 +668,8 @@ function DataView({ b, color }: { b: ComposerItem; color: string }) {
 
 type Mode = "rewrite" | "insert_after" | "edit" | null;
 
-function BlockRow({ b, color, busy, kind, onRevise, onEdit, onRemove, slots, onSlot, onCover, view, imgClass, onDark }: {
-  b: ComposerItem; color: string; busy: boolean; kind: string;
+function BlockRow({ b, color, busy, slideBreaks = false, onRevise, onEdit, onRemove, slots, onSlot, onCover, view, imgClass, onDark }: {
+  b: ComposerItem; color: string; busy: boolean; slideBreaks?: boolean;
   onRevise: (instruction: string, mode: "rewrite" | "insert_after") => void; onEdit: (text: string) => void; onRemove: () => void;
   slots?: { key: string; label: string }[]; onSlot?: (slot: string) => void; onCover?: () => void; view?: React.ReactNode; imgClass?: string; onDark?: boolean;
 }) {
@@ -684,7 +685,7 @@ function BlockRow({ b, color, busy, kind, onRevise, onEdit, onRemove, slots, onS
     else if (mode === "rewrite" || mode === "insert_after") onRevise(mode === "insert_after" ? `Chèn khối số liệu: ${text.trim()}` : text.trim(), mode);
     close();
   };
-  const slideBreak = kind === "slides" && b.type === "heading" && b.level === 1;
+  const slideBreak = slideBreaks && b.type === "heading" && b.level === 1;
   const bar = "h-7 rounded-md px-2 text-[12px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring";
   return (
     <div

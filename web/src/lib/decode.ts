@@ -3,6 +3,7 @@ import { decodeBrief } from "./brief";
 import { decodeWord } from "./word";
 import type {
   ComposerData,
+  ComposerKind,
   ComposerItem,
   ComposerLayout,
   ComposerRef,
@@ -845,11 +846,17 @@ export function decodeComposerRef(v: unknown): ComposerRef {
 
 export function decodeComposer(o: Obj): ComposerData {
   const pairs = (v: unknown) => arr(v).map((x) => ({ key: str(obj(x).key), label: str(obj(x).label) }));
+  const kinds = arr(o.kinds).map((x): ComposerKind => {
+    const k = obj(x);
+    return { key: str(k.key), label: str(k.label), templates: pairs(k.templates), formats: pairs(k.formats), paper: k.paper === "deck" ? "deck" : "page", example: str(k.example) };
+  }).filter((k) => k.key);
+  // máy chủ cũ chưa gửi `default_kind` ⇒ loại đầu được mời chọn (web không tự biết khoá loại nào)
+  const defaultKind = str(o.default_kind) || kinds[0]?.key || "";
   const st = obj(o.stats);
   const br = obj(o.brand);
   return {
     session_id: str(o.session_id),
-    kind: str(o.kind, "brochure"),
+    kind: str(o.kind) || defaultKind,
     kind_label: str(o.kind_label),
     title: str(o.title),
     brief: str(o.brief),
@@ -857,14 +864,15 @@ export function decodeComposer(o: Obj): ComposerData {
     status: str(o.status, "ready"),
     status_label: str(o.status_label),
     error: str(o.error),
-    kinds: arr(o.kinds).map((x) => ({ key: str(obj(x).key), label: str(obj(x).label), templates: pairs(obj(x).templates), formats: pairs(obj(x).formats) })),
+    kinds,
+    default_kind: defaultKind,
     formats: pairs(o.formats),
     subject: decodeComposerRef(o.subject),
     customer: decodeComposerRef(o.customer),
     from_record: o.from_record === true,
     recipes: arr(o.recipes).map((x) => {
       const r = obj(x);
-      return { key: str(r.key), label: str(r.label), about: str(r.about), piece: str(r.piece, "brochure"), needs_subject: r.needs_subject === true, customer: r.customer === true };
+      return { key: str(r.key), label: str(r.label), about: str(r.about), piece: str(r.piece) || defaultKind, needs_subject: r.needs_subject === true, customer: r.customer === true };
     }).filter((r) => r.key),
     blocks: arr(o.blocks).map(decodeComposerItem),
     stats: { flagged: int(st.flagged), placeholders: int(st.placeholders), data: int(st.data) },
@@ -890,7 +898,7 @@ export function decodeComposer(o: Obj): ComposerData {
     note: str(o.note),
     brand: { color: /^[0-9A-Fa-f]{6}$/.test(str(br.color)) ? str(br.color) : "1F4E79", font: str(br.font, "Arial"), footer: str(br.footer), logo: str(br.logo).startsWith("data:image/") ? str(br.logo) : "" },
     commands: stringMap(o.commands),
-    ...(typeof o.stream === "string" && o.stream.startsWith("/v1/") ? { stream: o.stream } : {}),
+    stream: str(o.stream).startsWith("/v1/") ? str(o.stream) : "",
   };
 }
 
