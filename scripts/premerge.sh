@@ -121,8 +121,9 @@ else
   else
     # Bảo thủ: bất kỳ thay đổi nào trong backend/src/ (gồm registry, presets, workspaces, barista.api, module, migration…), pyproject/uv.lock,
     # scripts/packkit/, conftest hoặc các file/fixture upgrade đều tự chạy đủ nhóm upgrade; chỉ bỏ qua tự động khi đổi thuần web/docs/deploy/test khác.
+    # test_packkit (nhóm upgrade) còn nạp test_pack_surface.py và đọc .agents/ ⇒ đổi chúng cũng chạy nhóm upgrade.
     BASE="$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD)"
-    for f in $( { git diff --name-only "$BASE"; git ls-files -o --exclude-standard; } | sort -u); do
+    while IFS= read -r f; do
       case "$f" in
         backend/src/*|\
         backend/pyproject.toml|\
@@ -131,11 +132,13 @@ else
         backend/tests/test_upgrade.py|\
         backend/tests/test_pack_loading.py|\
         backend/tests/test_packkit.py|\
+        backend/tests/test_pack_surface.py|\
         backend/tests/fixtures/*|\
-        scripts/packkit/*)
+        scripts/packkit/*|\
+        .agents/*)
           NEED_UPGRADE=1; break ;;
       esac
-    done
+    done < <( { git diff --name-only "$BASE"; git ls-files -o --exclude-standard; } | sort -u)
   fi
   PHASE="lõi: ruff + pyright + pytest"; [ "$NEED_UPGRADE" = 1 ] || PHASE="$PHASE (bỏ nhóm upgrade)"; T_PHASE=$SECONDS
   check_core_tiered "$WORK" "$CORE_DIGEST" "$LABEL" "$NEED_UPGRADE"
