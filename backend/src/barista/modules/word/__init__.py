@@ -530,13 +530,19 @@ async def http_pdf(document_id: UUID, request: web.Request, version: int = 0) ->
 
 @m.plug("papers.authoring", "Soạn hoặc mở file Word")
 async def authoring(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
-    # ``studio``: màn "Soạn" mở thẳng một VĂN BẢN MỚI bên phải + agent bên trái (0251 lát 2) — tạo lúc người gửi câu đầu, mở bằng ``view``
     return [{"title": "Văn bản Word", "subtitle": "Soạn trang trắng hoặc mở file .docx · sửa trực tiếp và nhờ trợ lý",
-             "module": "word", "open": {"query": "word.home", "input": {}},
-             "studio": {"create": "word.create", "view": "word.view", "assist": "word.assist", "home": "word.home", "label": "Văn bản mới",
-                        "kb_documents": "kb.documents",   # chip "Kho tài liệu": danh sách tài liệu đúng quyền kệ (nguồn cho agent viết)
-                        # khung thể thức chọn được ở chip "Loại" (không chọn ⇒ máy chủ nhận theo lời mô tả — ``forms.infer``)
-                        "forms": [{"key": f.key, "label": f.label} for f in forms.FORMS.values()]}}]
+             "module": "word", "open": {"query": "word.home", "input": {}}}]
+
+
+@m.plug("papers.studio_doc", "Văn bản mới cho màn Soạn thảo")
+async def studio_doc(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    """Màn "Soạn thảo" (0251 lát 2) mở thẳng một VĂN BẢN MỚI bên phải + agent bên trái: thao tác tạo (lúc người gửi câu đầu), mở, trợ lý viết, danh sách.
+    Gói bật ⇒ màn có (``Screen(needs_plug="papers.studio_doc")``); gói tắt ⇒ màn ẩn, phân hệ mở như thường."""
+    return {"module": "word", "title": "Văn bản Word", "open": {"query": "word.home", "input": {}},
+            "create": "word.create", "view": "word.view", "assist": "word.assist", "home": "word.home", "label": "Văn bản mới",
+            "kb_documents": "kb.documents",   # chip "Kho tài liệu": danh sách tài liệu đúng quyền kệ (nguồn cho agent viết)
+            # khung thể thức chọn được ở chip "Loại" (không chọn ⇒ máy chủ nhận theo lời mô tả — ``forms.infer``)
+            "forms": [{"key": f.key, "label": f.label} for f in forms.FORMS.values()]}
 
 
 # 0231: không còn phân hệ riêng — sửa file Word là một việc của VĂN BẢN (hợp đồng, công văn, mẫu giấy tờ gắn hồ sơ — 0229), nằm cùng Giấy tờ trong phân hệ

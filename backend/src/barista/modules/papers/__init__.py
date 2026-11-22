@@ -669,17 +669,21 @@ async def studio(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
             elif can_run(ctx.p, tile["open"]["query"]):
                 items.append(tile)
     blocks = [ui.b_tiles(items)] if items else [ui.b_callout("muted", "Chưa có cách soạn nào cho bạn", "Hỏi quản trị bật gói soạn thảo hoặc cấp quyền giấy tờ.")]
-    # "SOẠN VỚI AGENT" (0251 lát 2): có trình soạn nhận mở VĂN BẢN MỚI (ô khai ``studio``) ⇒ màn là agent bên trái + văn bản mới bên phải — vào là viết,
-    # không chọn loại trước. Cách soạn khác (giấy theo mẫu, ấn phẩm…) thành lựa chọn "Loại" ngay ở ô nhập. Ô ``tiles`` giữ cho app chưa vẽ khối ``studio``.
-    doc = next((t for t in items if isinstance(t.get("studio"), dict) and t["studio"].get("create") and t["studio"].get("view")), None)
-    if doc is not None and can_run(ctx.p, str(doc["studio"]["view"])):
+    # "SOẠN VỚI AGENT" (0251 lát 2): gói đang bật cắm trình soạn nhận mở VĂN BẢN MỚI (điểm ``papers.studio_doc``) ⇒ màn là agent bên trái + văn bản mới bên
+    # phải — vào là viết, không chọn loại trước. Cách soạn khác (giấy theo mẫu, ấn phẩm…) thành lựa chọn "Loại" ngay ở ô nhập. Ô ``tiles`` giữ cho app chưa vẽ
+    # khối ``studio``. Không gói nào cắm ⇒ màn không lên menu (``Screen(needs_plug=)``) — phân hệ mở như thường.
+    doc = next((d for d in await ctx.plugs("papers.studio_doc")
+                if isinstance(d, dict) and all(isinstance(d.get(k), str) and d[k] for k in ("create", "view", "assist", "title"))
+                and isinstance(d.get("open"), dict)), None)
+    if doc is not None and can_run(ctx.p, doc["view"]):
         studio_block = {"type": "studio", "title": "Bạn cần soạn gì?",
                         "subtitle": "Mô tả bằng lời tự nhiên — agent viết thẳng vào văn bản bên phải. Bôi đen một đoạn rồi bảo agent sửa đúng đoạn đó.",
-                        "examples": list(STUDIO_EXAMPLES), "doc": {k: str(v) for k, v in doc["studio"].items() if isinstance(v, str)},
-                        "forms": [x for x in doc["studio"].get("forms") or [] if isinstance(x, dict) and x.get("key") and x.get("label")],
-                        "kinds": [{"label": doc["studio"].get("label") or doc["title"], "current": True},
+                        "examples": list(STUDIO_EXAMPLES), "doc": {k: v for k, v in doc.items() if isinstance(v, str) and k not in ("title", "module")},
+                        "forms": [x for x in doc.get("forms") or [] if isinstance(x, dict) and x.get("key") and x.get("label")],
+                        "kinds": [{"label": doc.get("label") or doc["title"], "current": True},
                                   {"label": f"Mở {doc['title'][:1].lower() + doc['title'][1:]} đã có", "open": doc["open"]},
-                                  *({"label": t["title"], "subtitle": t.get("subtitle", ""), "open": t["open"]} for t in items if t is not doc)]}
+                                  *({"label": t["title"], "subtitle": t.get("subtitle", ""), "open": t["open"]} for t in items
+                                    if t.get("module") != doc.get("module"))]}
         blocks = [studio_block, *blocks]
         return ui.card("Soạn thảo", blocks, subtitle="Nói với agent — văn bản hiện ra bên cạnh, sửa tiếp bằng lời.", icon="square.and.pencil")
     return ui.card("Soạn", blocks, subtitle="Chọn cách bắt đầu hoặc mở một văn bản đã soạn.", icon="square.and.pencil")
@@ -695,7 +699,8 @@ ISSUE_ROW = tuple(A("papers.issue", f["issue"], bind={"paper_id": "id"}, when={"
 DISCARD_ROW = tuple(A("papers.void", f["discard"], bind={"paper_id": "id"}, when={"can_discard": [True], "family": [k]}, style="destructive")
                     for k, f in FAMILIES.items())
 m.screens("docs", (
-    Screen("authoring", "Soạn thảo", "square.and.pencil", "papers.studio", full_frame=True),   # agent + văn bản: tự vẽ trọn khung như Soạn với AI
+    # agent + văn bản: tự vẽ trọn khung; chỉ khi có gói cắm trình soạn văn bản mới (vd Văn bản Word) — không thì ẩn, phân hệ mở như thường
+    Screen("authoring", "Soạn thảo", "square.and.pencil", "papers.studio", full_frame=True, needs_plug="papers.studio_doc"),
     # MỘT màn cho mọi giấy tờ, lọc theo họ (ADR 0251). Nút tạo DUY NHẤT ở đây: công văn (văn bản công ty, không có hồ sơ). Chứng từ lập TỪ
     # HỒ SƠ (nút trên thẻ hồ sơ của gói, ``papers.start_draft``), không còn hộp chọn mẫu + chọn hồ sơ từ danh sách dài. Khoá cũ ⇒ ``aliases`` giữ ghim.
     Screen("papers", "Giấy tờ & công văn", "doc.richtext", "papers.list", aliases=("compose",),

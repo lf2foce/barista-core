@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-17 gói · 29 module · 1012 thao tác (286 nội bộ) · 21 bên nghe sự kiện.
+17 gói · 29 module · 1013 thao tác (287 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
@@ -58,7 +58,7 @@
 | `talk` | Trao đổi | `talk` | `talk` | `modules/talk.py` | 17 | 18 | 7 |
 | `timekeeping` | Chấm công | `timekeeping` | `timekeeping` | `modules/timekeeping/` (8 file) | 22 | 16 | 8 |
 | `training` | Đào tạo | `training` | `training` | `modules/training.py` | 8 | 7 | 0 |
-| `word` | Văn bản Word | `word` | `word` | `modules/word/` (3 file) | 8 | 7 | 1 |
+| `word` | Văn bản Word | `word` | `word` | `modules/word/` (3 file) | 8 | 8 | 2 |
 | `work` | Việc theo dõi | `base` | `work` | `modules/work.py` | 6 | 5 | 3 |
 
 ## Từng module
@@ -396,6 +396,7 @@
   - `papers.authoring` ← `word.plug_authoring`
   - `papers.field_catalog` ← —
   - `papers.field_values` ← —
+  - `papers.studio_doc` ← `word.plug_studio_doc`
   - `papers.subject_options` ← —
   - `papers.subjects_seen` ← —
 - **Tìm nhanh:** `papers.search_papers`
@@ -490,7 +491,7 @@
 
 - **Mã:** `word/__init__.py`, `word/docx_model.py`, `word/forms.py`
 - **Tài nguyên quyền:** —
-- **Cắm vào:** `papers.authoring`
+- **Cắm vào:** `papers.authoring`, `papers.studio_doc`
 
 ### `work` — Việc theo dõi
 

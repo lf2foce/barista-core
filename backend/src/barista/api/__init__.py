@@ -100,7 +100,7 @@ type Ctx = _Ctx
 # gọi model NGOÀI giao dịch.
 type Prep = _Prep
 
-__version__ = "1.80.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
+__version__ = "1.81.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
 #                         1.7: gộp ba nhánh cùng mang 1.6 — regulations.declare / compare / known_codes (0154) · Module.inbound (webhook VÀO từ nhà cung cấp) · Pack(records=…) cấu hình mặc định qua lệnh của module sở hữu (0153)
 #                              · Module.consumes nhận thêm họ outreach / doc_read / paper_draft — dịch vụ lõi mở cho gói ngoài (0155)
 #                         1.8: NeedsConfirmation — lệnh tự biết việc trợ lý định làm chạm lịch / dữ liệu của NGƯỜI KHÁC ⇒ cả lệnh thành thẻ đề xuất (0158)
@@ -245,6 +245,8 @@ __version__ = "1.80.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                         1.80 (CHỈ THÊM, ADR 0251 lát 2): mẫu giấy tờ có ĐOẠN TỰ DO ``{{doan:khoá|gợi ý}}`` (một dòng riêng; agent / người lập viết qua
 #                              ``papers.write_paragraph``, chưa viết thì không in) — gói khai mẫu gợi ý dùng được; ``Screen(full_frame=True)``: màn tự vẽ trọn khung làm việc
 #                              trong phân hệ nhiều màn (màn đầu ⇒ vào phân hệ là vào thẳng). Migration word/002 (cột chat) — chỉ thêm, không bảo trì
+#                         1.81 (CHỈ THÊM): ``Screen(needs_plug="<module>.<điểm>")`` — màn chỉ lên menu khi một gói ĐANG BẬT cắm vào điểm đó (Soạn thảo cần
+#                              trình soạn văn bản mới ``papers.studio_doc`` — gói Word); gói tắt ⇒ màn ẩn, phân hệ mở như thường. Không migration
 
 __all__ = [
     "VN",

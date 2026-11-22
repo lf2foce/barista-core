@@ -13,7 +13,7 @@ from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
-from barista.kernel import clock, company_settings, executor, needs, registry, screens, ui, vocab
+from barista.kernel import clock, company_settings, executor, needs, packs, registry, screens, ui, vocab
 from barista.kernel.executor import can_run
 from barista.kernel.fields import DEFAULT_COUNTRY, NATIONAL
 from barista.kernel.forms import field_specs
@@ -91,6 +91,9 @@ def _screen(p: Principal, s: Screen) -> dict[str, Any] | None:
         return None
     if s.feature and not company_settings.on(p.settings, s.feature):   # công ty tắt nghiệp vụ này (1.63) ⇒ không vai nào có màn
         return None
+    if s.needs_plug and not any((x := registry.get(n)) is not None and (p.packs is None or packs.missing(p.packs, x) is None)
+                                for n in registry.PLUGS.get(s.needs_plug, ())):
+        return None   # màn cần một gói ĐANG BẬT cắm vào điểm này (1.81) — vd Soạn thảo cần trình soạn văn bản mới
     op = registry.OPS[s.query]
     # màn thừa hưởng phạm vi tối thiểu của truy vấn: khỏi hiện màn mở ra chỉ để báo thiếu quyền (min_scope khai một lần ở truy vấn)
     if (s.min_scope and not p.has_scope(op.resource, s.min_scope)) or (op.min_scope and not p.has_scope(op.resource, op.min_scope)):

@@ -29,10 +29,23 @@ async def test_authoring_entry_uses_only_enabled_editors() -> None:
     page = await q(person, "papers.studio")
     destinations = [item["open"]["query"] for block in page["blocks"] if block["type"] == "tiles" for item in block["items"]]
     assert "word.home" in destinations
+    from barista import workspaces
+
+    def docs_screens(p: Any) -> list[dict[str, Any]]:
+        return next(w["screens"] for w in workspaces.manifest(p, "x")["workspaces"] if w["key"] == "docs")
+
+    # có trình soạn văn bản mới (gói Word) ⇒ màn Soạn thảo đứng đầu phân hệ, trọn khung, là khối agent + văn bản
+    first = docs_screens(person)[0]
+    assert first["key"] == "authoring" and first.get("full_frame") is True
+    assert any(b["type"] == "studio" for b in page["blocks"])
     await ok(person, "admin.set_pack", pack="word", enabled=False)
-    page = await q(await seed.who(tid, "chu", domain), "papers.studio")
+    person = await seed.who(tid, "chu", domain)
+    page = await q(person, "papers.studio")
     destinations = [item["open"]["query"] for block in page["blocks"] if block["type"] == "tiles" for item in block["items"]]
     assert "word.home" not in destinations
+    # tắt gói ⇒ màn Soạn thảo không lên menu (Screen(needs_plug=)) — phân hệ mở như thường, màn đầu là Giấy tờ & công văn
+    keys = [x["key"] for x in docs_screens(person)]
+    assert "authoring" not in keys and keys[0] == "papers"
 
 
 async def test_authoring_entry_drops_malformed_plug_results_and_tiles_the_viewer_cannot_open(monkeypatch: pytest.MonkeyPatch) -> None:
