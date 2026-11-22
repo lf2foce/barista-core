@@ -43,9 +43,18 @@ async def _stop_background_flusher() -> AsyncIterator[None]:
         if isinstance(metering._flusher, asyncio.Task):
             metering._flusher = None
 
+    # Hàng chờ ``metering._backlog`` là biến toàn cục của module: dòng do file test KHÁC cùng worker xdist để lại làm ``flush()`` / ``pending() == 0`` ở đây
+    # đổi kết quả (rà 22/11) ⇒ mỗi bài bắt đầu với hàng chờ rỗng, xong trả lại đúng các dòng cũ (giữ đối tượng deque gốc — module đọc qua tên toàn cục).
     await _cancel()
-    yield
-    await _cancel()
+    backlog = metering._backlog
+    saved = list(backlog)
+    backlog.clear()
+    try:
+        yield
+    finally:
+        await _cancel()
+        backlog.clear()
+        backlog.extend(saved)
 
 
 async def _count(category: str) -> int:

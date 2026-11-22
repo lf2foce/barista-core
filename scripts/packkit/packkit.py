@@ -34,6 +34,7 @@ import tarfile
 import tempfile
 import tomllib
 from pathlib import Path
+from typing import NoReturn
 
 HERE = Path(__file__).resolve().parent
 CORE = HERE.parents[1]                      # repo lõi chứa script này
@@ -276,7 +277,7 @@ def step(title: str) -> None:
     print(f"\n== {title} ==")
 
 
-def die(msg: str) -> None:
+def die(msg: str) -> NoReturn:
     print(f"DỪNG: {msg}", file=sys.stderr)
     raise SystemExit(2)
 
@@ -632,34 +633,77 @@ asyncio.run(run())
 """
 
 DEV_DB_DEFAULT = "barista_erp_packdev"
-DEV_DB_RE = re.compile(r"^(barista_erp|barista_erp_dev[a-z0-9_]*|barista_erp_packdev[a-z0-9_]*)\Z")
-LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
+# ``*_template`` bị loại: DB khuôn mà dev_reset.sh sao ra không bao giờ được app nối vào (runbook 18) — ghi vào nó là hỏng mọi lần dựng sau.
+DEV_DB_RE = re.compile(r"^(?!.*_template\Z)(barista_erp|barista_erp_dev[a-z0-9_]*|barista_erp_packdev[a-z0-9_]*)\Z")
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+# Biến môi trường libpq đổi đích nối khi URL không nêu (PGHOSTADDR còn ĐÈ host; PGSERVICE nạp host / hostaddr / dbname từ file dịch vụ) ⇒ bỏ khỏi môi
+# trường của mọi tiến trình con: đích chỉ còn là URL đã kiểm.
+PG_ROUTING_ENV = ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE")
 
 
 def _dotenv(path: Path) -> dict[str, str]:
+    """Đọc ``backend/.env`` đủ cho hàng rào: ``export K=V``, giá trị trong nháy, chú thích cuối dòng ``K=V # ghi chú`` (không phụ thuộc python-dotenv —
+    packkit chỉ dùng thư viện chuẩn)."""
     out: dict[str, str] = {}
     if not path.is_file():
         return out
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
+        if line.startswith(("export ", "export\t")):
+            line = line[len("export"):].strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        out[k.strip()] = v.strip().strip("'\"")
+        v = v.strip()
+        if v[:1] in ("'", '"') and v.find(v[0], 1) > 0:
+            v = v[1:v.find(v[0], 1)]
+        else:
+            v = re.split(r"\s#", v, maxsplit=1)[0].strip()
+        out[k.strip()] = v
     return out
 
 
-def _check_dev_url(url: str, label: str) -> str:
+def _mask_url(url: str) -> str:
+    """URL để in ra: che mật khẩu (thông báo lỗi có thể bị dán vào chat / issue)."""
+    from urllib.parse import urlparse, urlunparse
+
+    try:
+        u = urlparse(url)
+        if u.password is None:
+            return url
+        return urlunparse(u._replace(netloc=u.netloc.replace(f":{u.password}@", ":***@", 1)))
+    except ValueError:
+        return "<URL không đọc được>"
+
+
+def _dev_target(url: str, label: str) -> tuple[str, int, str]:
+    """(host, cổng, DB) của một URL đích ĐÃ KIỂM. Luật đơn giản, chặt: URL phải nêu rõ máy chủ local và DB thử, KHÔNG có chuỗi truy vấn.
+    libpq cho ``?host=`` / ``?hostaddr=`` / ``?dbname=`` / ``?service=`` / ``?port=`` đè phần host / đường dẫn, và host rỗng thì lấy PGHOST / PGSERVICE /
+    socket mặc định ⇒ đọc phần host của URL không đủ (rà 22/11). Bỏ hẳn cả hai trường hợp thay vì cố hiểu hết các khoá của libpq."""
     from urllib.parse import urlparse
 
-    u = urlparse(url)
+    try:
+        u = urlparse(url)
+        port = u.port or 5432
+    except ValueError:
+        die(f"{label} không phải URL Postgres hợp lệ")
+    if u.scheme not in ("postgresql", "postgres"):
+        die(f"{label} phải là URL postgresql:// (đang là {u.scheme or 'trống'}://)")
+    if u.query or u.params or u.fragment:
+        die(f"{label} có tham số sau URL ({_mask_url(url)}) — libpq có thể đổi máy chủ / DB qua đó; pack.sh dev chỉ nhận postgresql://<user>@localhost:<cổng>/<DB>")
     host = (u.hostname or "").lower()
-    dbname = u.path.lstrip("/")
+    if not host:
+        die(f"{label} không nêu máy chủ — libpq sẽ lấy PGHOST / PGSERVICE / socket mặc định; ghi rõ localhost")
     if host not in LOCAL_HOSTS:
         die(f"{label} trỏ máy chủ ngoài ({host!r}) — pack.sh dev chỉ chạy trên Postgres local")
+    dbname = u.path.lstrip("/")
     if not DEV_DB_RE.fullmatch(dbname):
-        die(f"{label} trỏ DB {dbname!r} không thuộc danh sách DB thử (barista_erp / barista_erp_dev* / barista_erp_packdev*) — từ chối ghi")
-    return dbname
+        die(f"{label} trỏ DB {dbname!r} không thuộc danh sách DB thử (barista_erp / barista_erp_dev* / barista_erp_packdev*, trừ *_template) — từ chối ghi")
+    return host, port, dbname
+
+
+def _check_dev_url(url: str, label: str) -> str:
+    return _dev_target(url, label)[2]
 
 
 def _replace_db_name(url: str, dbname: str) -> str:
@@ -669,15 +713,27 @@ def _replace_db_name(url: str, dbname: str) -> str:
     return urlunparse(u._replace(path="/" + dbname))
 
 
-def _ensure_local_db(admin_url: str, dbname: str) -> None:
+def _admin_url(target_url: str, admin_env: str) -> str:
+    """URL quản trị nối CÙNG máy chủ + cổng với đích (không mặc định localhost:5432): lấy tên / mật khẩu của ``BARISTA_TEST_ADMIN_URL`` nếu có, DB ``postgres``."""
+    from urllib.parse import urlparse
+
+    host, port, _ = _dev_target(target_url, "BARISTA_OWNER_DATABASE_URL")
+    userinfo = urlparse(admin_env).netloc.rpartition("@")[0] if admin_env else ""
+    netloc_host = f"[{host}]" if ":" in host else host
+    return f"postgresql://{userinfo + '@' if userinfo else ''}{netloc_host}:{port}/postgres"
+
+
+def _ensure_local_db(admin_url: str, dbname: str, env: dict[str, str] | None = None) -> None:
     if shutil.which("psql") is None:
+        print(f"  CHÚ Ý: không có psql trong PATH — KHÔNG kiểm / tạo được DB thử {dbname!r}; DB chưa có thì bước 2 sẽ lỗi "
+              "(cài client Postgres hoặc tạo DB bằng tay)", file=sys.stderr)
         return
-    code, out = run(["psql", admin_url, "-Atc", f"SELECT 1 FROM pg_database WHERE datname = '{dbname}'"])
+    code, out = run(["psql", admin_url, "-Atc", f"SELECT 1 FROM pg_database WHERE datname = '{dbname}'"], env=env)
     if code != 0:
-        die(f"không nối được Postgres local ({admin_url}):\n{out[-1000:]}")
+        die(f"không nối được Postgres local ({_mask_url(admin_url)}):\n{out[-1000:]}")
     if out.strip() == "1":
         return
-    code, out = run(["psql", admin_url, "-qc", f'CREATE DATABASE "{dbname}" OWNER barista_owner'])
+    code, out = run(["psql", admin_url, "-qc", f'CREATE DATABASE "{dbname}" OWNER barista_owner'], env=env)
     if code != 0:
         die(f"không tạo được DB thử {dbname!r} (chạy `bash backend/scripts/dev-db.sh` một lần để tạo role barista_owner):\n{out[-1000:]}")
 
@@ -705,9 +761,9 @@ def dev(pack: Path, extra: list[Path], port: int, web_port: int, no_serve: bool,
         die("thiếu uv")
     core_be = CORE / "backend"
     vpy = vpy_override or (core_be / ".venv" / "bin" / "python")
-    env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
+    env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV" and k not in PG_ROUTING_ENV}
     if env_extra:
-        env.update(env_extra)
+        env.update({k: v for k, v in env_extra.items() if k not in PG_ROUTING_ENV})
     dot = _dotenv(core_be / ".env")
     eff_env = (env.get("BARISTA_ENV") or dot.get("BARISTA_ENV") or "").strip().lower()
     if eff_env == "production":
@@ -718,7 +774,7 @@ def dev(pack: Path, extra: list[Path], port: int, web_port: int, no_serve: bool,
     base_owner = env.get("BARISTA_OWNER_DATABASE_URL") or dot.get("BARISTA_OWNER_DATABASE_URL") or "postgresql://barista_owner:barista_owner@localhost:5432/barista_erp"
     if db_name:
         if not DEV_DB_RE.fullmatch(db_name):
-            die(f"--db {db_name!r} không thuộc danh sách DB thử (barista_erp / barista_erp_dev* / barista_erp_packdev*)")
+            die(f"--db {db_name!r} không thuộc danh sách DB thử (barista_erp / barista_erp_dev* / barista_erp_packdev*, trừ *_template)")
         app_url = _replace_db_name(base_app, db_name)
         owner_url = _replace_db_name(base_owner, db_name)
     else:
@@ -740,8 +796,7 @@ def dev(pack: Path, extra: list[Path], port: int, web_port: int, no_serve: bool,
         code, out = run(["bash", str(core_be / "scripts" / "dev-db.sh")], cwd=CORE, env=env)
         if code:
             die(f"dev-db.sh lỗi:\n{out[-2000:]}")
-    admin_url = env.get("BARISTA_TEST_ADMIN_URL", "postgresql://localhost:5432/postgres")
-    _ensure_local_db(admin_url, owner_db)
+    _ensure_local_db(_admin_url(owner_url, env.get("BARISTA_TEST_ADMIN_URL", "")), owner_db, env)
     for p in [*extra, pack]:
         code, out = run(["uv", "pip", "install", "-q", "--python", str(vpy), "--no-deps", "-e", str(p.resolve())], cwd=CORE, env=env)
         if code:
@@ -790,7 +845,7 @@ def main(argv: list[str]) -> int:
     a.add_argument("--connector", action="store_true", help="gói KẾT NỐI ra hệ ngoài (khung kết nối chung của lõi, ADR 0244): bộ nối + lệnh nhận + form kết nối")
     d = sub.add_parser("dev", help="cài gói vào môi trường dev, chạy migration trên DB thử riêng, bật cho công ty mẫu và chạy API")
     d.add_argument("pack", type=Path)
-    d.add_argument("--db", default=DEV_DB_DEFAULT, help=f"DB thử local đích (mặc định {DEV_DB_DEFAULT}; chỉ nhận barista_erp / barista_erp_dev* / barista_erp_packdev*)")
+    d.add_argument("--db", default=DEV_DB_DEFAULT, help=f"DB thử local đích (mặc định {DEV_DB_DEFAULT}; chỉ nhận barista_erp / barista_erp_dev* / barista_erp_packdev*, trừ *_template)")
     d.add_argument("--admin", default="admin@sanmau.demo", help="email quản trị của công ty đích để bật gói (mặc định admin@sanmau.demo)")
     d.add_argument("--tenant", default="", help="tên hoặc UUID công ty đích khi quản trị thuộc nhiều công ty")
     d.add_argument("--with", dest="extra", action="append", type=Path, default=[], help="gói khác cần cài kèm (lặp được)")
