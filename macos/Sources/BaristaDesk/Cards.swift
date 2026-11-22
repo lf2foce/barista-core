@@ -52,11 +52,17 @@ struct CardPage: Decodable {
         case choices(Choices)
         /// Khối TẢI SAU (``ui.b_later`` / ``ui.part``): chỗ chờ — ``LaterLoader`` tải rồi thay bằng các khối thật theo thứ tự trong thẻ.
         case later(Later)
+        /// Ảnh trong thẻ (``ui.b_image``, api 1.73): ảnh nguồn (phiếu chụp…) — bấm ⇒ xem to.
+        case image(CardImage)
+        /// Chia hai cột (``ui.b_split``, api 1.73): mỗi cột là các khối bất kỳ (lồng được); khung hẹp ⇒ xếp dọc, cột trái trước.
+        case split(ratio: String, left: [Block], right: [Block])
+        /// Lịch (0240): lưới giờ / danh sách theo ngày (CalendarBlock.swift).
+        case calendar(CalendarData)
         /// "Soạn với AI" (thử nghiệm): trình soạn chỉ có trên web — app không vẽ, thẻ server gửi kèm bản chữ thay thế ngay sau khối này
         case composer
         case unknown
 
-        private enum K: String, CodingKey { case type, items, title, steps, stages, tone, text, facts, draft, actions, markdown, page }
+        private enum K: String, CodingKey { case type, items, title, steps, stages, tone, text, facts, draft, actions, markdown, page, left, right, ratio }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: K.self)
@@ -79,6 +85,15 @@ struct CardPage: Decodable {
             case "finding": self = .finding(try FindingBlock(from: decoder))
             case "choices": self = .choices(try Choices(from: decoder))
             case "later": self = .later(try Later(from: decoder))
+            case "image": self = .image(try CardImage(from: decoder))
+            case "calendar": self = .calendar(try CalendarData(from: decoder))
+            case "split":
+                // cột giải mã đệ quy, bỏ khối lạ; tỉ lệ sai dạng ⇒ 1:1 (cùng luật với web)
+                let ratio = try c.decodeIfPresent(String.self, forKey: .ratio) ?? ""
+                let known: ([Block]) -> [Block] = { $0.filter { if case .unknown = $0 { return false }; return true } }
+                self = .split(ratio: CardImage.validRatio(ratio) ? ratio : "1:1",
+                              left: known(try c.decodeIfPresent([Block].self, forKey: .left) ?? []),
+                              right: known(try c.decodeIfPresent([Block].self, forKey: .right) ?? []))
             case "composer": self = .composer
             default: self = .unknown
             }
@@ -457,6 +472,16 @@ struct CardView: View {
         case .timeline(let t):
             section(t.title) { TimelineList(data: t) { o in open(OpenRequest(title: o.title ?? o.query, query: o.query, input: o.input)) } }
         case .finding(let f): FindingView(block: f) { action = $0 }
+        case .image(let i): CardImageView(block: i)
+        case .calendar(let c):
+            CalendarBlockView(block: c, onOpen: { o in open(OpenRequest(title: o.title ?? o.query, query: o.query, input: o.input)) }, onCreate: { action = $0 })
+        case .split(let ratio, let left, let right):
+            // cột lồng khối bất kỳ (kể cả split) ⇒ gọi lại chính hàm này; AnyView cắt vòng kiểu trả về
+            SplitBlockView(ratio: ratio) {
+                ForEach(Array(left.enumerated()), id: \.offset) { _, x in AnyView(block(x)) }
+            } right: {
+                ForEach(Array(right.enumerated()), id: \.offset) { _, x in AnyView(block(x)) }
+            }
         case .composer, .unknown: EmptyView()
         }
     }

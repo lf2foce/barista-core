@@ -5,7 +5,8 @@ import { createContext, useContext } from "react";
 import { cn } from "@/lib/utils";
 import { PANE_HEADER, RailToggle } from "./column";
 import { useDesk } from "./desk-context";
-import { useSolo } from "./solo";
+import { ScreensMenu } from "./screens-menu";
+import { useFullScreen, useSolo } from "./solo";
 
 /**
  * Màn đang chiếm TRỌN khung làm việc (phân hệ chỉ có một màn — `useSolo`): khung không vẽ đầu riêng, màn tự vẽ các ngăn của mình (vd Soạn với AI vẽ y như
@@ -27,12 +28,15 @@ export function useFullFrame(): boolean {
  */
 export function SoloScreenFrame({ children }: { children: React.ReactNode }) {
   const desk = useDesk();
-  const solo = useSolo();
+  // phân hệ một màn ⇒ tên phân hệ; màn THƯỜNG tự khai ``full_frame`` trong phân hệ nhiều màn (vd Lịch) ⇒ tên màn là menu sang các màn khác (ScreensMenu)
+  const only = useSolo();
+  const full = useFullScreen();
+  const solo = only ?? full;
   return (
     <div className="flex h-full min-h-0 flex-col bg-canvas">
       <header className={cn(PANE_HEADER, "px-3 min-[980px]:px-6")}>
         <RailToggle />
-        <h2 className="t16 min-w-0 flex-1 truncate">{solo?.ws.title ?? ""}</h2>
+        <div className="min-w-0 flex-1">{only ? <h2 className="t16 truncate">{only.ws.title}</h2> : <ScreensMenu title={full?.screen.title ?? ""} />}</div>
         {solo ? (
           <button type="button" onClick={() => desk.refreshItem(solo.id)} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" aria-label="Tải lại" title="Tải lại">
             <RefreshCw className="size-4" />
@@ -49,3 +53,4 @@ export function SoloScreenFrame({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+

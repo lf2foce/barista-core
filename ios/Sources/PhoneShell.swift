@@ -2,17 +2,22 @@ import SwiftUI
 
 /// Khung iPhone (0041): thanh tab dưới đáy Trợ lý · Việc · Tin nhắn — cùng ba mục đầu của thanh bên trái trên Mac (Rail.swift). Khung làm việc
 /// (thẻ / màn vừa mở) phủ lên trên các tab, có nút quay lại; các tab vẫn sống bên dưới nên cuộc trò chuyện đang mở, chữ đang gõ còn nguyên khi quay về.
-/// iPad ngang (≥ 900 điểm): tab bên trái, khung làm việc bên phải. Mọi thứ trong tab là mã dùng chung với Mac — file này chỉ xếp chỗ.
+/// Màn RỘNG (cỡ ngang ``regular``: iPhone Duo mở ra, iPad, iPhone Max xoay ngang): tab bên trái, khung làm việc bên phải — như web. Theo cỡ ngang chứ
+/// không theo hướng xoay / loại máy (Apple: màn trong của iPhone Duo không theo hướng xoay); thêm sàn 640 điểm để iPad chia đôi hẹp vẫn một ngăn.
+/// Gập lại (màn ngoài) / iPhone thường ⇒ một ngăn như cũ. Mọi thứ trong tab là mã dùng chung với Mac — file này chỉ xếp chỗ.
 struct PhoneShell: View {
     @Environment(Desk.self) private var desk
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    static let minWide: CGFloat = 640
 
     var body: some View {
         GeometryReader { g in
-            let wide = g.size.width >= 900
+            let wide = sizeClass == .regular && g.size.width >= Self.minWide
             let _ = updateNarrow(!wide)
             if wide {
                 HStack(spacing: 0) {
-                    PhoneTabs().frame(width: min(460, max(340, g.size.width * 0.38)))
+                    PhoneTabs().frame(width: min(460, max(320, g.size.width * 0.4)))
                     Rectangle().fill(Color.hairline).frame(width: 1)
                     CanvasView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }

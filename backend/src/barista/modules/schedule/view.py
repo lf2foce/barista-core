@@ -272,7 +272,7 @@ async def calendar(ctx: Ctx, inp: CalIn) -> dict[str, Any]:
         title = f"{d0:%d/%m} – {d1:%d/%m/%Y}"
     else:
         title = f"{'Hôm nay, ' if d == t else ''}{WEEKDAY[d.isoweekday()].lower() if d == t else WEEKDAY[d.isoweekday()]} {d.day} tháng {d.month}, {d.year}"
-    empty = ("Nhấn đúp (hoặc kéo) vào giờ trống để thêm lịch, hoặc gõ một câu ở ô “Thêm nhanh”." if creators else
+    empty = ("Nhấn đúp (hoặc kéo) vào giờ trống, hoặc bấm “Thêm lịch” rồi gõ một câu — máy điền hộ." if creators else
              "Chưa có lịch nào. Lịch của bạn, họp và mốc hạn sẽ hiện ở đây.")
     if any(i["busy"] for i in items):
         note = (note + " “Bận” là lịch bạn không được xem chi tiết.").strip()

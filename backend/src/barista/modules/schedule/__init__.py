@@ -1395,7 +1395,8 @@ m.workspace(Workspace("schedule", "Lịch làm việc", "calendar", (
     # 0240: màn chính là LỊCH kiểu app lịch (Ngày mặc định — hôm nay theo giờ, người cạnh nhau; Tuần; Lịch biểu). Khoá màn giữ "schedule_week" để màn đã
     # ghim / bộ menu theo vai không đổi; bảng "Lịch tuần" (schedule.week) vẫn là truy vấn cho trợ lý / xuất Excel.
     # MỘT cách tạo lịch (rà UI 21/11): nút "Thêm lịch" của khối lịch (ô nổi → "Thêm chi tiết…" mở form đầy đủ) + ô gõ câu máy điền hộ — bỏ nút "Đặt lịch chi tiết" trùng việc
-    Screen("schedule_week", "Lịch", "calendar", "schedule.calendar", tint="orange"),
+    # TRỌN KHUNG (rà UI 22/11): vào "Lịch làm việc" là ra lịch luôn như Trợ lý — không cột danh sách màn; các màn khác ở menu tên màn đầu khung
+    Screen("schedule_week", "Lịch", "calendar", "schedule.calendar", tint="orange", full_frame=True),
     Screen("schedule_free", "Tìm người / phòng rảnh", "person.badge.clock", "schedule.find_free", tint="green", needs_action=True, feature=USE_RESOURCES, pinnable=False,
            actions=(A("schedule.create"),),
            open=Open("schedule.resource", {"resource_id": "id"}, "Xem lịch người / phòng")),

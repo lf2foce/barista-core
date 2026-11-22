@@ -30,11 +30,20 @@ struct API: Sendable {
         req.setValue(tenant, forHTTPHeaderField: "X-Tenant-Id")
     }
 
-    /// Thứ tự: biến BARISTA_URL (dev) → địa chỉ người dùng nhập ở Cài đặt (iPhone) → localhost.
+    /// Máy chủ khi người dùng chưa nhập gì: bản phát hành iPhone (TestFlight / App Store) trỏ máy chủ CHUNG — nhân sự chỉ bấm Đăng nhập, core tự đưa vào
+    /// đúng công ty theo email đã được mời; công ty có bản cài riêng đổi ở Cài đặt máy chủ (lắc máy ở màn đăng nhập). Bản dev / Mac: core trên máy.
+    /// Bản dựng lại của bên khác: đổi dòng này thành máy chủ của mình.
+    #if os(iOS) && !DEBUG
+    static let shippedBase = "https://barista-api.phenau.com"
+    #else
+    static let shippedBase = "http://127.0.0.1:8300"
+    #endif
+
+    /// Thứ tự: biến BARISTA_URL (dev) → địa chỉ người dùng nhập ở Cài đặt (iPhone) → ``shippedBase``.
     static var defaultBase: URL {
         let saved = UserDefaults.standard.string(forKey: "baseURL") ?? ""
-        let raw = ProcessInfo.processInfo.environment["BARISTA_URL"] ?? (saved.isEmpty ? "http://127.0.0.1:8300" : saved)
-        return URL(string: raw) ?? URL(string: "http://127.0.0.1:8300")!
+        let raw = ProcessInfo.processInfo.environment["BARISTA_URL"] ?? (saved.isEmpty ? shippedBase : saved)
+        return URL(string: raw) ?? URL(string: shippedBase)!
     }
 
     /// ``path`` có thể kèm chuỗi truy vấn ("?dry_run=false", "?compact=1"): ``appending(path:)`` mã hoá "?" thành "%3F" ⇒ tham số không tới server

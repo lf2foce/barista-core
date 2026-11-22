@@ -205,7 +205,7 @@ export function CalendarBlock({ block, onChanged }: { block: CalendarData; onCha
 
   function addNow() {
     const day = block.today >= block.start && block.today <= block.end ? block.today : block.start;
-    const s = day === block.today ? Math.min(23 * 60, Math.ceil((now + 1) / 60) * 60) : 9 * 60;
+    const s = day === block.today ? Math.min(22 * 60, Math.ceil((now + 1) / 60) * 60) : 9 * 60;   // ≤ 22:00 ⇒ giờ kết thúc mặc định còn trong ngày
     const lane = block.lanes.find((l) => l.me)?.key ?? "";
     setDraft({ day, lane, start: s, end: s + 60, x: window.innerWidth / 2, y: 160, seq: ++seq.current });
   }
@@ -214,19 +214,13 @@ export function CalendarBlock({ block, onChanged }: { block: CalendarData; onCha
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-      <Toolbar block={block} canNav={!!filters && !!nav} onNav={setFilter} canCreate={canCreate} onAdd={addNow}
-               onGuess={(g) => {
-                 // MÁY ĐIỀN HỘ (rà UI 21/11): câu gõ ⇒ mở FORM tạo lịch đã điền sẵn (ô máy đoán là chip ✨ + "Chấp nhận tất cả"), người sửa rồi Lưu — không qua ô nổi
-                 const c = creators.find((x) => x.key === g.creator) ?? creators[0];
-                 if (!c) return setDraft({ ...g, seq: ++seq.current });
-                 desk.openForm(decodeAction({ command: c.command, title: c.label }), {
-                   initial: createPayload(c, { day: g.day, start: g.start, end: g.end, title: g.title ?? "", subject: g.subject?.value, place: g.place,
-                                               attendees: [laneEmail(g.lane) || block.create?.me || ""].filter(Boolean) }),
-                   onDone: onChanged,
-                 });
-               }} understand={block.create?.understand ?? ""} />
-      {block.kinds.length ? <Legend block={block} /> : null}
-      {block.note ? <p className="t12 text-muted-foreground">{block.note}</p> : null}
+      <Toolbar block={block} canNav={!!filters && !!nav} onNav={setFilter} canCreate={canCreate} onAdd={addNow} />
+      {block.kinds.length || block.note ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {block.kinds.length ? <Legend block={block} /> : null}
+          {block.note ? <p className="t12 text-muted-foreground">{block.note}</p> : null}
+        </div>
+      ) : null}
 
       {block.view === "agenda" ? (
         <Agenda block={block} items={items} onOpen={(item, x, yy) => setDetail({ item, x, y: yy })} />
@@ -337,6 +331,8 @@ export function CalendarBlock({ block, onChanged }: { block: CalendarData; onCha
       {draft && canCreate ? (
         <QuickAdd key={draft.seq ?? 0} draft={draft} onEdit={(v) => setDraft((d) => (d ? { ...d, ...v } : d))} creators={creators} laneTitle={draft.lane && !block.lanes.find((l) => l.key === draft.lane)?.me ? block.lanes.find((l) => l.key === draft.lane)?.title : undefined}
                   attendee={laneEmail(draft.lane) || block.create?.me || ""} invite={block.create?.invite ?? null} onClose={() => setDraft(null)}
+                  understand={block.create?.understand ?? ""} onGuess={(text) => guessDraft(block, text, draft)}
+                  onGuessed={(g) => setDraft({ ...g, seq: ++seq.current })}
                   onSaved={(msg, day) => { setDraft(null); desk.show(msg); if (filters && nav && (day < block.start || day > block.end)) setFilter(nav.param_on, day); else onChanged?.(); }} />
       ) : null}
       {detail ? <Detail item={detail.item} x={detail.x} y={detail.y} kinds={block.kinds} onClose={() => setDetail(null)}
@@ -422,73 +418,58 @@ function ColHead({ col, today, view, onOpen, onDay }: { col: Col; today: string;
   );
 }
 
-function Toolbar({ block, canNav, onNav, canCreate, onAdd, onGuess, understand }: {
+/** Câu gõ ⇒ ngày / giờ / tiêu đề / loại / khách / nơi máy đoán (truy vấn server khai ở ``create.understand``) — điền vào ô Thêm lịch đang mở. */
+async function guessDraft(block: CalendarData, text: string, base: Draft): Promise<Draft> {
+  const g = await api.queryRaw<{ day: string; day_said: boolean; start: string; minutes: number; title: string; creator: string; creator_said: boolean;
+                                 subject?: { value: string; label: string; hint?: string }; place?: string }>(block.create?.understand ?? "", { text, on: block.start });
+  const [hh, mm] = (g.start || "09:00").split(":").map(Number);
+  const s = hh * 60 + mm;
+  return { ...base, day: g.day, start: s, end: s + (g.minutes || 60), title: g.title, creator: g.creator, subject: g.subject, place: g.place,
+           guessed: true, dayGuessed: g.day_said };
+}
+
+/** MỘT hàng (rà UI 22/11 — trước là 3 hàng + ô câu riêng): đi ngày · tên ngày … phạm vi · chế độ xem · Thêm lịch. Ô "gõ một câu, máy điền hộ" nằm TRONG
+ *  ô Thêm lịch (một cách tạo lịch). Đơn vị chỉ hiện khi đang xem theo đơn vị. Hẹp ⇒ tự xuống dòng. */
+function Toolbar({ block, canNav, onNav, canCreate, onAdd }: {
   block: CalendarData; canNav: boolean; onNav: (k: string, v: string | undefined) => void; canCreate: boolean; onAdd: () => void;
-  onGuess: (d: Draft) => void; understand: string;
 }) {
   const nav = block.nav;
   const isToday = block.today >= block.start && block.today <= block.end;
-  const [text, setText] = useState("");
-  const [thinking, setThinking] = useState(false);
-  const [err, setErr] = useState("");
-  async function guess() {
-    if (!text.trim() || !understand) return;
-    setThinking(true);
-    setErr("");
-    try {
-      const g = await api.queryRaw<{ day: string; day_said: boolean; start: string; minutes: number; title: string; creator: string; creator_said: boolean;
-                                     subject?: { value: string; label: string; hint?: string }; place?: string }>(understand, { text, on: block.start });
-      const [hh, mm] = (g.start || "09:00").split(":").map(Number);
-      const s = hh * 60 + mm;
-      onGuess({ day: g.day, lane: block.lanes.find((l) => l.me)?.key ?? "", start: s, end: s + (g.minutes || 60), x: window.innerWidth / 2, y: 150,
-                title: g.title, creator: g.creator, subject: g.subject, place: g.place, guessed: true, dayGuessed: g.day_said });
-      setText("");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "Không hiểu câu này");
-    } finally {
-      setThinking(false);
-    }
-  }
+  const byUnit = !!nav?.who && nav.who.current !== "me";
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
-        {canNav && nav ? (
-          <>
-            <button type="button" className={actionClass("default")} disabled={isToday && block.view !== "agenda"} onClick={() => onNav(nav.param_on, undefined)}>Hôm nay</button>
-            <div className="flex">
-              <button type="button" aria-label="Trước" className={cn(actionClass("default"), "rounded-r-none px-2")} onClick={() => onNav(nav.param_on, nav.prev)}><ChevronLeft className="size-4" /></button>
-              <button type="button" aria-label="Sau" className={cn(actionClass("default"), "-ml-px rounded-l-none px-2")} onClick={() => onNav(nav.param_on, nav.next)}><ChevronRight className="size-4" /></button>
-            </div>
-          </>
-        ) : null}
-        <h2 className="t16 min-w-0 truncate font-semibold">{block.title}</h2>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {canNav && nav?.who ? <Segment items={nav.who.options} current={nav.who.current} onPick={(k) => onNav(nav.who!.param, k)} label="Lịch của" /> : null}
-          {canNav && nav?.unit ? (
-            <select aria-label="Đơn vị" value={nav.unit.current} onChange={(e) => onNav(nav.unit!.param, e.target.value || undefined)}
-                    className="t12m h-8 max-w-[220px] rounded-lg border border-border bg-surface px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              {nav.unit.options.map((o) => <option key={o.key} value={o.key}>{o.title}</option>)}
-            </select>
-          ) : null}
-          {canNav && nav ? <Segment items={nav.views} current={block.view} onPick={(k) => onNav(nav.param_view, k)} label="Chế độ xem" /> : null}
-          {canCreate ? (
-            <button type="button" className={actionClass("primary")} onClick={onAdd}><Plus className="size-3.5" aria-hidden />Thêm lịch</button>
-          ) : null}
-        </div>
-      </div>
-      {canCreate && understand ? (
-        <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void guess(); }}>
-          <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-input bg-field px-2.5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40">
-            <Sparkles className="size-4 shrink-0 text-primary" aria-hidden />
-            <input value={text} onChange={(e) => setText(e.target.value)} aria-label="Thêm nhanh bằng một câu"
-                   placeholder="Gõ một câu, máy điền hộ: “Thứ 5 2h chiều gặp khách giao hàng”"
-                   className="t14 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground" />
-            {thinking ? <Spinner className="size-3.5" /> : null}
-          </label>
-          <button type="submit" className={actionClass("default")} disabled={!text.trim() || thinking} title="Máy đọc câu rồi điền sẵn form tạo lịch — bạn xem lại rồi Lưu">Điền hộ</button>
-        </form>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+      {canNav && nav ? (
+        <>
+          <button type="button" className={actionClass("default")} disabled={isToday && block.view !== "agenda"} onClick={() => onNav(nav.param_on, undefined)}>Hôm nay</button>
+          <div className="flex">
+            <button type="button" aria-label="Trước" className={cn(actionClass("default"), "rounded-r-none px-2")} onClick={() => onNav(nav.param_on, nav.prev)}><ChevronLeft className="size-4" /></button>
+            <button type="button" aria-label="Sau" className={cn(actionClass("default"), "-ml-px rounded-l-none px-2")} onClick={() => onNav(nav.param_on, nav.next)}><ChevronRight className="size-4" /></button>
+          </div>
+        </>
       ) : null}
-      {err ? <p className="t12 text-bad">{err}</p> : null}
+      <h2 className="t16 min-w-0 truncate px-1">{block.title}</h2>
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        {canNav && nav?.who ? (
+          // xem theo đơn vị ⇒ ô chọn đơn vị THAY nút "Theo đơn vị" trong cùng nhóm (một chỗ cho "lịch của ai")
+          <div className="flex w-fit items-center gap-0.5 rounded-lg bg-surface2 p-0.5" role="group" aria-label="Lịch của">
+            {nav.who.options.map((o) => byUnit && o.key !== "me" && nav.unit ? (
+              <select key={o.key} aria-label="Đơn vị" value={nav.unit.current} onChange={(e) => onNav(nav.unit!.param, e.target.value || undefined)}
+                      className="t12m h-7 max-w-[180px] rounded-md bg-surface px-1.5 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                {nav.unit.options.map((u) => <option key={u.key} value={u.key}>{u.title}</option>)}
+              </select>
+            ) : (
+              <button key={o.key} type="button" aria-pressed={nav.who!.current === o.key} onClick={() => onNav(nav.who!.param, o.key)}
+                      className={cn("t12m rounded-md px-3 py-1", nav.who!.current === o.key ? "bg-surface shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+                {o.title}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {canNav && nav ? <Segment items={nav.views} current={block.view} onPick={(k) => onNav(nav.param_view, k)} label="Chế độ xem" /> : null}
+        {canCreate ? (
+          <button type="button" className={actionClass("primary")} onClick={onAdd}><Plus className="size-3.5" aria-hidden />Thêm lịch</button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -601,10 +582,25 @@ function Floating({ x, y, width = 340, onClose, children, label, anchor, track }
   );
 }
 
-function QuickAdd({ draft, creators, laneTitle, attendee, invite, onClose, onSaved, onEdit }: {
+function QuickAdd({ draft, creators, laneTitle, attendee, invite, onClose, onSaved, onEdit, understand, onGuess, onGuessed }: {
   draft: Draft; creators: CalendarCreator[]; laneTitle?: string; attendee: string; invite: NonNullable<CalendarData["create"]>["invite"];
   onClose: () => void; onSaved: (msg: string, day: string) => void; onEdit: (v: { day: string; start: number; end: number }) => void;
+  understand: string; onGuess: (text: string) => Promise<Draft>; onGuessed: (d: Draft) => void;
 }) {
+  const [said, setSaid] = useState("");
+  const [thinking, setThinking] = useState(false);
+  async function fill() {
+    if (!said.trim() || thinking) return;
+    setThinking(true);
+    setErr("");
+    try {
+      onGuessed(await onGuess(said));   // ô mở lại với các ô máy đoán (chip ✨) — người xem lại rồi Lưu
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Không hiểu câu này");
+    } finally {
+      setThinking(false);
+    }
+  }
   const [invited, setInvited] = useState<string[]>([]);
   const desk = useDesk();
   const [kind, setKind] = useState(creatorFor(creators, draft.creator ?? "")?.key ?? "");
@@ -661,7 +657,20 @@ function QuickAdd({ draft, creators, laneTitle, attendee, invite, onClose, onSav
         </div>
         <button type="button" aria-label="Đóng" onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-accent"><X className="size-4" /></button>
       </div>
-      <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void save()}
+      {understand && !draft.guessed ? (
+        // một câu ⇒ máy điền các ô dưới (ngày, giờ, tiêu đề, loại, khách, nơi); bỏ trống thì điền tay như thường
+        <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void fill(); }}>
+          <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-input bg-field px-2.5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40">
+            <Sparkles className="size-4 shrink-0 text-primary" aria-hidden />
+            <input autoFocus value={said} onChange={(e) => setSaid(e.target.value)} aria-label="Gõ một câu, máy điền hộ"
+                   placeholder="Gõ một câu: “Thứ 5 2h chiều gặp khách”"
+                   className="t14 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground" />
+            {thinking ? <Spinner className="size-3.5" /> : null}
+          </label>
+          <button type="submit" className={actionClass("default")} disabled={!said.trim() || thinking}>Điền hộ</button>
+        </form>
+      ) : null}
+      <input autoFocus={!understand || !!draft.guessed} value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void save()}
              placeholder={c.subject ? "Ghi chú (vd dẫn khách xem căn mẫu)" : "Tiêu đề (vd Họp đội)"} aria-label="Tiêu đề"
              className="t14 h-9 rounded-lg border border-input bg-field px-2.5 outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40" />
       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Loại lịch">

@@ -5,7 +5,7 @@ Quyết định: 0040.
 ## Cấu hình lần đầu
 1. Google Cloud Console › APIs & Services › **OAuth consent screen**: loại *Internal* nếu công ty dùng Google Workspace (chỉ người trong tên miền),
    *External* nếu có người dùng Gmail cá nhân.
-2. **Credentials › Create OAuth client ID › iOS** (loại này cũng dùng cho app Mac): Bundle ID `vn.barista.desk`. Ghi lại client ID
+2. **Credentials › Create OAuth client ID › iOS** (loại này cũng dùng cho app Mac): Bundle ID của app iPhone (`PRODUCT_BUNDLE_IDENTIFIER` trong `ios/project.yml`; app Mac: `vn.barista.desk`). Ghi lại client ID
    (dạng `123-abc.apps.googleusercontent.com`).
 3. Đặt cho core (biến môi trường hoặc `.env`, dạng JSON cho danh sách):
    ```

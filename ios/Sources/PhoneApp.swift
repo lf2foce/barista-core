@@ -59,7 +59,8 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
     }
 }
 
-/// Địa chỉ máy chủ: trình giả lập dùng localhost; iPhone thật nhập IP máy chạy core (dev) hoặc https://… (bản thật).
+/// Địa chỉ máy chủ: để trống = ``API.shippedBase`` (bản phát hành: máy chủ chung; bản dev: localhost). Công ty có bản cài riêng nhập https://… của mình;
+/// dev trên iPhone thật nhập IP máy chạy core.
 private struct ServerSettings: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("baseURL") private var url = ""
@@ -69,9 +70,9 @@ private struct ServerSettings: View {
         NavigationStack {
             Form {
                 Section("Máy chủ Barista") {
-                    TextField("http://192.168.1.10:8300", text: $url)
+                    TextField(API.shippedBase, text: $url)
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Text("Để trống = http://127.0.0.1:8300 (trình giả lập). iPhone thật: IP máy chạy core trong cùng mạng, hoặc địa chỉ https:// khi đã triển khai.")
+                    Text("Để trống = \(API.shippedBase). Chỉ đổi khi công ty anh/chị có máy chủ Barista riêng (địa chỉ https:// do quản trị gửi).")
                         .font(.t12).foregroundStyle(.secondary)
                 }
                 Section("Bản demo") {

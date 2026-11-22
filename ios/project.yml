@@ -25,13 +25,19 @@ targets:
         group: Shared
         excludes:
           - App.swift          # điểm vào + --check-contract của Mac
+    info:   # khoá không khai được bằng INFOPLIST_KEY_* (gộp với phần Xcode tự sinh); file do xcodegen viết
+      path: Resources/Info.plist
+      properties:
+        ITSAppUsesNonExemptEncryption: false   # chỉ HTTPS / mã hoá có sẵn của hệ điều hành ⇒ khỏi khai "Missing Compliance" mỗi bản tải lên
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true        # dev: http tới core trong cùng mạng; máy chủ thật luôn https
     entitlements:   # thông báo đẩy (0044) — xuất bản App Store / TestFlight thì Xcode tự đổi sang production
       path: Sources/BaristaPhone.entitlements
       properties:
         aps-environment: development
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: vn.barista.desk
+        PRODUCT_BUNDLE_IDENTIFIER: com.phenau.barista   # hồ sơ app sẵn có trên App Store Connect (TestFlight từ 23/10/2026) — bên khác dựng lại: đổi thành bundle của mình
         PRODUCT_NAME: Barista
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Barista
@@ -42,5 +48,3 @@ targets:
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "Nói chuyện với trợ lý Barista bằng giọng nói."
         INFOPLIST_KEY_NSCameraUsageDescription: "Chụp ảnh gửi vào trao đổi (giấy tờ, hiện trạng căn, phiếu cọc…)."
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Nối tới máy chủ Barista trong mạng nội bộ (bản dev)."
-        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES   # dev: http tới máy trong mạng; bản thật dùng HTTPS (A2)
-        ITSAppUsesNonExemptEncryption: NO
