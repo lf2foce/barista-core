@@ -805,7 +805,25 @@ async def _owner_rows(sql: Any, params: Any) -> list[dict[str, Any]]:
         return await cur.fetchall()
 
 
-async def main(reset: bool, profile: str, upgrade: bool = False, extra_packs: tuple[str, ...] = ()) -> None:
+async def add_company(profile: str, extra_packs: tuple[str, ...] = ()) -> None:
+    """``--add``: thêm công ty mẫu của MỘT hồ sơ gói vào bản demo ĐANG CÓ dữ liệu (bản cài nhiều công ty — mỗi người đăng nhập vào đúng công ty của mình).
+    Công ty cùng tên đã có ⇒ bỏ qua (chạy lại an toàn). Chỉ hồ sơ của gói (``NAME`` riêng) — công ty mẫu của lõi không thêm được lần hai."""
+    prof = pack_profile(profile)
+    if prof is None:
+        raise SystemExit(f"Dừng: --add chỉ cho hồ sơ của gói đã cài (không phải {profile})")
+    name = prof.NAME
+    async with db.owner.connection() as conn:
+        if await (await conn.execute("SELECT 1 FROM core.tenants WHERE name = %s", (name,))).fetchone():
+            print(f"Đã có công ty \"{name}\" — bỏ qua")
+            return
+    kw = {"extra_packs": extra_packs} if "extra_packs" in inspect.signature(prof.seed).parameters else {}
+    tid = await prof.seed(name=name, **kw)
+    if getattr(prof, "AUTONOMY", True):
+        await demo_autonomy(tid)
+    print(prof.DONE)
+
+
+async def main(reset: bool, profile: str, upgrade: bool = False, extra_packs: tuple[str, ...] = (), add: bool = False) -> None:
     """``profile``: dữ liệu mẫu của BẢN CÀI nào — cùng một bộ code, mỗi bản cài chỉ có công ty + gói của nó (0063).
     ``sample``: công ty mẫu của lõi (mặc định, DB dev ``barista_erp_dev``) — gói ngành đã cài khai mình thuộc hồ sơ này thì góp phần của nó (vd sàn
     môi giới). Hồ sơ của gói đã cài (``san-moi-gioi``, ``accounting``, ``research``, ``bank``…): DB riêng."""
@@ -813,6 +831,8 @@ async def main(reset: bool, profile: str, upgrade: bool = False, extra_packs: tu
     real = settings.env == "production"   # bản cài production (ADR 0194): chỉ migration (+ mặc định khi --upgrade), không bao giờ dữ liệu mẫu
     if real and reset:
         raise SystemExit("Dừng: BARISTA_ENV=production — không --reset (xoá sạch DB) trên bản cài production")
+    if real and add:
+        raise SystemExit("Dừng: BARISTA_ENV=production — không thêm công ty mẫu vào bản cài production")
     if reset:
         app_db, owner_db = (u.rsplit("/", 1)[-1].split("?")[0] for u in (settings.database_url, settings.owner_database_url))
         if app_db != owner_db:   # cấu hình lệch (vd chỉ đặt một biến) ⇒ xoá nhầm DB khác — dừng trước khi xoá
@@ -824,6 +844,9 @@ async def main(reset: bool, profile: str, upgrade: bool = False, extra_packs: tu
         async with db.owner.connection() as conn:
             cur = await conn.execute("SELECT 1 FROM core.tenants LIMIT 1")
             if await cur.fetchone():
+                if add and not real:
+                    await add_company(profile, extra_packs)
+                    return
                 if upgrade:
                     n = await install_defaults_everywhere()
                     if real:
@@ -871,5 +894,6 @@ if __name__ == "__main__":
     ap.add_argument("--upgrade", action="store_true", help="bản demo ĐANG CHẠY: thêm mặc định / người / kế hoạch mẫu mới, đổi tên công ty — không xoá gì"
                     " (bản cài của một gói: --upgrade --profile <hồ sơ của gói>, vd bank)")
     ap.add_argument("--with-packs", default="", help="gói THÊM vào công ty mẫu, cách nhau dấu phẩy — vd findings,word (gói tuỳ chọn, mặc định tắt)")
+    ap.add_argument("--add", action="store_true", help="bản demo ĐANG CÓ dữ liệu: THÊM công ty mẫu của --profile (hồ sơ gói) bên cạnh công ty có sẵn — đã có thì bỏ qua")
     args = ap.parse_args()
-    asyncio.run(main(args.reset, args.profile, args.upgrade, tuple(x.strip() for x in args.with_packs.split(",") if x.strip())))
+    asyncio.run(main(args.reset, args.profile, args.upgrade, tuple(x.strip() for x in args.with_packs.split(",") if x.strip()), args.add))
