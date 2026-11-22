@@ -448,6 +448,15 @@ def test_check_stamps_split_core_from_packs_and_web(tmp_path: Path) -> None:
     (tmp_path / "docs/MODULE-MAP.md").write_text("# map\n")
     full6, core6, web6 = digests()
     assert full6 != full5 and core6 != core5 and web6 == web5
+    # test lõi còn đọc mã client (test_client_neutrality, test_web_icons, test_deploy_production) và SKILL.md (test_packkit) ⇒ cũng trong dấu lõi (rà 22/11)
+    prev = (full6, core6, web6)
+    for f in (".agents/skills/barista-pack/SKILL.md", "macos/Sources/BaristaDesk/A.swift", "ios/Sources/B.swift", "web/src/components/icons.tsx"):
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text(f"{f}\n")
+        cur = digests()
+        assert cur[0] != prev[0] and cur[1] != prev[1], f
+        assert (cur[2] != prev[2]) == f.startswith("web/"), f                # dấu web vẫn chỉ theo web/
+        prev = cur
 
 
 def test_tiered_core_and_per_pack_stamps_resume_after_partial_run(tmp_path: Path) -> None:

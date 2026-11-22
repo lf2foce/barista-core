@@ -13,7 +13,7 @@
 #       guards-<DIGEST> cùng dấu từng gói pack-<khoá>-<DIGEST> ⇒ lỗi tạm thời ở 1 gói không mất công chạy lại lõi và các gói đã đạt trên cùng nội dung.
 #   drop_test_dbs                         xoá DB test mang mã lần chạy BARISTA_TEST_RUN_ID (gọi trong bẫy EXIT)
 #   tree_digest <WORK> [core|web]         dấu nội dung (sha256) vừa dựng — gọi NGAY sau stage_tree, trước khi test. Mặc định: backend/ + deploy/ (gồm gói)
-#       + scripts/packkit/ + 3 file docs/ mà test lõi đọc + mọi file bản cài ở $BARISTA_OPS_DIR/instances (test đọc chúng);
+#       + mọi thứ khác test lõi đọc (scripts/packkit/, .agents/, web/src, macos/Sources, ios, 3 file docs/) + mọi file bản cài ở $BARISTA_OPS_DIR/instances;
 #       ``core``: như mặc định nhưng BỎ deploy/packs/ (bộ test lõi là hợp đồng của lõi, chạy khi CHƯA cài gói nào ⇒ không phụ thuộc gói); ``web``: web/
 #   stamp_ok <dấu> [<nhãn>] / stamp_write <dấu> <nhãn>   dấu "đã kiểm đủ": <dấu đủ> = lõi TOÀN BỘ + gói ở tag ghim; core-<dấu lõi> = check_core TOÀN BỘ;
 #       core-main-<dấu lõi> / core-upgrade-<dấu lõi> = từng tầng của lõi; guards-<dấu> / pack-<khoá>-<dấu> = cấu trúc + từng gói;
@@ -46,10 +46,14 @@ tree_digest() {
   python3 - "$1" "${2:-all}" <<'PY'
 import hashlib, os, sys
 root, part = sys.argv[1], sys.argv[2]
-skip = {".venv", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules", ".mypy_cache", ".next"}
+skip = {".venv", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules", ".mypy_cache", ".next", ".build", "DerivedData"}
 h = hashlib.sha256(part.encode() + b"\0")
-# Ngoài backend/ và deploy/, bộ test lõi còn nạp scripts/packkit/ (test_packkit.py) và đọc 3 file hợp đồng trong docs/ ⇒ đổi chúng phải làm đổi dấu.
-tops = ("web",) if part == "web" else ("backend", "deploy", os.path.join("scripts", "packkit"))
+# Dấu lõi phải phủ MỌI file bộ test lõi đọc, không chỉ backend/ + deploy/ (rà 22/11: sửa các file dưới đây sau một lượt xanh vẫn giữ dấu cũ ⇒ release.sh
+# bỏ test Python oan): scripts/packkit/ (test_packkit nạp), .agents/ (test_packkit đọc SKILL.md của barista-pack), web/src + macos/Sources + ios
+# (test_client_neutrality quét mã client; test_web_icons đọc icons.tsx; test_deploy_production đọc session.ts) và 3 file hợp đồng trong docs/.
+# Lấy cả THƯ MỤC, không liệt kê từng file ⇒ test mới đọc thêm file trong đó không lọt. Thêm test đọc file ngoài các thư mục này ⇒ thêm vào đây.
+tops = ("web",) if part == "web" else ("backend", "deploy", os.path.join("scripts", "packkit"), ".agents",
+                                       os.path.join("web", "src"), os.path.join("macos", "Sources"), "ios")
 for top in tops:
     top_path = os.path.join(root, top)
     if not os.path.isdir(top_path):
