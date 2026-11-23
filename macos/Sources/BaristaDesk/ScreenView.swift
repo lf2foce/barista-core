@@ -257,6 +257,11 @@ struct ScreenView: View {
         }
     }
 
+    /// Nút do server gửi trong thân bảng (đầu bảng / màn trống): lệnh nhập cả bảng ⇒ màn nhập Excel; còn lại ⇒ form.
+    private func run(_ a: ActionSpec) {
+        if a.import_only == true { importing = a } else { form = FormRequest(action: a, row: nil) }
+    }
+
     private var exportButton: some View {
         Button { Task { await export() } } label: { Label("Xuất Excel", systemImage: "square.and.arrow.up") }
             .buttonStyle(.bordered)
@@ -425,6 +430,11 @@ struct ScreenView: View {
             }
             CardView(page: c, onChanged: { Task { await reload(); onChanged() } }, inHead: head != nil, rev: rev)
         case .table(let t):
+            ForEach(Array(t.header.enumerated()), id: \.offset) { _, b in
+                if case .callout(let tone, let title, let text, let facts, let draft, let actions) = b {
+                    Callout(tone: tone, title: title, text: text, facts: facts, draft: draft, actions: actions) { run($0) }
+                }
+            }
             if !t.kpis.isEmpty { KPIRow(kpis: t.kpis, inset: embedded) }
             if !t.note.isEmpty { ClampNote(text: t.note) }
             if let v = t.views {
@@ -441,7 +451,7 @@ struct ScreenView: View {
                     Label(t.empty, systemImage: "tray")
                 } actions: {
                     ForEach(t.emptyActions, id: \.title) { a in
-                        Button(a.title) { form = FormRequest(action: a, row: nil) }.buttonStyle(.borderedProminent)
+                        Button(a.title) { run(a) }.buttonStyle(.borderedProminent)
                     }
                 }
                 .frame(maxHeight: .infinity)

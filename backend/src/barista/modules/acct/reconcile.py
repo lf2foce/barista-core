@@ -283,7 +283,15 @@ async def reconcile(ctx: Ctx, inp: ReconcileIn) -> dict[str, Any]:
         ui.col("memo", "Nội dung chuyển khoản", width=280), ui.col("received_on", "Ngày", "date"), ui.col("how", "Khớp theo"),
         ui.col("remaining", "Còn phải thu", "money"), ui.col("payer", "Bên chuyển"), ui.col("bank_ref", "Số tham chiếu NH"),
         ui.col("allocated_vnd", "Đã ghi trước đó", "money"),
-    ], title="Đối soát sao kê", empty="Không còn dòng nào chờ đối soát — nạp sao kê (Excel) hoặc gửi ảnh bảng đối soát cho trợ lý",
+    ], title="Đối soát sao kê",
+        # màn trống TỰ NÓI mình để làm gì + MỘT lối vào là tải file (không gõ tay từng dòng) — rà 23/11/2026, kế hoạch mục 3
+        empty="Khớp từng khoản tiền về với khoản phải thu bằng mã trong nội dung chuyển khoản. Bắt đầu: tải file sao kê ngân hàng (Excel) — máy tự "
+              "khớp, dòng khớp đủ ghi một lần; dòng lệch hiện gợi ý để bạn quyết.",
+        empty_actions=[ui.act("acct.add_statement_line", "Tải sao kê (Excel)", import_only=True, style="primary")],
+        # "Ghi các dòng khớp đủ" chỉ có khi CHẠY ĐƯỢC (trước là nút cố định trên thanh công cụ, bấm mới báo "không có dòng nào") — khối đầu bảng mang nút
+        header=[ui.b_callout("ok", f"{len(full)} dòng khớp đủ — {_vnd(total('full'))}",
+                             "Mỗi dòng khớp đúng một khoản phải thu, đúng số tiền: ghi phiếu thu một lần cho cả nhóm.",
+                             actions=[ui.act("acct.apply_statement", f"Ghi {len(full)} dòng khớp đủ", style="primary")])] if full else None,
         kpis=[ui.kpi("Khớp đủ", len(full), tone="green" if full else None, hint=_vnd(total("full")) if full else ""),
               ui.kpi("Lệch số tiền", sum(1 for r in kpi_rows if r["match"] in ("short", "over")), tone="orange"),
               ui.kpi("Cần người xem", sum(1 for r in kpi_rows if r["match"] in ("amount_only", "unmatched", "settled")), tone="red",

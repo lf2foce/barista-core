@@ -157,6 +157,8 @@ struct ActionSpec: Decodable, Hashable, Identifiable {
     var prefill: [String: String]? = nil
     /// Ô ĐIỀN SẴN do server soạn (vd tiêu đề việc lấy từ tin nhắn) — vẫn hiện + sửa được; khác ``preset`` (cố định, ẩn).
     var values: [String: JSON]? = nil
+    /// Nút mở thẳng màn "Nhập từ Excel" (lệnh nhập cả bảng — không có form nhập một), như web: lối vào chính của màn trống là TẢI FILE, không gõ tay.
+    var import_only: Bool? = nil
     var id: String { command + title }
 
     /// Nút dòng chỉ hiện khi dòng thoả `when` (trình bày thôi — server vẫn kiểm lại khi chạy).
@@ -289,11 +291,13 @@ struct TablePage: Decodable {
     var openRow: OpenSpec? = nil
     /// Nút dưới câu ``empty`` khi bảng không có dòng (vd "Thêm người / phòng").
     var emptyActions: [ActionSpec] = []
+    /// Khối đầu bảng do server gửi (cảnh báo / việc nên làm kèm nút — vd "8 dòng khớp đủ — Ghi 8 dòng" chỉ có khi chạy được), như web `table.header`.
+    var header: [CardPage.Block] = []
     /// Trang phía server (18/11/2026): app xin ``?limit=&offset=`` ⇒ chỉ một trang + tổng của cả tập. Thiếu ⇒ bảng đủ dòng như cũ.
     struct Paging: Decodable, Hashable { let offset, limit, total: Int; var complete: Bool? = nil }
     var paging: Paging? = nil
 
-    private enum K: String, CodingKey { case title, kpis, columns, rows, row_key, empty, note, views, compact, row_actions, open, empty_actions, paging }
+    private enum K: String, CodingKey { case title, kpis, columns, rows, row_key, empty, note, views, compact, row_actions, open, empty_actions, paging, header }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         title = try c.decode(String.self, forKey: .title)
@@ -306,6 +310,7 @@ struct TablePage: Decodable {
         rowActions = (try? c.decodeIfPresent([ActionSpec].self, forKey: .row_actions)) ?? []
         openRow = try? c.decodeIfPresent(OpenSpec.self, forKey: .open)
         emptyActions = (try? c.decodeIfPresent([ActionSpec].self, forKey: .empty_actions)) ?? []
+        header = ((try? c.decodeIfPresent([CardPage.Block].self, forKey: .header)) ?? []).filter { if case .unknown = $0 { false } else { true } }
         paging = try? c.decodeIfPresent(Paging.self, forKey: .paging)
         let key = (try? c.decode(String.self, forKey: .row_key)) ?? "id"
         let raw = try c.decode([[String: JSON]].self, forKey: .rows)
