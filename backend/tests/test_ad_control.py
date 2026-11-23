@@ -601,3 +601,16 @@ async def test_a_marketer_sees_and_acts_only_on_their_team_s_ads_and_the_marketi
 
     assert await convs("mkta") == {a["c"]} and await convs("mktb") == {b["c"]} and await convs("tpmkt") >= {a["c"], b["c"]}
     await ok(p["admin"], "mkt.set_ad_policy")
+
+
+async def test_a_company_with_ad_spend_but_no_policy_row_is_still_watched() -> None:
+    """Rà 23/11/2026: vòng quét chỉ chọn công ty đã có dòng ``mkt.ad_policy`` — mà dòng đó chỉ sinh ở lượt theo dõi đầu ⇒ công ty chưa mở màn Chính sách
+    không bao giờ được theo dõi. Nay: có chi phí quảng cáo mà chưa có dòng chính sách ⇒ vẫn đến lượt (chính sách mặc định)."""
+    from barista.db import db as _db
+    from barista.modules.mkt.ad_control import WATCH_DUE
+    async with _db.owner_tx() as conn:
+        spenders = {r["tenant_id"] for r in await (await conn.execute("SELECT DISTINCT tenant_id FROM mkt.spend")).fetchall()}
+        due = {r["tenant_id"] for r in await (await conn.execute(WATCH_DUE)).fetchall()}
+        unpoliced = {r["tenant_id"] for r in await (await conn.execute(
+            "SELECT DISTINCT s.tenant_id FROM mkt.spend s WHERE NOT EXISTS (SELECT 1 FROM mkt.ad_policy p WHERE p.tenant_id = s.tenant_id)")).fetchall()}
+    assert unpoliced <= due and unpoliced <= spenders

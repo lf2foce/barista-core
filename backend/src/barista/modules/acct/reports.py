@@ -312,7 +312,8 @@ class CollectIn(Input):
          why="Màn điều hành / trang báo cáo quản trị của gói khai consumes(\"company_figures\") (thao tác gọi khai min_scope=\"all\" — người xem có "
              "quyền trên màn đó cả công ty; bên gọi kiểm, acct không kiểm lại) xem công nợ của MỘT tiền tố nguồn <module>.<loại> (bắt buộc — không gộp mọi "
              "nguồn) của CẢ công ty. "
-             "Chỉ SỐ GỘP: {recognized, received: [{m, v}] theo tháng, aging: {not_due, d30, d60, d60p, total}, top_parties: 5 [{name, rest}]} "
+             "Chỉ SỐ GỘP: {recognized, received: [{m, v}] theo tháng, aging: {not_due, d30, d60, d60p, total}, top_parties: 5 [{name, rest}], "
+             "unrecorded_vnd: tiền đã vào tài khoản (dòng sao kê) chưa ghi vào khoản phải thu nào — MỌI nguồn, vì chưa ghi thì chưa biết nguồn} "
              "— không từng khoản, không mã.")
 async def collections(ctx: Ctx, inp: CollectIn) -> dict[str, Any]:
     """Cho màn điều hành của gói (lọc theo nguồn khoản phải thu của gói): khoản GHI NHẬN theo ngày lập và TIỀN THỰC THU theo ngày thu từng tháng + công
@@ -337,4 +338,6 @@ async def collections(ctx: Ctx, inp: CollectIn) -> dict[str, Any]:
     top = await ctx.all("""SELECT max(party) AS name, sum(amount_vnd - paid_vnd)::bigint AS rest FROM acct.receivables
                            WHERE starts_with(source, %(s)s) AND status IN ('open', 'partial')
                            GROUP BY coalesce(party_id::text, party) ORDER BY rest DESC LIMIT 5""", prm)   # 0177: cùng tên khác mã ⇒ hai dòng
-    return {"recognized": recognized, "received": received, "aging": ag, "top_parties": top}
+    # rà 23/11/2026: công nợ "quá hạn" trong khi phần lớn tiền đã về ngân hàng, chỉ chờ kế toán ghi — màn điều hành phải thấy được phần này
+    unrecorded = await ctx.val("SELECT coalesce(sum(amount_vnd - allocated_vnd), 0)::bigint FROM acct.statement_lines WHERE status = 'open'")
+    return {"recognized": recognized, "received": received, "aging": ag, "top_parties": top, "unrecorded_vnd": int(unrecorded or 0)}

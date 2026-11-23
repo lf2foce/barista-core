@@ -21,7 +21,7 @@ mọi định nghĩa dưới đây dựng trên đúng bốn trạng thái có s
   Tập dữ liệu chỉ cộng / đếm được ⇒ có TRUNG BÌNH (tổng ngày ÷ số hồ sơ); TRUNG VỊ chỉ ở màn (tính riêng bằng SQL trên cùng ``BASE``).
 """
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, LiteralString
 
 from barista.api import Ctx, Dim, Input, Measure, Ratio, Screen, add_months, field, today, ui
@@ -115,6 +115,13 @@ class AssuranceIn(Input):
     top: int = field("Số hồ sơ đang mở lớn nhất", TOP_OPEN, ge=1, le=20)
 
 
+# Tiền về đã nằm trên sao kê quá ngần này ngày mà chưa ghi vào công nợ — chưa chắc đã thành hồ sơ khoản lệch (vòng quét chỉ dựng hồ sơ cho dòng khớp
+# được một phần / sai mẫu), nên màn KHÔNG được báo xanh chỉ vì "không còn hồ sơ mở" (rà 23/11/2026: ô xanh trong khi còn dòng chưa khớp từ 01/11).
+STALE_DAYS = 3
+STALE_SQL: LiteralString = """SELECT count(*) AS n, coalesce(sum(amount_vnd - allocated_vnd), 0)::bigint AS amount_vnd, min(received_on) AS since
+                               FROM acct.statement_lines WHERE status = 'open' AND received_on <= %s"""
+
+
 @m.query("assurance", resource="acct", title="Bảo đảm tiền", min_scope="all")
 async def assurance(ctx: Ctx, inp: AssuranceIn) -> dict[str, Any]:
     """Hồ sơ khoản lệch đã bắt được bao nhiêu tiền, xử lý xong bao nhiêu, trung vị bao nhiêu ngày — tháng này và 3 tháng trước; hồ sơ đang mở lớn nhất.
@@ -123,14 +130,22 @@ async def assurance(ctx: Ctx, inp: AssuranceIn) -> dict[str, Any]:
     m0 = t.replace(day=1)
     now, before = await _period(ctx, m0, add_months(m0, 1)), await _period(ctx, add_months(m0, -3), m0)
     op = await ctx.one(OPEN_SQL) or {"n": 0, "amount_vnd": 0, "late": 0}
+    stale = await ctx.one(STALE_SQL, (t - timedelta(days=STALE_DAYS),)) or {"n": 0, "amount_vnd": 0, "since": None}
+    clear = not op["n"] and not stale["n"]
     top = await ctx.all(TOP_SQL, (inp.top,))
     m3 = add_months(m0, -3)
     blocks: list[dict[str, Any]] = [
         ui.b_kpis(_kpis(now, "tháng này")),
         ui.b_kpis(_kpis(before, f"T{m3.month}–T{add_months(m0, -1).month}")),
-        ui.b_kpis([ui.kpi("Còn mở", op["amount_vnd"], "money", tone="orange" if op["n"] else "green", hint=f"{op['n']} hồ sơ"),
-                   ui.kpi("Quá hạn xử lý", op["late"], tone="red" if op["late"] else None)]),
+        ui.b_kpis([ui.kpi("Còn mở", op["amount_vnd"], "money", tone="orange" if op["n"] else ("green" if clear else None), hint=f"{op['n']} hồ sơ"),
+                   ui.kpi("Quá hạn xử lý", op["late"], tone="red" if op["late"] else None),
+                   ui.kpi(f"Tiền về chưa ghi quá {STALE_DAYS} ngày", stale["amount_vnd"], "money", tone="red" if stale["n"] else None,
+                          hint=f"{stale['n']} dòng sao kê" + (f" · từ {stale['since']:%d/%m/%Y}" if stale["since"] else ""))]),
     ]
+    if stale["n"]:
+        blocks.append(ui.b_callout("bad", f"{stale['n']} dòng tiền về chưa ghi vào công nợ, lâu nhất từ {stale['since']:%d/%m/%Y}",
+                                   "Tiền đã vào tài khoản nhưng chưa khớp khoản phải thu nào — chưa phải hồ sơ khoản lệch nên chưa tính ở trên. "
+                                   "Mở Đối soát sao kê để ghi."))
     if top:
         blocks.append(ui.b_list([{
             "title": f"{(r['payer'] or '').strip() or 'Chưa rõ bên chuyển'} — {_vnd(r['amount_vnd'])}",
@@ -138,13 +153,14 @@ async def assurance(ctx: Ctx, inp: AssuranceIn) -> dict[str, Any]:
                                     f"hạn {r['due_on']:%d/%m/%Y}" + (f" (quá {(t - r['due_on']).days} ngày)" if r["due_on"] < t else "")]),
             "tone": "bad" if r["due_on"] < t else "warn", "open": {"query": "acct.dossier", "input": {"code": r["code"]}}} for r in top],
             "Hồ sơ đang mở lớn nhất"))
-    else:
-        blocks.append(ui.b_callout("ok", "Không còn hồ sơ khoản lệch nào đang mở"))
+    elif clear:
+        blocks.append(ui.b_callout("ok", "Không còn hồ sơ khoản lệch nào đang mở, không còn tiền về chưa ghi"))
     blocks.append(ui.b_callout("muted", "Cách tính", "Tiền lệch phát hiện = số tiền của giao dịch ngân hàng có hồ sơ, theo ngày mở hồ sơ. Đã xử lý xong = dòng tiền "
                                "đã ghi hết vào công nợ và khoản nhắm tới hết nợ, theo ngày đóng (gồm hồ sơ có xoá phần thiếu qua duyệt — phần xoá là tiền chấp nhận "
                                "không thu). Hồ sơ đóng vì không phải khoản lệch không tính là đã xử lý."))
     return ui.card("Bảo đảm tiền", blocks, subtitle=f"Hồ sơ khoản lệch · tháng {t.month}/{t.year} và 3 tháng trước · số tính từ hồ sơ, không ước đoán", icon="lock.shield",
-                   open=[{"title": "Khoản lệch cần xử lý", "query": "acct.dossiers", "input": {}},
+                   open=[*([{"title": "Đối soát sao kê", "query": "acct.reconcile", "input": {}}] if stale["n"] else []),
+                         {"title": "Khoản lệch cần xử lý", "query": "acct.dossiers", "input": {}},
                          {"title": "Tổng hợp theo chiều / tháng", "query": "acct.ds_dossiers", "input": {"by": ["opened_month"], "measures": ["caught_vnd", "resolved_vnd"]}}],
                    ask={"title": "Hỏi trợ lý về khoản lệch", "prompt": "Về số tiền hồ sơ khoản lệch đã phát hiện và xử lý: "})
 

@@ -117,3 +117,20 @@ async def test_dataset_is_declared_for_the_dashboard_builder_and_assistant(who: 
     assert d["measures"]["avg_days"]["ratio"] == "days_sum / resolved" and set(d["dates"]) == {"opened_on", "closed_on"}
     page = await q(await who("ketoan"), "acct.ds_dossiers", measures=["opened"], by=["opened_month"])
     assert page["source"]["kind"] == "dataset"
+
+
+async def test_unrecorded_money_on_the_bank_statement_is_never_reported_as_all_clear(who: Who) -> None:
+    """Rà 23/11/2026: màn báo xanh "Không còn hồ sơ khoản lệch" trong khi còn dòng sao kê chưa khớp từ đầu tháng (dòng chưa thành hồ sơ). Nay dòng tiền về
+    nằm quá STALE_DAYS ngày chưa ghi ⇒ ô đỏ + lời báo, và không còn câu "đã sạch"."""
+    from barista.modules.acct.assurance import STALE_DAYS
+    ketoan, giamdoc = await who("ketoan"), await who("giamdoc")
+    await ok(ketoan, "acct.add_statement_line", received_on=(today() - timedelta(days=STALE_DAYS + 2)).isoformat(), amount_vnd=7_000_000,
+             memo=f"KHONG RO NOI DUNG {uuid.uuid4().hex[:6]}")
+    page = (await executor.query(giamdoc, "acct.assurance", {})).output
+    tiles = [k for b in page["blocks"] if b["type"] == "kpis" for k in b["items"]]
+    stale = next(k for k in tiles if k["label"].startswith("Tiền về chưa ghi"))
+    assert stale["value"] >= 7_000_000 and stale["tone"] == "red"
+    titles = [b.get("title", "") for b in page["blocks"] if b["type"] == "callout"]
+    assert any("chưa ghi vào công nợ" in t for t in titles)
+    assert not any(t.startswith("Không còn hồ sơ khoản lệch") for t in titles)
+    assert next(k for k in tiles if k["label"] == "Còn mở")["tone"] != "green"

@@ -509,8 +509,13 @@ async def dispatch_ad_changes(ctx: Ctx, inp: NoInput) -> dict[str, int]:
 
 # ── Tác nhân theo dõi: mỗi ngày, chỉ phát hiện + đề xuất (không bao giờ gọi kênh) ──
 
+# Công ty CHƯA có dòng chính sách (chưa ai mở "Chính sách quảng cáo") vẫn được theo dõi theo chính sách MẶC ĐỊNH khi đã có chi phí quảng cáo — trước đây
+# vòng quét chỉ chọn công ty đã có dòng ``mkt.ad_policy``, mà dòng đó lại chỉ sinh ở lượt theo dõi đầu ⇒ không bao giờ chạy (rà 23/11/2026: FB-HSR chi 61 tr,
+# 0 lead chất lượng, màn vẫn báo ổn). Lượt đầu tự ghi dòng (``run_watch``) ⇒ từ đó đi nhánh trên.
 WATCH_DUE = ("SELECT p.tenant_id FROM mkt.ad_policy p WHERE coalesce((p.settings->>'watch')::boolean, true)"
-             " AND (p.last_watch_on IS NULL OR p.last_watch_on < core.today_of(p.tenant_id))")
+             " AND (p.last_watch_on IS NULL OR p.last_watch_on < core.today_of(p.tenant_id))"
+             " UNION SELECT DISTINCT s.tenant_id FROM mkt.spend s"
+             " WHERE NOT EXISTS (SELECT 1 FROM mkt.ad_policy p WHERE p.tenant_id = s.tenant_id)")
 
 
 def _figures(r: dict[str, Any], d_from: Any, d_to: Any, outcome: dict[str, Any] | None, **extra: Any) -> dict[str, Any]:
@@ -895,6 +900,10 @@ async def ad_findings(ctx: Ctx, inp: FindingsIn) -> dict[str, Any]:
     trách / đội của chiến dịch): phạm vi "team" thấy phát hiện của chiến dịch mình / đội mình, "all" thấy cả công ty."""
     rows = await ctx.all("""SELECT * FROM mkt.ad_findings WHERE (%s = 'all' OR state = 'open') ORDER BY day DESC, (figures->>'spend')::bigint DESC
                             LIMIT 300""", (inp.state,))
+    # câu báo trống phải nói THẬT: chưa quét lần nào ≠ quét rồi không thấy gì (rà 23/11/2026)
+    last = await ctx.val("SELECT last_watch_on FROM mkt.ad_policy")
+    empty = (f"Lượt theo dõi gần nhất {last:%d/%m/%Y}: không có chiến dịch nào vượt ngưỡng của công ty" if last else
+             "Tác nhân chưa quét lần nào — lượt đầu chạy trong ngày khi công ty đã có chi phí quảng cáo")
     out = []
     for r in rows:
         f = r["figures"]
@@ -910,7 +919,7 @@ async def ad_findings(ctx: Ctx, inp: FindingsIn) -> dict[str, Any]:
         ui.col("qualified", "Lead chất lượng", "number"), ui.col("outcome", "Kết quả bán", "number"), ui.col("cpql", "Chi phí / lead CL", "money"),
         ui.col("leads_platform", "Lead nền tảng báo", "number"), ui.col("channel", "Kênh"), ui.col("window", "Cửa sổ"),
         ui.col("state", "Trạng thái", "badge", labels={"open": "Đang mở", "done": "Đã xử lý", "dismissed": "Bỏ qua", "expired": "Hết hạn"}),
-    ], title="Đề xuất quảng cáo", empty="Không có phát hiện nào — chi phí đang ra kết quả theo ngưỡng của công ty",
+    ], title="Đề xuất quảng cáo", empty=empty,
        note="Số là bản chụp lúc tác nhân tính (cùng định nghĩa với Hiệu quả quảng cáo). Kết quả bán trống = công ty chưa có gói ghi kết quả bán — không phải 0. "
             "Kênh trống = chưa nối kênh quảng cáo: làm tay rồi bấm “Đã làm tay”. Tác nhân không tự đổi gì trên kênh.")
 

@@ -909,12 +909,16 @@ async def payables(ctx: Ctx, inp: PayablesIn) -> dict[str, Any]:
     ids = list({str(r["party_id"]) for r in rows})
     names = await ctx.call_system("parties.names", party_ids=ids) if ids else {}
     ents = await entities.names(ctx)
+    # cảnh báo của gói nguồn ngay trên dòng (cùng nguồn với màn Cảnh báo chi): kế toán thấy "chưa nên chi" TRƯỚC khi bấm Đề nghị chi (rà 23/11/2026)
+    from barista.modules.acct.bank import source_flags
+    flags = await source_flags(ctx, [r["id"] for r in rows if r["kind"] == "payable" and r["left_vnd"] > 0])
     out = [
         {
             **{k: r[k] for k in ("id", "party_id", "entity_id", "label", "kind", "amount_vnd", "tax_vnd", "left_vnd", "created_at")},
             "party_name": names.get(str(r["party_id"]), {}).get("name", ""),
             "entity_name": ents.get(str(r["entity_id"]), {}).get("name", ""),
             "open": "yes" if r["left_vnd"] > 0 else "no",
+            "warning": "Chưa nên chi: " + "; ".join(f) if (f := flags.get(str(r["id"]), {}).get("flags")) else "",
         }
         for r in rows
     ]
@@ -928,6 +932,7 @@ async def payables(ctx: Ctx, inp: PayablesIn) -> dict[str, Any]:
             ui.col("party_name", "Người nhận"),
             ui.col("entity_name", "Pháp nhân"),
             ui.col("label", "Nghĩa vụ", width=240),
+            ui.col("warning", "Cảnh báo", width=260),
             ui.col("kind", "Loại", "badge", labels=PAYABLE_KIND, tones={"payable": "blue", "advance": "orange", "recovery": "red"}),
             ui.col("amount_vnd", "Số tiền", "money"),
             ui.col("tax_vnd", "Thuế giữ lại", "money"),
