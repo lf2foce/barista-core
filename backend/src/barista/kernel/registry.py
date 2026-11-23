@@ -638,10 +638,17 @@ class Pack:
     info_groups: tuple[InfoGroup, ...] = ()
     # CÂU HỎI CẤU HÌNH khi đưa công ty vào dùng (api 1.57): câu hỏi nghiệp vụ → lựa chọn → mặc định + lý do → ai quyết → lệnh ghi (``Question``)
     questions: tuple[Question, ...] = ()
+    # THANH BÊN theo vai (ADR 0255, api 1.82): vai (của gói này HOẶC gói khác, như ``pins``) → các PHÂN HỆ hiện sẵn trên thanh bên trái của người giữ vai đó,
+    # theo thứ tự. Là mặc định đọc thẳng từ mã (không cài vào dữ liệu ⇒ nâng gói không ghi đè chỗ công ty đã đổi — ``core.role_rail``); phân hệ người đó
+    # không thấy (không quyền / gói tắt) tự bị bỏ qua. Vai không có khai báo ⇒ thanh bên vẽ hết phân hệ như trước. Tối đa ``RAIL_MAX`` phân hệ mỗi vai
+    rail: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.key in PACKS:
             raise ValueError(f"gói {self.key} khai hai lần")
+        for role, keys in self.rail.items():
+            if not KEY.fullmatch(role) or not keys or len(keys) > RAIL_MAX or len(set(keys)) != len(keys) or not all(WORKSPACE_KEY.fullmatch(k) for k in keys):
+                raise ValueError(f"gói {self.key}: thanh bên của vai {role!r} phải là 1–{RAIL_MAX} khoá phân hệ khác nhau (chữ thường, gạch dưới)")
         if self.kind not in PACK_KINDS:
             raise ValueError(f"gói {self.key}: loại {self.kind} lạ")
         if self.key in self.requires or (self.key == "base" and self.requires):
@@ -654,6 +661,7 @@ class Pack:
 
 
 PACKS: dict[str, Pack] = {}
+RAIL_MAX = 6   # số phân hệ tối đa một vai có trên thanh bên (gói khai hoặc công ty đặt) — thanh bên là để GỌN; phần còn lại ở "Tất cả mục"
 
 
 def pack_requires(pack: str) -> tuple[str, ...]:
@@ -1354,6 +1362,7 @@ class Module:
 # Module của GÓI NỀN (luôn bật, đi cùng lõi): danh sách đóng, nằm trong repo. Gói khác không tự nhận "base" (review 09/11).
 BASE_MODULES = frozenset({"core", "admin", "apps", "asks", "connect", "connectors", "flow", "health", "kb", "memory", "papers", "work"})
 KEY = re.compile(r"[a-z][a-z0-9_]*")      # khoá module / gói — không dấu chấm, không hoa, không rỗng
+WORKSPACE_KEY = re.compile(r"[a-z_]+")    # khoá phân hệ — khớp CHECK của ``core.user_pins.workspace`` (migration base/008)
 NAME = re.compile(r"[a-z_][a-z0-9_]*")     # phần tên của thao tác / bên nghe sau "<module>."
 
 

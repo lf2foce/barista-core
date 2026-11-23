@@ -530,32 +530,36 @@ async def register_device(ctx: Ctx, inp: DeviceIn) -> dict[str, Any]:
     return {"active": inp.active}
 
 
-# ── Ghim theo người (0098): địa chỉ màn (phân hệ + khoá) — mở màn vẫn lọc quyền như thường, mất quyền ⇒ ghim tự ẩn ──
+# ── Ghim theo người (0098): địa chỉ màn (phân hệ + khoá) — mở màn vẫn lọc quyền như thường, mất quyền ⇒ ghim tự ẩn. Khoá màn TRỐNG = ghim cả PHÂN HỆ
+# (thanh bên trái — ADR 0255): vẫn chỉ là địa chỉ, người ghim rồi mất quyền phân hệ ⇒ ghim tự ẩn ──
 
 class PinIn(Input):
     workspace: str = field("Phân hệ", max_length=40, hidden=True)   # app điền từ màn đang xem — không ai gõ khoá màn
-    key: str = field("Màn", max_length=80, hidden=True)
+    key: str = field("Màn", "", max_length=80, hidden=True, help="Trống = ghim cả phân hệ lên thanh bên")
 
 
 def _pin_ref(inp: PinIn) -> tuple[str, str]:
-    if not re.fullmatch(r"[a-z_]+", inp.workspace) or not re.fullmatch(r"[a-z0-9_-]{1,80}", inp.key):
+    if not re.fullmatch(r"[a-z_]+", inp.workspace) or not re.fullmatch(r"([a-z0-9_-]{1,80})?", inp.key):
         raise Invalid("Màn không hợp lệ")
     return inp.workspace, inp.key
 
 
 @m.command("pin", resource=None, title="Ghim lên sidebar", agent="allow", risk="low")   # 0144: của riêng người dùng, không phải quyền
 async def pin(ctx: Ctx, inp: PinIn) -> dict[str, Any]:
-    """Ghim một màn (của phân hệ, hoặc app tự ghép) lên đầu sidebar của CHÍNH người dùng — chỉ người đó thấy. Ghim rồi ⇒ giữ nguyên."""
+    """Ghim một màn (của phân hệ, hoặc app tự ghép) lên đầu sidebar của CHÍNH người dùng — chỉ người đó thấy; khoá màn trống ⇒ ghim cả phân hệ lên thanh
+    bên trái. Ghim rồi ⇒ giữ nguyên."""
+    ws, key = _pin_ref(inp)
+    if not key and ws not in {w.key for w in screens.assemble()}:
+        raise NotFound(f"Không có phân hệ {ws}")
     await ctx.exec("""INSERT INTO core.user_pins (workspace, key, position)
-                      VALUES (%s, %s, (SELECT coalesce(max(position), 0) + 1 FROM core.user_pins)) ON CONFLICT DO NOTHING""",
-                   _pin_ref(inp))
+                      VALUES (%s, %s, (SELECT coalesce(max(position), 0) + 1 FROM core.user_pins)) ON CONFLICT DO NOTHING""", (ws, key))
     return {"pinned": True, "summary": "Đã ghim lên sidebar"}
 
 
 @m.command("unpin", resource=None, title="Bỏ ghim", agent="allow", risk="low")
 async def unpin(ctx: Ctx, inp: PinIn) -> dict[str, Any]:
-    """Bỏ một màn khỏi phần ghim của chính người dùng (màn ghim mặc định theo vai vẫn hiện). Ghim còn lưu KHOÁ CŨ của màn đã gộp vào màn này
-    (``Screen.aliases``, 1.59 — màn gộp từ nhiều màn) bỏ cùng lúc — người bấm bỏ ghim trên màn họ đang thấy."""
+    """Bỏ một màn (hoặc cả phân hệ, khoá trống) khỏi phần ghim của chính người dùng (màn / phân hệ mặc định theo vai vẫn hiện). Ghim còn lưu KHOÁ CŨ của màn
+    đã gộp vào màn này (``Screen.aliases``, 1.59 — màn gộp từ nhiều màn) bỏ cùng lúc — người bấm bỏ ghim trên màn họ đang thấy."""
     ws, key = _pin_ref(inp)
     old = [a for w in screens.assemble() if w.key == ws for sc in w.screens if sc.key == key for a in sc.aliases]
     n = await ctx.exec("DELETE FROM core.user_pins WHERE key = %s AND workspace = %s OR key = ANY(%s)", (key, ws, old))
@@ -707,7 +711,7 @@ m.dataset(
 )
 
 
-# Nhật ký nhập file (0168 §2) + hạn giữ khoá chống lặp (0177 §2) + hạng trợ lý AI (0193) + kỹ năng trợ lý (0198) + soạn giúp form (0250) — đăng ký thao tác vào module ``core``;
+# Nhật ký nhập file (0168 §2) + hạn giữ khoá chống lặp (0177 §2) + hạng trợ lý AI (0193) + kỹ năng trợ lý (0198) + soạn giúp form (0250) + thanh bên theo vai (0255) — đăng ký thao tác vào module ``core``;
 # nạp sau cùng vì chúng dùng ``m`` ở trên
 from barista.kernel import (  # noqa: E402, F401
     ai_hints,
@@ -720,5 +724,6 @@ from barista.kernel import (  # noqa: E402, F401
     history,
     idempotency_log,
     import_log,
+    rail,
     record_files,
 )

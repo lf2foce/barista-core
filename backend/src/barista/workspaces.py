@@ -13,7 +13,7 @@ from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
-from barista.kernel import clock, company_settings, executor, needs, packs, registry, screens, ui, vocab
+from barista.kernel import clock, company_settings, executor, needs, packs, rail, registry, screens, ui, vocab
 from barista.kernel.executor import can_run
 from barista.kernel.fields import DEFAULT_COUNTRY, NATIONAL
 from barista.kernel.forms import field_specs
@@ -148,11 +148,13 @@ def role_home(role: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
 
 
 class Personal:
-    """Phần menu RIÊNG của một người (0098), nạp từ DB bằng quyền người đó: màn riêng (app tự ghép…) theo phân hệ + ghim theo người."""
+    """Phần menu RIÊNG của một người (0098), nạp từ DB bằng quyền người đó: màn riêng (app tự ghép…) theo phân hệ + ghim theo người (khoá màn trống = ghim cả
+    phân hệ — ADR 0255) + phần công ty đã đặt cho thanh bên của vai người đó (``rail``; None = theo mặc định của gói)."""
 
-    def __init__(self, screens_: dict[str, list[Screen]] | None = None, pins: list[tuple[str, str]] | None = None) -> None:
+    def __init__(self, screens_: dict[str, list[Screen]] | None = None, pins: list[tuple[str, str]] | None = None, rail: list[str] | None = None) -> None:
         self.screens = screens_ or {}
         self.pins = pins or []
+        self.rail = rail
 
 
 def _personal_screen(d: dict[str, Any]) -> Screen | None:
@@ -177,6 +179,9 @@ async def personal(p: Principal) -> Personal:
     r = await executor.query(p, "core.pins", {})
     if r.ok and isinstance(r.output, list):
         out.pins = [(str(x["workspace"]), str(x["key"])) for x in r.output]
+    r = await executor.query(p, "core.my_rail", {})
+    if r.ok and isinstance(r.output, dict) and isinstance(r.output.get("workspaces"), list):
+        out.rail = [str(k) for k in r.output["workspaces"]]
     return out
 
 
@@ -201,11 +206,20 @@ def manifest(p: Principal, tenant_name: str, team_name: str = "", mine: Personal
             spaces.append({"key": w.key, "title": w.title, "icon": w.icon, "screens": screens_, **({} if w.phone else {"phone": False})})
     visible = {s["key"]: w["key"] for w in spaces for s in w["screens"]}
     by_place = {(w["key"], s["key"]) for w in spaces for s in w["screens"]}
+    # thanh bên trái (ADR 0255): "Theo vai" (công ty đã đặt, không thì gói khai) + "Đã ghim" (phân hệ người này ghim) — chỉ phân hệ họ THẤY; vai không có mặc định
+    # nào thấy được ⇒ không có ``rail`` (app vẽ hết phân hệ như trước). ``workspaces[].pinned`` = phân hệ chính họ ghim (kể cả khi đã nằm ở "Theo vai")
+    mine_ws = [ws for ws, k in mine.pins if not k]
+    for w in spaces:
+        if w["key"] in mine_ws:
+            w["pinned"] = True
+    side = rail.build(mine.rail if mine.rail is not None else rail.pack_default(p.role, p.packs), mine_ws, [w["key"] for w in spaces])
     # ghim của chính người đó lên trước (đúng phân hệ đã ghim), rồi ghim mặc định theo vai — một màn một lần. Ghim lưu khoá của màn đã gộp vào màn khác
     # (``Screen.aliases``) ⇒ trỏ tới màn thay nó, đúng phân hệ của màn đó
     moved = {old: (w.key, s.key) for w in workspaces() for s in w.screens for old in s.aliases if (w.key, s.key) in by_place}
     pinned = []
     for ws, k in mine.pins:
+        if not k:   # ghim cả phân hệ ⇒ thanh bên (``rail``), không phải màn ghim
+            continue
         place = (ws, k) if (ws, k) in by_place else moved.get(k) or ((visible[k], k) if k in visible else None)   # màn đổi phân hệ mà giữ khoá ⇒ ghim vẫn đúng
         if place and not any((x["workspace"], x["key"]) == place for x in pinned):
             pinned.append({"workspace": place[0], "key": place[1], "mine": True})
@@ -223,6 +237,7 @@ def manifest(p: Principal, tenant_name: str, team_name: str = "", mine: Personal
                    "country": (c := country or DEFAULT_COUNTRY),
                    "phone": {"code": NATIONAL[c][0], "trunk": NATIONAL[c][1]} if c in NATIONAL else None},
         "workspaces": spaces,
+        **({"rail": side} if side else {}),
         "pins": pinned,
         "inbox": _screen(p, INBOX),
         "account": account,   # trường THÊM (19/11/2026): app cũ bỏ qua

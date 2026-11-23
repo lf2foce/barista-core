@@ -1,19 +1,26 @@
 "use client";
 
-import { Layers, ListChecks, LogOut, MessagesSquare, Moon, Search, Sun, SunMoon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { Layers, LayoutGrid, ListChecks, LogOut, MessagesSquare, Moon, Pin, Search, Sun, SunMoon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { api } from "@/lib/api";
+import { newKey } from "@/lib/idempotency";
+import { railCurrent, railLayout, railWorkspaceKeys, type RailItem, type RailLayout } from "@/lib/rail";
 import { badgeText, messagesBadge, railSections, sectionId, type Section } from "@/lib/talk";
 import { setTheme } from "@/lib/theme";
+import type { WorkspaceSpec } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useMedia } from "@/hooks/use-media";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Initials } from "@/components/primitives";
 import { SfIcon } from "@/components/icons";
 import { Orb } from "./column";
 import { useChat } from "./chat-context";
 import { useDesk } from "./desk-context";
 
-// Thanh bên trái kiểu Lark (Rail.swift): Tìm · Trợ lý · Việc (bàn việc, 0094) · Tin nhắn · một mục mỗi phân hệ của manifest · người dùng ở đáy.
-// Server quyết ai thấy phân hệ / màn nào; web chỉ vẽ.
+// Thanh bên trái kiểu Lark (Rail.swift): Tìm · Trợ lý · Việc (bàn việc, 0094) · Tin nhắn · phân hệ · người dùng ở đáy.
+// ADR 0255: phân hệ KHÔNG vẽ hết — "Theo vai" (gói / công ty khai) + "Đã ghim" (người dùng ghim cả phân hệ) + nút "Tất cả mục" (panel liệt kê hết, mỗi dòng có nút
+// ghim; tìm = ⌘K có sẵn). Vai không có mặc định nào ⇒ vẽ hết như trước. Server quyết ai thấy phân hệ / màn nào và phân hệ nào ở nhóm nào; web chỉ vẽ.
 
 /** Phím tắt chuyển mục: Alt+1…9 (⌘/Ctrl+số là phím chuyển tab của trình duyệt — trang không chặn được). */
 export const sectionKey = (i: number) => (i < 9 ? `Alt+${i + 1}` : "");
@@ -21,12 +28,25 @@ export const sectionKey = (i: number) => (i < 9 ? `Alt+${i + 1}` : "");
 export function Rail() {
   const desk = useDesk();
   const chat = useChat();
-  const sections = railSections((desk.manifest?.workspaces ?? []).map((w) => w.key));
+  const layout = railLayout(desk.manifest);
+  const sections = railSections(railWorkspaceKeys(desk.manifest));
   // trình tạo app (0098) là chỗ RIÊNG mở từ một mục (vd App của tôi): thanh bên vẫn sáng mục đó — không trông như "về trợ lý thường"
   const current = sectionId(chat.builder && desk.section.kind === "assistant" ? chat.builder.origin : desk.section);
   const badge = messagesBadge(desk.unread, desk.talk);
   const keyOf = (s: Section) => sectionKey(sections.findIndex((x) => sectionId(x) === sectionId(s)));
   const firstName = desk.manifest?.user.name.trim().split(/\s+/).pop() ?? "bạn";
+  // phân hệ đang mở nhưng thanh bên không hiện (mở từ "Tất cả mục") vẫn có một mục sáng; màn hẹp chỉ có phần cốt lõi nên cần cả phân hệ đang mở dù đã ở nhóm
+  const here = railCurrent(layout, current.startsWith("ws:") ? current.slice(3) : null);
+  const workspaceButton = (w: WorkspaceSpec, className?: string) => {
+    const s: Section = { kind: "workspace", key: w.key };
+    const on = current === sectionId(s);
+    const k = keyOf(s);
+    return (
+      <RailButton key={w.key} title={w.title} selected={on} className={className} help={`${w.title} — ${w.screens.length} màn${k ? ` (${k})` : ""}`} onClick={() => desk.select(s)}>
+        <SfIcon name={w.icon} className="size-[18px]" filled={on} />
+      </RailButton>
+    );
+  };
 
   return (
     // < 640px: thanh dưới (order-last trong khung cột dọc của Shell), một hàng cuộn ngang; vạch ngăn ẩn, mục phân hệ trải phẳng vào hàng (contents)
@@ -59,38 +79,107 @@ export function Rail() {
       </RailButton>
       <span className="my-1 h-px w-9 bg-foreground/10 max-sm:hidden" aria-hidden />
       <div className="no-scrollbar flex min-h-0 w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto max-sm:contents">
-        {(desk.manifest?.workspaces ?? []).map((w) => {
-          const s: Section = { kind: "workspace", key: w.key };
-          const on = current === sectionId(s);
-          const k = keyOf(s);
-          return (
-            <RailButton key={w.key} title={w.title} selected={on} help={`${w.title} — ${w.screens.length} màn${k ? ` (${k})` : ""}`} onClick={() => desk.select(s)}>
-              <SfIcon name={w.icon} className="size-[18px]" filled={on} />
-            </RailButton>
-          );
-        })}
+        {layout.grouped ? (
+          <>
+            <RailGroup label="Theo vai">{layout.role.map((w) => workspaceButton(w))}</RailGroup>
+            {layout.pinned.length ? <RailGroup label="Đã ghim">{layout.pinned.map((w) => workspaceButton(w))}</RailGroup> : null}
+            {here ? workspaceButton(here.ws, here.onRail ? "sm:hidden" : undefined) : null}
+          </>
+        ) : (
+          layout.all.map((i) => workspaceButton(i.ws))
+        )}
       </div>
+      {layout.grouped ? <AllItems layout={layout} /> : null}   {/* ngoài vùng cuộn: luôn thấy, ngay trên người dùng */}
       <PersonaMenu />
     </nav>
   );
 }
 
-function RailButton({ title, help, selected = false, badge = 0, unknown = false, onClick, children }: { title: string; help: string; selected?: boolean; badge?: number; unknown?: boolean; onClick: () => void; children: React.ReactNode }) {
-  // mục đang chọn luôn trong tầm mắt (thanh dưới điện thoại cuộn ngang; thanh trái nhiều phân hệ cuộn dọc)
-  const ref = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (selected) ref.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [selected]);
+/** Một nhóm phân hệ trên thanh bên (vạch ngăn + tên nhóm). Màn hẹp (thanh dưới) chỉ có phần cốt lõi + "Tất cả mục" ⇒ nhóm ẩn. */
+function RailGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <button
-      ref={ref}
-      type="button"
-      onClick={onClick}
-      title={help}
-      aria-label={badge > 0 ? `${title}, ${badge} chưa đọc` : title}
-      aria-current={selected ? "page" : undefined}
-      className="group flex w-[76px] shrink-0 flex-col items-center gap-1 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:w-[64px] max-sm:gap-0.5"
-    >
+    <div role="group" aria-label={label} className="flex w-full flex-col items-center gap-1.5 max-sm:hidden">
+      <span className="my-0.5 h-px w-9 bg-foreground/10" aria-hidden />
+      <span className="t12 text-muted-foreground">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+const RAIL_BUTTON = "group flex w-[76px] shrink-0 flex-col items-center gap-1 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:w-[64px] max-sm:gap-0.5";
+
+/** Nút "Tất cả mục": panel liệt kê MỌI phân hệ người này thấy, bấm tên ⇒ mở, bấm ghim ⇒ ghim / bỏ ghim cả phân hệ lên thanh bên (của chính mình). Ô tìm là ⌘K sẵn có. */
+function AllItems({ layout }: { layout: RailLayout }) {
+  const desk = useDesk();
+  const narrow = useMedia("(max-width: 639px)");
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const toggle = async (i: RailItem) => {
+    setBusy(i.ws.key);
+    try {
+      const r = await api.command(i.pinned ? "core.unpin" : "core.pin", { workspace: i.ws.key }, newKey());
+      if (r.status !== "ok") desk.show(r.error || "Không ghim được", true);
+      else await desk.reloadManifest();
+    } catch (e) {
+      desk.show(e instanceof Error ? e.message : "Không ghim được", true);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <>
+      <span className="my-0.5 h-px w-9 bg-foreground/10 max-sm:hidden" aria-hidden />
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger className={RAIL_BUTTON} title="Mọi phân hệ bạn được dùng — ghim cái hay dùng lên thanh bên" aria-label="Tất cả mục">
+          <RailFace title="Tất cả mục" selected={open}>
+            <LayoutGrid className="size-[18px]" />
+          </RailFace>
+        </PopoverTrigger>
+        <PopoverContent side={narrow ? "top" : "right"} align={narrow ? "center" : "end"} sideOffset={8}
+                        className="max-h-[min(70vh,560px)] w-80 max-w-[calc(100vw-1.5rem)] gap-1 overflow-y-auto p-1.5">
+          <button type="button" onClick={() => { setOpen(false); desk.setPaletteOpen(true); }}
+                  className="t14 flex h-9 w-full items-center gap-2 rounded-lg border border-border bg-surface px-2.5 text-left text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+            <Search className="size-4 shrink-0" aria-hidden />
+            <span className="min-w-0 flex-1 truncate">Tìm màn, khách, giao dịch…</span>
+            <span className="t12 shrink-0" aria-hidden>⌘K</span>
+          </button>
+          <p className="t12m px-2 pt-2 pb-0.5 text-muted-foreground">Tất cả mục · {layout.all.length}</p>
+          <ul>
+            {layout.all.map((i) => (
+              <li key={i.ws.key} className="flex items-center gap-0.5 rounded-lg hover:bg-accent">
+                <button type="button" onClick={() => { setOpen(false); desk.select({ kind: "workspace", key: i.ws.key }); }}
+                        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-foreground/[0.06] text-muted-foreground"><SfIcon name={i.ws.icon} className="size-4" /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="t14 block truncate">{i.ws.title}</span>
+                    <span className="t12 block truncate text-muted-foreground">{allSub(i)}</span>
+                  </span>
+                </button>
+                <button type="button" disabled={busy === i.ws.key} onClick={() => void toggle(i)} aria-pressed={i.pinned}
+                        aria-label={`${i.pinned ? "Bỏ ghim" : "Ghim"} ${i.ws.title}`} title={i.pinned ? "Bỏ ghim khỏi thanh bên" : "Ghim lên thanh bên"}
+                        className={cn("grid size-8 shrink-0 place-items-center rounded-md outline-none hover:bg-foreground/[0.07] focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+                                      i.pinned ? "text-primary" : "text-muted-foreground")}>
+                  <Pin className="size-4" {...(i.pinned ? { fill: "currentColor" } : {})} aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </PopoverContent>
+      </Popover>
+    </>
+  );
+}
+
+/** Dòng phụ của một mục trong "Tất cả mục": nằm ở đâu trên thanh bên (một mục chỉ hiện một lần — mặc định theo vai thắng, ghim vẫn ghi nhận). */
+function allSub(i: RailItem): string {
+  if (i.place === "role") return i.pinned ? "Hiện sẵn theo vai · đã ghim" : "Hiện sẵn theo vai";
+  if (i.place === "pinned") return "Đã ghim";
+  return `${i.ws.screens.length} màn`;
+}
+
+function RailFace({ title, selected, badge = 0, unknown = false, children }: { title: string; selected: boolean; badge?: number; unknown?: boolean; children: React.ReactNode }) {
+  return (
+    <>
       <span
         className={cn(
           "relative grid h-[34px] w-11 place-items-center rounded-[10px] transition-colors max-sm:h-7",
@@ -106,6 +195,29 @@ function RailButton({ title, help, selected = false, badge = 0, unknown = false,
         ) : null}
       </span>
       <span className={cn("line-clamp-2 w-[76px] text-center text-[12px] leading-tight max-sm:line-clamp-1 max-sm:w-[64px]", selected ? "font-medium text-primary" : "text-muted-foreground")}>{title}</span>
+    </>
+  );
+}
+
+function RailButton({ title, help, selected = false, badge = 0, unknown = false, className, onClick, children }: { title: string; help: string; selected?: boolean; badge?: number; unknown?: boolean; className?: string; onClick: () => void; children: React.ReactNode }) {
+  // mục đang chọn luôn trong tầm mắt (thanh dưới điện thoại cuộn ngang; thanh trái nhiều phân hệ cuộn dọc)
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (selected) ref.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [selected]);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={onClick}
+      title={help}
+      aria-label={badge > 0 ? `${title}, ${badge} chưa đọc` : title}
+      aria-current={selected ? "page" : undefined}
+      className={cn(RAIL_BUTTON, className)}
+    >
+      <RailFace title={title} selected={selected} badge={badge} unknown={unknown}>
+        {children}
+      </RailFace>
     </button>
   );
 }

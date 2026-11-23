@@ -91,7 +91,8 @@ export type ScreenSpec = {
   row_click?: string;
 };
 
-export type WorkspaceSpec = { key: string; title: string; icon: string; screens: ScreenSpec[] };
+/** `pinned`: người xem tự ghim CẢ PHÂN HỆ này lên thanh bên (ADR 0255) — kể cả khi nó đã nằm ở nhóm "Theo vai". Core cũ không gửi. */
+export type WorkspaceSpec = { key: string; title: string; icon: string; screens: ScreenSpec[]; pinned?: boolean };
 
 export type Manifest = {
   user: { id: string; name: string; email: string; role: string; role_label: string; team: string | null };
@@ -100,6 +101,9 @@ export type Manifest = {
   inbox: ScreenSpec | null;
   /** `mine`: ghim của CHÍNH người đó (0098) — bỏ ghim được; không có ⇒ ghim mặc định theo vai. */
   pins: { workspace: string; key: string; mine?: boolean }[];
+  /** Thanh bên trái theo vai (ADR 0255): khoá phân hệ của nhóm "Theo vai" (công ty / gói khai) và "Đã ghim" (người xem ghim, không lặp ở "Theo vai"), đã lọc quyền,
+   *  đúng thứ tự hiện. Không có ⇒ vai không có mặc định nào ⇒ thanh bên vẽ hết `workspaces` như trước. Core cũ không gửi. */
+  rail?: { role: string[]; pinned: string[] };
   /** Màn VIỆC chỉ ở bàn việc (0094) — vẫn mở được (lời chào trợ lý, thông báo, ⌘K), không lặp ở menu. */
   desk?: (ScreenSpec & { workspace: string })[];
   /** Màn CÁ NHÂN (trí nhớ của trợ lý…) — vẽ trong menu tài khoản, không ở menu phân hệ. Core cũ không gửi. */

@@ -100,7 +100,7 @@ type Ctx = _Ctx
 # gọi model NGOÀI giao dịch.
 type Prep = _Prep
 
-__version__ = "1.81.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
+__version__ = "1.82.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
 #                         1.7: gộp ba nhánh cùng mang 1.6 — regulations.declare / compare / known_codes (0154) · Module.inbound (webhook VÀO từ nhà cung cấp) · Pack(records=…) cấu hình mặc định qua lệnh của module sở hữu (0153)
 #                              · Module.consumes nhận thêm họ outreach / doc_read / paper_draft — dịch vụ lõi mở cho gói ngoài (0155)
 #                         1.8: NeedsConfirmation — lệnh tự biết việc trợ lý định làm chạm lịch / dữ liệu của NGƯỜI KHÁC ⇒ cả lệnh thành thẻ đề xuất (0158)
@@ -247,6 +247,9 @@ __version__ = "1.81.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                              trong phân hệ nhiều màn (màn đầu ⇒ vào phân hệ là vào thẳng). Migration word/002 (cột chat) — chỉ thêm, không bảo trì
 #                         1.81 (CHỈ THÊM): ``Screen(needs_plug="<module>.<điểm>")`` — màn chỉ lên menu khi một gói ĐANG BẬT cắm vào điểm đó (Soạn thảo cần
 #                              trình soạn văn bản mới ``papers.studio_doc`` — gói Word); gói tắt ⇒ màn ẩn, phân hệ mở như thường. Không migration
+#                         1.82 (CHỈ THÊM, ADR 0255 lát 1): ``Pack(rail={vai: (phân hệ…)})`` — phân hệ hiện sẵn trên thanh bên trái theo vai (gói khai cho vai của mình
+#                              hoặc của gói khác, như ``pins``; tối đa 6; công ty đổi được, người ghim thêm được). Manifest thêm ``rail`` + ``workspaces[].pinned``;
+#                              ``core.pin`` / ``core.unpin`` nhận khoá trống = ghim cả PHÂN HỆ (migration base/111 nới CHECK, không bảo trì)
 
 __all__ = [
     "VN",

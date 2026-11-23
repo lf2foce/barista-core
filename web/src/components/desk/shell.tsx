@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { undoOutcome } from "@/lib/autonomy";
 import { newKey } from "@/lib/idempotency";
 import { shortcutFor } from "@/lib/shortcuts";
+import { railWorkspaceKeys } from "@/lib/rail";
 import { railSections } from "@/lib/talk";
 import { cn } from "@/lib/utils";
 import { DialogHost } from "@/components/forms/dialogs";
@@ -62,7 +63,7 @@ function Shell() {
       if (sc.kind === "palette") d.setPaletteOpen(!d.paletteOpen);
       else if (sc.kind === "rail") d.toggleRail();
       else {
-        const s = railSections((d.manifest?.workspaces ?? []).map((w) => w.key))[sc.index];
+        const s = railSections(railWorkspaceKeys(d.manifest))[sc.index];
         if (s) d.select(s);
       }
     };

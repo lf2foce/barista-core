@@ -8,7 +8,7 @@ import {
   BookText, Brain, Briefcase, ChartBarBig, Settings, Send, Stethoscope, Paperclip, ToggleRight, SquarePen, Files, Hourglass,
   AppWindow, ArrowRightLeft, ShoppingBag, Zap, Book, CalendarPlus, ShoppingCart, ChartPie, ClipboardCheck, ShieldAlert, Folder, SquareFunction,
   Globe, ListTree, ListOrdered, Star, UserCog, UsersRound, CalendarSearch, IdCard, Phone, PhoneCall, Grid2x2, Table, Tag, Target, Type, Timer,
-  Trophy, Video, FileSearch, Image, Flag, List, Link,
+  Trophy, Video, FileSearch, Image, Flag, List, Link, PanelLeft,
   type LucideIcon,
 } from "lucide-react";
 
@@ -18,6 +18,7 @@ const MAP: Record<string, LucideIcon> = {
   "eye.trianglebadge.exclamationmark": EyeOff,   // Ai thấy thông tin gì (0239)
   "questionmark.bubble": MessageCircleQuestion,   // Câu hỏi cấu hình công ty
   "text.bubble": MessageSquareText,               // Câu gợi ý trợ lý theo vai
+  "sidebar.left": PanelLeft,                      // Thanh bên theo vai (0255)
   "arrow.left.arrow.right.square": ArrowLeftRight,
   "list.bullet.clipboard": ListTodo,
   "photo.on.rectangle": Image,

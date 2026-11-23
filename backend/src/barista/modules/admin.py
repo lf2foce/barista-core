@@ -3002,6 +3002,10 @@ _ADMIN_SCREENS = (
     Screen("role_tools", "Công cụ trợ lý theo vai", "person.crop.rectangle.stack", "core.role_tools", group="Hệ thống",
            row_actions=(A("core.set_role_tools", "Đổi", bind={"role": "role"}, prefill={"groups": "groups_in", "tools": "tools_in"}, style="primary"),
                         A("core.clear_role_tools", "Để trợ lý tự tuyển", bind={"role": "role"}, when={"state": ["set"]}))),
+    # thanh bên trái theo vai (ADR 0255): phân hệ hiện sẵn của vai là dữ liệu công ty (gói khai mặc định, công ty đổi, nâng gói không ghi đè); không cấp quyền
+    Screen("role_rail", "Thanh bên theo vai", "sidebar.left", "core.role_rail", group="Hệ thống", pinnable=False,
+           row_actions=(A("core.set_role_rail", "Đổi", bind={"role": "role"}, prefill={"workspaces": "workspaces_in"}, style="primary"),
+                        A("core.clear_role_rail", "Về mặc định của gói", bind={"role": "role"}, when={"state": ["set"]}))),
     Screen("agent", "Trợ lý được làm gì", "sparkles", "admin.agent_policies", group="Hệ thống",
            actions=(A("admin.set_agent_policy", style="primary"), A("admin.set_agent_trust", "Ngưỡng tin cậy")),
            row_actions=(A("admin.set_agent_policy", "Đổi", bind={"command": "id"},
@@ -3033,7 +3037,7 @@ _GROUP_OF = {
     **dict.fromkeys(("store", "packs"), "Gói & ứng dụng"),
     **dict.fromkeys(("agent", "agent_actions", "ai_usage"), "Trợ lý AI"),
     **dict.fromkeys(("vocabulary", "timezone", "country", "field_defs", "import_retention", "import_mappings", "idempotency_retention", "agent_groups",
-                     "role_hints", "role_tools", "config_questions"), "Nâng cao"),
+                     "role_hints", "role_tools", "role_rail", "config_questions"), "Nâng cao"),
     **dict.fromkeys(("audit", "defaults_drift"), "Hệ thống"),
 }
 _GROUP_ORDER = ("Công ty", "Người & quyền", "Gói & ứng dụng", "Trợ lý AI", "Nâng cao", "Nhà vận hành", "Hệ thống")

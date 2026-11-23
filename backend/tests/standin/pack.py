@@ -709,6 +709,8 @@ def register() -> Module:
          vocab={"service_order": "Đơn dịch vụ"}, rank_metric="orderdesk.metric_signed",
          # bộ công cụ trợ lý (0218): gói ngành góp nhóm của mình vào bộ của vai gói khác — sale / trưởng nhóm mang cả nhóm đơn, giám đốc / kế toán vài công cụ
          tools={"sale": ("orderdesk",), "team_lead": ("orderdesk",), "director": ("orderdesk.list", "orderdesk.report_year"), "accountant": ("orderdesk.list",)},
+         # thanh bên theo vai (0255, 1.82): gói ngành khai phân hệ hiện sẵn cho vai của gói khác; khoá không có phân hệ nào ("ghost_ws") phải bị bỏ qua lặng lẽ
+         rail={"director": ("accounting", "sales", "ghost_ws"), "sale": ("sales", "kpi")},
          # câu gợi ý / câu xuyên module gói GÓP cho vai của gói khác (1.10): chỉ hiện khi gói bật và người đó chạy được thao tác; mục thứ ba = số cả công ty
          hints={"sale": Hints(suggest=(("orderdesk.list", "Tôi đang có những đơn dịch vụ nào chưa ký?"),)),
                 "director": Hints(suggest=(("orderdesk.report_year", "Năm nay công ty ký bao nhiêu đơn dịch vụ, so với chỉ tiêu thế nào?", "orderdesk"),),
