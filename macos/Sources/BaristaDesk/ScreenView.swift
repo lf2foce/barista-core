@@ -742,8 +742,12 @@ struct KPIRow: View {
     var onEdit: ((ActionSpec) -> Void)? = nil   // app tự ghép (0098): ô số có nút sửa ⇒ menu chuột phải
     var body: some View {
         // ≤ 6 ô giãn đều cùng một hàng khi đủ rộng; hẹp vẫn ít nhất hai cột; dòng cuối ít ô ⇒ ô giãn hết dòng (web KpiRow)
-        KPIFlow(spacing: 10) {
-            ForEach(kpis, id: \.label) { k in KPITile(k: k, inset: inset, onEdit: onEdit) }
+        // chưa có gì thì ẩn (23/11/2026): ô 0 / trống không vẽ, cả hàng 0 thì không có hàng (cùng web `shownKpis`)
+        let shown = kpis.filter(\.shown)
+        if !shown.isEmpty {
+            KPIFlow(spacing: 10) {
+                ForEach(shown, id: \.label) { k in KPITile(k: k, inset: inset, onEdit: onEdit) }
+            }
         }
     }
 }
@@ -789,7 +793,7 @@ struct DataTable<Menu: View>: View {
 
     var body: some View {
         Table(page.rows, selection: $selection) {
-            TableColumnForEach(page.columns) { col in
+            TableColumnForEach(page.shownColumns) { col in
                 TableColumn(col.label) { row in
                     Cell(column: col, value: row.values[col.key])
                 }
@@ -844,9 +848,9 @@ struct DataTable<Menu: View>: View {
     /// Chạm MỘT lần (màn khai ``row_click``): chọn thẻ rồi mở luôn; giữ = menu thao tác như cũ.
     var activate: ((Row) -> Void)? = nil
 
-    private var title: Column? { page.columns.first { $0.format == "text" } ?? page.columns.first { $0.format != "badge" } }
-    private var badges: [Column] { page.columns.filter { $0.format == "badge" } }
-    private var rest: [Column] { page.columns.filter { $0.key != title?.key && $0.format != "badge" } }
+    private var title: Column? { page.shownColumns.first { $0.format == "text" } ?? page.shownColumns.first { $0.format != "badge" } }
+    private var badges: [Column] { page.shownColumns.filter { $0.format == "badge" } }
+    private var rest: [Column] { page.shownColumns.filter { $0.key != title?.key && $0.format != "badge" } }
 
     var body: some View {
         ScrollView {

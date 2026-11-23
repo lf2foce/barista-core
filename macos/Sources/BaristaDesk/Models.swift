@@ -253,6 +253,29 @@ struct TableViews: Decodable, Hashable {
     let timeline: TimelineData?   // dòng thời gian (0222): server dựng sẵn cả khối, không tham chiếu cột
 }
 
+extension KPI {
+    /// Ô có gì để nói: không rỗng, không gạch, không bằng 0 (cùng web `isBlank` / `shownKpis`).
+    var shown: Bool {
+        switch value {
+        case .null: return false
+        case .number(let n): return n != 0
+        case .string(let s): return !(s.isEmpty || s == "—" || s == "-" || Double(s) == 0)
+        default: return true
+        }
+    }
+}
+
+extension TablePage {
+    /// Cột còn hiện: bỏ cột mà MỌI dòng đều trống (null / "" / "—"); số 0 vẫn là dữ liệu (cùng web `shownColumns`).
+    var shownColumns: [Column] {
+        guard !rows.isEmpty else { return columns }
+        func empty(_ v: JSON?) -> Bool {
+            switch v { case .none, .some(.null): true; case .some(.string(let s)): s.isEmpty || s == "—"; default: false }
+        }
+        return columns.filter { c in rows.contains { !empty($0.values[c.key]) } }
+    }
+}
+
 struct TablePage: Decodable {
     let title: String
     let kpis: [KPI]

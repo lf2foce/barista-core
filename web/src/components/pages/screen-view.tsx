@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 import { saveBlob } from "@/lib/download";
 import { applies, openInput, rowClick } from "@/lib/form";
 import { ScreenFiltersContext } from "./filter-context";
-import { text, number, toNumber } from "@/lib/format";
+import { text, number, titleTail, toNumber } from "@/lib/format";
 import type { BoardCard, BoardViewSpec, FieldSpec, Input, Option, Page, ScreenSpec } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { actionClass, LoadError, Spinner } from "@/components/primitives";
@@ -18,7 +18,7 @@ import { Callout } from "@/components/blocks/misc";
 import { useDesk } from "@/components/desk/desk-context";
 import { useChat } from "@/components/desk/chat-context";
 import { SoloScreenFrame, useFullFrame } from "@/components/desk/full-frame";
-import { FrameHeadProvider, isSelfFramed, useBareFrame, useFrameHead } from "@/components/desk/frame-context";
+import { FrameHeadProvider, isSelfFramed, useBareFrame, useFrameHead, useFrameSub } from "@/components/desk/frame-context";
 import { selectClass } from "@/components/forms/form-body";
 import { DatePicker } from "@/components/forms/date-picker";
 import { CardView } from "./card";
@@ -174,6 +174,8 @@ export function ScreenView({
   const side = !!spec.filters_side && spec.filters.some((f) => !f.group);
   const head = useFrameHead();
   const tools = head?.tools ?? null;
+  // tiêu đề server gửi mang kỳ / phạm vi ("Sổ giao dịch · năm 2026") ⇒ phần riêng thành phụ đề đầu thẻ (trước đây bị bỏ, chỉ hiện tên menu)
+  useFrameSub(tools ? head : null, table ? titleTail(table.title, spec.title) : null);
   const renderFilter = (f: FieldSpec, stacked = false) => (
     <Filter key={f.key} f={f} value={filters[f.key]} options={f.options ?? options[f.key]} onApply={applyFilter(f.key)} stacked={stacked} />
   );
@@ -291,7 +293,7 @@ export function ScreenView({
             : b.type === "callout" ? <Callout key={i} {...b} onAction={(a) => desk.openForm(a, { onDone: changed })} />
             : null)}
           <HeaderCharts page={table} />
-          {table.rows.length === 0 && Object.keys(filters).length === 0 && table.kpis.every((k) => k.value === 0 || k.value === null || k.value === "" || k.value === "—") ? null : <KpiRow kpis={table.kpis} inset />}
+          <KpiRow kpis={table.kpis} inset />
           {table.note ? <ClampNote text={table.note} /> : null}
           {/* hàng ngay TRÊN bảng: góc nhìn (nếu có) bên trái, Xuất Excel bên phải — nút thuộc về cái bảng nó xuất. Không có góc nhìn ⇒ `excelAt` */}
           {excelAt === "head" && tools ? createPortal(exportButton, tools) : null}

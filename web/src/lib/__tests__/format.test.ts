@@ -9,7 +9,10 @@ describe("format (kiểu Việt Nam)", () => {
   it("tiền gọn: tỷ / triệu / đồng", () => {
     expect(f.compactMoney(4_500_000_000)).toBe("4,5 tỷ");
     expect(f.compactMoney(-1_250_000_000)).toBe("-1,25 tỷ");
-    expect(f.compactMoney(12_400_000)).toBe("12 tr");
+    expect(f.compactMoney(12_400_000)).toBe("12,4 tr");
+    expect(f.compactMoney(4_500_000)).toBe("4,5 tr");      // từng hiện "5 tr" (lệch 11%)
+    expect(f.compactMoney(4_550_000)).toBe("4,55 tr");
+    expect(f.compactMoney(455_400_000)).toBe("455 tr");
     expect(f.compactMoney(500_000)).toBe("500.000 đ");
   });
   it("ngày / giờ theo múi giờ Việt Nam", () => {
@@ -43,5 +46,29 @@ describe("format (kiểu Việt Nam)", () => {
     expect(f.kpi(k)).toBe("2 tỷ");
     expect(f.kpi({ ...k, value: null })).toBe("—");
     expect(f.kpi({ ...k, value: 17, format: "number" })).toBe("17");
+  });
+});
+
+describe("chưa có gì thì ẩn (rà UI 23/11/2026)", () => {
+  it("ô số 0 / trống bị bỏ, ô có số giữ nguyên thứ tự", () => {
+    const k = (label: string, value: number | string | null) => ({ label, value });
+    expect(f.shownKpis([k("a", 0), k("b", 3), k("c", null), k("d", "—"), k("e", "0"), k("g", 1.5)]).map((x) => x.label)).toEqual(["b", "g"]);
+    expect(f.shownKpis([k("a", 0), k("b", 0)])).toEqual([]);
+  });
+  it("cột trống ở MỌI dòng bị ẩn; cột có số 0 vẫn giữ", () => {
+    const cols = [{ key: "a" }, { key: "b" }, { key: "c" }];
+    const rows = [{ values: { a: 1, b: null, c: 0 } }, { values: { a: 2, b: "—", c: 5 } }];
+    expect(f.shownColumns(cols, rows).map((c) => c.key)).toEqual(["a", "c"]);
+    expect(f.shownColumns(cols, []).length).toBe(3);
+  });
+  it("phụ đề từ tiêu đề server", () => {
+    expect(f.titleTail("Sổ giao dịch · năm 2026", "Sổ giao dịch")).toBe("năm 2026");
+    expect(f.titleTail("Sổ giao dịch", "Sổ giao dịch")).toBeNull();
+    expect(f.titleTail("Xếp hạng · Giao dịch ký · 11/2026", "Xếp hạng")).toBe("Giao dịch ký · 11/2026");
+  });
+  it("nhãn server áp cho mọi kiểu cột; tông callout đỏ / cam không còn xám", () => {
+    expect(f.cell("local", "text", { local: "Trong công ty" })).toBe("Trong công ty");
+    expect(f.cardToneVar("red")).toBe("var(--bad)");
+    expect(f.cardToneVar("orange")).toBe("var(--warn)");
   });
 });

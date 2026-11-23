@@ -11,8 +11,9 @@ import { EditButton } from "./edit-block";
 import { WhyButton } from "./why-button";
 import { ChartCard } from "@/components/blocks/chart";
 
-export function KpiRow({ kpis, inset = false, onChanged }: { kpis: Kpi[]; inset?: boolean; onChanged?: () => void }) {
+export function KpiRow({ kpis: all, inset = false, onChanged }: { kpis: Kpi[]; inset?: boolean; onChanged?: () => void }) {
   const desk = useDesk();
+  const kpis = fmt.shownKpis(all);   // chưa có gì thì ẩn: ô 0 / trống không vẽ, cả hàng 0 thì không có hàng
   if (!kpis.length) return null;
   return (
     // một ô số đứng riêng thì chiếm cả ô; ≤ 6 ô thì giãn đều cùng một hàng khi đủ rộng (không để ô thứ năm rơi xuống hàng riêng — rà UI 18/11);
@@ -135,12 +136,13 @@ export function DataTable({
       setBusy(false);
     }
   }
+  const columns = fmt.shownColumns(page.columns, page.rows);   // cột trống ở mọi dòng ⇒ ẩn
   return (
     <div className="overflow-auto">
       <table className="t14 w-full min-w-max border-separate border-spacing-0">
         <thead className="sticky top-0 z-10 bg-surface">
           <tr>
-            {page.columns.map((c) => (
+            {columns.map((c) => (
               <th key={c.key} scope="col" className={cn("t12m border-b border-border px-3 py-2 text-left text-muted-foreground", numeric(c) && "text-right")}>
                 {c.label}
               </th>
@@ -172,7 +174,7 @@ export function DataTable({
                 }}
                 className={cn("outline-none focus-visible:bg-accent", onActivate ? "cursor-pointer" : onSelect && "cursor-default", on ? "bg-primary/10" : "hover:bg-accent/60")}
               >
-                {page.columns.map((c) => (
+                {columns.map((c) => (
                   <td key={c.key} className={cn("border-b border-border/60 px-3 py-1.5 align-top", !c.width && "whitespace-nowrap")} style={c.width ? { minWidth: Math.min(c.width, 240) } : undefined}>
                     <Cell c={c} v={row.values[c.key]} />
                   </td>

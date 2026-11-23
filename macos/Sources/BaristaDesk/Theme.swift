@@ -64,10 +64,12 @@ enum Fmt {
 
     static func number(_ v: Double) -> String { grouping.string(from: NSNumber(value: v)) ?? "\(v)" }
 
+    /// Tiền gọn: đủ số lẻ để không lệch quá ~1% — 4,55 tr · 45,5 tr · 455 tr · 4,55 tỷ (cùng luật web `compactMoney`; trước đây 4.500.000 đ hiện "5 tr").
     static func compactMoney(_ v: Double) -> String {
         let a = abs(v)
-        if a >= 1e9 { return number((v / 1e9 * 100).rounded() / 100) + " tỷ" }
-        if a >= 1e6 { return number((v / 1e6).rounded()) + " tr" }
+        func at(_ unit: Double, _ digits: Double) -> String { number((v / unit * pow(10, digits)).rounded() / pow(10, digits)) }
+        if a >= 1e9 { return at(1e9, 2) + " tỷ" }
+        if a >= 1e6 { return at(1e6, a >= 1e8 ? 0 : a >= 1e7 ? 1 : 2) + " tr" }
         return number(v) + " đ"
     }
 
@@ -138,6 +140,8 @@ enum Fmt {
     /// Một ô theo `format` server gửi.
     static func cell(_ v: JSON?, _ format: String, labels: [String: String]? = nil) -> String {
         guard let v, !v.isNull else { return "" }
+        // nhãn server khai (mã ⇒ chữ) áp cho MỌI kiểu cột — mã nội bộ không lọt ra màn hình (cùng web `cell`)
+        if let l = labels?[v.text] { return l }
         switch format {
         case "money", "number": return v.double.map(number) ?? v.text
         case "percent": return v.double.map { number($0) + "%" } ?? v.text

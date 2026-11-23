@@ -193,10 +193,11 @@ extension Color {
     /// Tông của khối thẻ: ok · warn · bad · accent · muted (khác tông của ô bảng).
     static func card(_ name: String?) -> Color {
         switch name {
-        case "ok": .ok
-        case "warn": .warn
-        case "bad": .bad
-        case "accent": .accent
+        // nhận cả bộ tông của bảng (green / orange / red / blue) — khối gửi "red" / "orange" trước đây thành xám (cùng web `cardToneVar`)
+        case "ok", "green": .ok
+        case "warn", "orange": .warn
+        case "bad", "red": .bad
+        case "accent", "blue": .accent
         default: .secondary
         }
     }
@@ -330,7 +331,7 @@ struct CardView: View {
                 // hàng chỉ gồm ô số: chia đều, hẹp thì xuống hàng (ít nhất hai cột) — KHÔNG cắt số / nhãn
                 KPIFlow(spacing: 10) {
                     ForEach(cells, id: \.self) { k in
-                        if case .kpis(let ks) = p.blocks[k] { ForEach(ks, id: \.label) { kpi in KPITile(k: kpi, inset: true, onEdit: { action = $0 }) } }
+                        if case .kpis(let ks) = p.blocks[k] { ForEach(ks.filter(\.shown), id: \.label) { kpi in KPITile(k: kpi, inset: true, onEdit: { action = $0 }) } }
                     }
                 }
             } else {

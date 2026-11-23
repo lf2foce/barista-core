@@ -6,11 +6,41 @@ import type { Json, Kpi } from "./types";
 const NUM = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 });
 export const number = (v: number): string => NUM.format(v);
 
+/** Tiền gọn: giữ đủ số lẻ để không lệch quá ~1% (rà UI 23/11: 4.500.000 đ từng hiện "5 tr", lệch 11%) — 4,55 tr · 45,5 tr · 455 tr · 4,55 tỷ.
+ *  Cùng luật `Fmt.compactMoney` bên Swift. */
 export function compactMoney(v: number): string {
   const a = Math.abs(v);
-  if (a >= 1e9) return `${number(Math.round((v / 1e9) * 100) / 100)} tỷ`;
-  if (a >= 1e6) return `${number(Math.round(v / 1e6))} tr`;
+  const at = (unit: number, digits: number) => number(Math.round((v / unit) * 10 ** digits) / 10 ** digits);
+  if (a >= 1e9) return `${at(1e9, 2)} tỷ`;
+  if (a >= 1e6) return `${at(1e6, a >= 1e8 ? 0 : a >= 1e7 ? 1 : 2)} tr`;
   return `${number(v)} đ`;
+}
+
+/** Giá trị "chưa có gì" của một ô số / ô bảng: rỗng, gạch, hoặc số 0 (kể cả "0" dạng chữ). */
+export function isBlank(v: Json | undefined): boolean {
+  if (v === null || v === undefined || v === "" || v === "—" || v === "-") return true;
+  const n = toNumber(v);
+  return n === 0;
+}
+
+/** Ô số còn hiện: "chưa có gì thì ẩn hết" (anh Anh 23/11/2026) — ô bằng 0 / trống bị bỏ, hàng toàn 0 thì không còn ô nào (KpiRow không vẽ). */
+export function shownKpis<K extends { value: Json | null }>(kpis: K[]): K[] {
+  return kpis.filter((k) => !isBlank(k.value));
+}
+
+/** Cột còn hiện: bỏ cột mà MỌI dòng đều trống (null / "" / "—"). Số 0 vẫn là dữ liệu của cột (một dòng có thể 0, dòng khác không). */
+export function shownColumns<C extends { key: string }>(columns: C[], rows: { values: Record<string, Json> }[]): C[] {
+  if (!rows.length) return columns;
+  const empty = (v: Json | undefined) => v === null || v === undefined || v === "" || v === "—";
+  return columns.filter((c) => rows.some((r) => !empty(r.values[c.key])));
+}
+
+/** Phần riêng của tiêu đề server gửi so với tên màn trên menu ("Sổ giao dịch · năm 2026" ⇒ "năm 2026") — làm phụ đề đầu thẻ. Trùng ⇒ null. */
+export function titleTail(server: string | null | undefined, menu: string): string | null {
+  const t = (server ?? "").trim();
+  if (!t || t === menu) return null;
+  if (t.startsWith(menu)) return t.slice(menu.length).replace(/^[\s·:—-]+/, "").trim() || null;
+  return t;
 }
 
 /** Số từ JSON (số hoặc chữ số); không phải số ⇒ null. */
@@ -81,6 +111,8 @@ export function phone(s: string, rule: { code: string; trunk: string } | null = 
 /** Một ô theo `format` server gửi. */
 export function cell(v: Json | undefined, format: string, labels?: Record<string, string>): string {
   if (v === null || v === undefined) return "";
+  // nhãn server khai (mã ⇒ chữ) áp cho MỌI kiểu cột, không riêng huy hiệu — mã nội bộ không lọt ra màn hình (rà 23/11: "Đọc bởi = local")
+  if (labels && typeof v !== "object" && labels[text(v)] !== undefined) return labels[text(v)];
   switch (format) {
     case "money":
     case "number": {
@@ -136,15 +168,22 @@ export function toneClass(tone: string | null | undefined): string {
 
 /** Tông khối thẻ: ok · warn · bad · accent · muted. */
 export function cardToneVar(tone: string | null | undefined): string {
+  // nhận cả bộ tông của bảng (green / orange / red / blue / purple) — trước đây khối gửi "red" / "orange" rơi về màu xám (rà 23/11)
   switch (tone) {
     case "ok":
+    case "green":
       return "var(--ok)";
     case "warn":
+    case "orange":
       return "var(--warn)";
     case "bad":
+    case "red":
       return "var(--bad)";
     case "accent":
+    case "blue":
       return "var(--cold)";
+    case "purple":
+      return "var(--violet)";
     default:
       return "var(--muted-foreground)";
   }
