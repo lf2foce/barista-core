@@ -524,6 +524,28 @@ def _revision(image: str) -> str | None:
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+# Dựng ảnh trong một builder có TRẦN tài nguyên (sự cố 23/11/2026): dựng bằng daemon mặc định ăn hết RAM / CPU của VPS dùng chung (8 GB, đã swap) ⇒
+# phiên Swarm quá hạn, MỌI dịch vụ trên máy bị khởi động lại. Builder ``docker-container`` của buildx chạy BuildKit trong một container có giới hạn
+# bộ nhớ (không dùng swap) và CPU ⇒ dựng chậm hơn nhưng không giành tài nguyên của Docker / Swarm và các app đang chạy. Máy thiếu buildx ⇒ dựng như cũ.
+BUILDER = "barista-limited"
+BUILDER_LIMITS = ("memory=1536m", "memory-swap=1536m", "cpu-period=100000", "cpu-quota=150000")   # 1,5 GB, không swap · 1,5 CPU
+
+
+def _builder() -> list[str]:
+    """Tham số ``docker buildx build`` dùng builder có trần (tạo một lần, lần sau dùng lại cùng bộ nhớ đệm); không có buildx ⇒ [] (dựng như cũ)."""
+    def ok(*args: str) -> bool:
+        try:
+            return subprocess.run(["docker", *args], capture_output=True).returncode == 0
+        except FileNotFoundError:   # máy không có docker (test, máy dev)
+            return False
+    if not ok("buildx", "version"):
+        return []
+    if not ok("buildx", "inspect", BUILDER):
+        command("docker", "buildx", "create", "--name", BUILDER, "--driver", "docker-container",
+                *(x for opt in BUILDER_LIMITS for x in ("--driver-opt", opt)))
+    return ["buildx", "build", "--builder", BUILDER, "--load"]
+
+
 def build(sha: str, source: Path, instance: dict) -> tuple[str, dict[str, str]]:
     """Dựng hai ảnh từ mã nguồn (tar.gz của `git archive <sha>`, kèm gói ngoài lõi của bản cài ở ``deploy/packs/`` — ``shipped_packs``) giải
     nén ra thư mục tạm; nhãn revision = sha. Ảnh đã có (bản cài khác vừa phát hành cùng commit + cùng bộ gói) ⇒ dùng lại, không dựng lần hai.
@@ -532,9 +554,11 @@ def build(sha: str, source: Path, instance: dict) -> tuple[str, dict[str, str]]:
         with tarfile.open(source, "r:gz") as t:
             t.extractall(work, filter="data")
         images = {"api": image("api", api_tag(sha, shipped_packs(Path(work), instance))), "web": image("web", sha)}
+        how = None
         for s in SERVICES:
             if _revision(images[s]) != sha:
-                command("docker", "build", "--quiet", "--build-arg", f"BARISTA_RELEASE={sha}", "-f", f"deploy/{s}.Dockerfile",
+                how = _builder() if how is None else how
+                command("docker", *(how or ["build"]), "--quiet", "--build-arg", f"BARISTA_RELEASE={sha}", "-f", f"deploy/{s}.Dockerfile",
                         "-t", images[s], ".", cwd=work)
             if _revision(images[s]) != sha:
                 raise ValueError(f"Nhãn revision của {images[s]} không khớp commit")

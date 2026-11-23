@@ -516,3 +516,24 @@ check_packs "{work}" "p1 p2" "digA" "rel"
     assert not any("test_meta.py" in x for x in p2) and not any("packs/p1/tests" in x for x in p2) and any("packs/p2/tests" in x for x in p2)
     assert (stamps / "guards-digA.ok").is_file() and (stamps / "pack-p1-digA.ok").is_file() and (stamps / "pack-p2-digA.ok").is_file()
     assert p3 == []                                                                 # tất cả đã có dấu ⇒ không cài lại gói, 0 việc
+
+
+def test_images_are_built_in_a_resource_capped_builder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sự cố 23/11/2026: dựng ảnh bằng daemon mặc định trên VPS dùng chung làm Swarm khởi động lại mọi dịch vụ. Có buildx ⇒ tạo (một lần) builder
+    ``docker-container`` có trần bộ nhớ (không swap) + CPU rồi dựng trong đó; không có buildx / không có docker ⇒ dựng như cũ."""
+    import subprocess
+    made: list[tuple[str, ...]] = []
+    monkeypatch.setattr(ops, "command", lambda *a, **k: made.append(a) or "")
+    have = {"buildx version": 0, f"buildx inspect {ops.BUILDER}": 1}
+    monkeypatch.setattr(subprocess, "run", lambda args, **k: subprocess.CompletedProcess(args, have.get(" ".join(args[1:]), 1)))
+    assert ops._builder() == ["buildx", "build", "--builder", ops.BUILDER, "--load"]
+    create = made[0]
+    assert create[:6] == ("docker", "buildx", "create", "--name", ops.BUILDER, "--driver") and "docker-container" in create
+    assert "memory=1536m" in create and "memory-swap=1536m" in create and "cpu-quota=150000" in create
+    have["buildx version"] = 1
+    assert ops._builder() == []                                                     # không có buildx ⇒ docker build như cũ
+
+    def missing(*a: object, **k: object) -> None:
+        raise FileNotFoundError("docker")
+    monkeypatch.setattr(subprocess, "run", missing)
+    assert ops._builder() == []                                                     # không có docker (máy dev / test)
