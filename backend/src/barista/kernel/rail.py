@@ -53,7 +53,7 @@ def _known(ctx: Ctx) -> dict[str, str]:
 class SetRoleRail(Input):
     role: str = field("Vai", options_query="admin.role_options")
     workspaces: list[str] = field("Phân hệ hiện sẵn trên thanh bên", options_query="core.workspace_options",
-                                  help=f"Tối đa {registry.RAIL_MAX}, theo thứ tự chọn. Người giữ vai chỉ thấy phân hệ họ có quyền; ai cũng ghim thêm được")
+                                  help=f"Tối đa {registry.RAIL_MAX}, xếp theo thứ tự menu. Người giữ vai chỉ thấy phân hệ họ có quyền; ai cũng ghim thêm được")
 
 
 class RoleKey(Input):

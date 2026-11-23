@@ -83,7 +83,14 @@ export function Rail() {
           <>
             <RailGroup label="Theo vai">{layout.role.map((w) => workspaceButton(w))}</RailGroup>
             {layout.pinned.length ? <RailGroup label="Đã ghim">{layout.pinned.map((w) => workspaceButton(w))}</RailGroup> : null}
-            {here ? workspaceButton(here.ws, here.onRail ? "sm:hidden" : undefined) : null}
+            {here?.onRail ? workspaceButton(here.ws, "sm:hidden") : null}
+            {here && !here.onRail ? (
+              <div role="group" aria-label="Đang mở" className="flex w-full flex-col items-center gap-1.5 max-sm:contents">
+                <span className="my-0.5 h-px w-9 bg-foreground/10 max-sm:hidden" aria-hidden />
+                <span className="t12 text-muted-foreground max-sm:hidden">Đang mở</span>
+                {workspaceButton(here.ws)}
+              </div>
+            ) : null}
           </>
         ) : (
           layout.all.map((i) => workspaceButton(i.ws))
@@ -106,7 +113,7 @@ function RailGroup({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-const RAIL_BUTTON = "group flex w-[76px] shrink-0 flex-col items-center gap-1 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:w-[64px] max-sm:gap-0.5";
+const RAIL_BUTTON = "group flex w-[76px] shrink-0 flex-col items-center gap-1 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:w-[60px] max-sm:gap-0.5";
 
 /** Nút "Tất cả mục": panel liệt kê MỌI phân hệ người này thấy, bấm tên ⇒ mở, bấm ghim ⇒ ghim / bỏ ghim cả phân hệ lên thanh bên (của chính mình). Ô tìm là ⌘K sẵn có. */
 function AllItems({ layout }: { layout: RailLayout }) {
@@ -130,7 +137,7 @@ function AllItems({ layout }: { layout: RailLayout }) {
     <>
       <span className="my-0.5 h-px w-9 bg-foreground/10 max-sm:hidden" aria-hidden />
       <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger className={RAIL_BUTTON} title="Mọi phân hệ bạn được dùng — ghim cái hay dùng lên thanh bên" aria-label="Tất cả mục">
+        <PopoverTrigger className={cn(RAIL_BUTTON, "max-sm:w-[72px]")} title="Mọi phân hệ bạn được dùng — ghim cái hay dùng lên thanh bên" aria-label="Tất cả mục">
           <RailFace title="Tất cả mục" selected={open}>
             <LayoutGrid className="size-[18px]" />
           </RailFace>
@@ -194,7 +201,7 @@ function RailFace({ title, selected, badge = 0, unknown = false, children }: { t
           </span>
         ) : null}
       </span>
-      <span className={cn("line-clamp-2 w-[76px] text-center text-[12px] leading-tight max-sm:line-clamp-1 max-sm:w-[64px]", selected ? "font-medium text-primary" : "text-muted-foreground")}>{title}</span>
+      <span className={cn("line-clamp-2 w-full text-center text-[12px] leading-tight max-sm:line-clamp-1", selected ? "font-medium text-primary" : "text-muted-foreground")}>{title}</span>
     </>
   );
 }
