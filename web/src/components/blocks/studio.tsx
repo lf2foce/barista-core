@@ -165,7 +165,7 @@ export function StudioBlock({ block }: { block: StudioData }) {
                aria-label="Trò chuyện với agent soạn thảo">
         <header className={cn(PANE_HEADER, "px-3")}>
           {/* màn trọn khung trong phân hệ nhiều màn: màn rộng đã có cột danh sách (kèm nút ẩn thanh bên) ⇒ không lặp nút */}
-          {full ? <span className={cn("contents", fullScreen && !solo && "min-[1600px]:hidden")}><RailToggle /></span> : null}
+          {full ? <span className={cn("contents", fullScreen && !solo && !desk.canvasMax && "min-[1280px]:hidden")}><RailToggle /></span> : null}
           <Orb busy={busy} size={34} />
           <div className="min-w-0 flex-1">
             <ScreensMenu title="Soạn thảo" />

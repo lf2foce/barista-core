@@ -14,7 +14,7 @@ export function WorkspaceColumn({ wsKey }: { wsKey: string }) {
   const groups = [...new Set(screens.map((s) => s.group))];
   const pinned = new Set(desk.quickScreens.map((s) => screenItemId(s)));
   return (
-    <div className="flex h-full min-h-0 flex-col bg-surface">
+    <nav aria-label={`Màn ${w?.title ?? "phân hệ"}`} className="flex h-full min-h-0 flex-col bg-surface">
       <ColumnHeader title={w?.title ?? ""} subtitle={`${screens.length} màn · dữ liệu đúng quyền của bạn`} />
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
         {groups.map((g, gi) => {
@@ -61,6 +61,6 @@ export function WorkspaceColumn({ wsKey }: { wsKey: string }) {
           );
         })}
       </div>
-    </div>
+    </nav>
   );
 }

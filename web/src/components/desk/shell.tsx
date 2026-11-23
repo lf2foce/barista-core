@@ -102,9 +102,9 @@ function Shell() {
           showRight ? "hidden" : "block",
           desk.canvasMax && "min-[980px]:hidden",
           solo && "!hidden",
-          // màn trọn khung (vd Soạn): màn rộng (≥ 1600px) vẫn giữ cột danh sách màn bên cạnh — đủ chỗ, chuyển màn một lần bấm; hẹp hơn thì cột nhường chỗ,
+          // màn trọn khung (vd Soạn): màn rộng (≥ 1280px) vẫn giữ cột danh sách màn bên cạnh — đủ chỗ, chuyển màn một lần bấm; hẹp hơn thì cột nhường chỗ,
           // danh sách màn ở menu đầu ngăn của màn (ScreensMenu)
-          fullScreen && "max-[1599px]:!hidden",
+          fullScreen && "max-[1280px]:!hidden min-[1280px]:max-w-[320px]",
         )}
         style={{ "--col-w": colWidth.css } as React.CSSProperties}
       >

@@ -23,15 +23,15 @@ export function ScreensMenu({ title }: { title: string }) {
   return (
     <>
     {/* màn rộng: cột danh sách màn đang hiện bên cạnh (Shell) ⇒ chỉ tên; hẹp hơn ⇒ tên là menu */}
-    <h1 className="t16 hidden truncate min-[1600px]:block">{title}</h1>
-    <span className="min-[1600px]:hidden">
+    <h1 className={cn("t16 hidden truncate", !desk.canvasMax && "min-[1280px]:block")}>{title}</h1>
+    <span className={cn("min-w-0", !desk.canvasMax && "min-[1280px]:hidden")}>
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger className="t16 -mx-1.5 inline-flex max-w-full items-center gap-1 rounded-md px-1.5 outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring"
                       aria-label={`${full.ws.title} — chọn màn`}>
         <span className="truncate">{title}</span>
         <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 gap-0.5 p-1.5">
+      <PopoverContent align="start" className="max-h-[min(70vh,560px)] w-72 max-w-[calc(100vw-1.5rem)] gap-0.5 overflow-y-auto p-1.5">
         <p className="t12m px-2 pt-1 text-muted-foreground">{full.ws.title}</p>
         {groups.map((g) => (
           <div key={g || "_"} className="flex flex-col gap-0.5">
