@@ -16,14 +16,16 @@ export function compactMoney(v: number): string {
   return `${number(v)} đ`;
 }
 
-/** Giá trị "chưa có gì" của một ô số / ô bảng: rỗng, gạch, hoặc số 0 (kể cả "0" dạng chữ). */
+/** Ô số ĐÃ ĐO và bằng 0 (kể cả "0" dạng chữ) hoặc chữ rỗng. KHÔNG gồm null / "—": đó là CHƯA ĐO / không tính được — phải hiện ("—"), không được
+ *  biến mất lặng lẽ (rà của Codex 23/11/2026: "chưa đo" khác "đo ra 0"). */
 export function isBlank(v: Json | undefined): boolean {
-  if (v === null || v === undefined || v === "" || v === "—" || v === "-") return true;
+  if (v === "") return true;
   const n = toNumber(v);
   return n === 0;
 }
 
-/** Ô số còn hiện: "chưa có gì thì ẩn hết" (anh Anh 23/11/2026) — ô bằng 0 / trống bị bỏ, hàng toàn 0 thì không còn ô nào (KpiRow không vẽ). */
+/** Ô số còn hiện: "chưa có gì thì ẩn hết" (anh Anh 23/11/2026) — ô đo ra 0 bị bỏ, hàng toàn 0 thì không còn ô nào (KpiRow không vẽ); ô chưa đo
+ *  (null / "—") vẫn hiện. */
 export function shownKpis<K extends { value: Json | null }>(kpis: K[]): K[] {
   return kpis.filter((k) => !isBlank(k.value));
 }

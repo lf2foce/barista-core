@@ -254,12 +254,11 @@ struct TableViews: Decodable, Hashable {
 }
 
 extension KPI {
-    /// Ô có gì để nói: không rỗng, không gạch, không bằng 0 (cùng web `isBlank` / `shownKpis`).
+    /// Ô còn hiện: ẩn ô ĐÃ ĐO bằng 0 (hoặc chữ rỗng); ô CHƯA ĐO (null / "—") vẫn hiện "—" — không biến mất lặng lẽ (cùng web `isBlank` / `shownKpis`).
     var shown: Bool {
         switch value {
-        case .null: return false
         case .number(let n): return n != 0
-        case .string(let s): return !(s.isEmpty || s == "—" || s == "-" || Double(s) == 0)
+        case .string(let s): return !(s.isEmpty || Double(s) == 0)
         default: return true
         }
     }

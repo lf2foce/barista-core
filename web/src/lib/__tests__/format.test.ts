@@ -52,7 +52,8 @@ describe("format (kiểu Việt Nam)", () => {
 describe("chưa có gì thì ẩn (rà UI 23/11/2026)", () => {
   it("ô số 0 / trống bị bỏ, ô có số giữ nguyên thứ tự", () => {
     const k = (label: string, value: number | string | null) => ({ label, value });
-    expect(f.shownKpis([k("a", 0), k("b", 3), k("c", null), k("d", "—"), k("e", "0"), k("g", 1.5)]).map((x) => x.label)).toEqual(["b", "g"]);
+    // 0 / "0" (đã đo, bằng 0) ẩn; null / "—" (CHƯA đo) vẫn hiện — không được biến mất lặng lẽ
+    expect(f.shownKpis([k("a", 0), k("b", 3), k("c", null), k("d", "—"), k("e", "0"), k("g", 1.5)]).map((x) => x.label)).toEqual(["b", "c", "d", "g"]);
     expect(f.shownKpis([k("a", 0), k("b", 0)])).toEqual([]);
   });
   it("cột trống ở MỌI dòng bị ẩn; cột có số 0 vẫn giữ", () => {
