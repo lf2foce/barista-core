@@ -234,8 +234,13 @@ async def board(ctx: Ctx, inp: BoardIn) -> dict[str, Any]:
         """SELECT t.key FROM flow.templates t LEFT JOIN flow.cases c ON c.template_id = t.id AND c.status = 'open'
            WHERE t.is_active GROUP BY t.key, t.name ORDER BY count(c.id) DESC, t.name LIMIT 1""")
     if key is None:
-        return ui.card("Hồ sơ theo chặng", [ui.b_callout("muted", "Chưa có quy trình nào", "Quản trị thêm ở Mẫu quy trình, hoặc nhờ trợ lý soạn.")],
-                       icon="rectangle.split.3x1")
+        # màn trống tự nói + MỘT lối vào ngay tại chỗ: người dựng được quy trình thấy luôn các mẫu có sẵn (mở form điền sẵn), người khác biết nhờ ai —
+        # trước chỉ có câu "Quản trị thêm ở Mẫu quy trình" (rà 23/11/2026, kế hoạch mục 3)
+        from barista.modules.flow.cases import _starter_block
+        why = "Quy trình là các chặng việc một hồ sơ đi qua (nhận đơn → giao → thu tiền…); mỗi hồ sơ hiện trên bảng này theo chặng đang ở."
+        body = [_starter_block(False)] if ctx.p.can("flow.templates", "manage") else [
+            ui.b_callout("muted", "Chưa có quy trình nào", why + " Nhờ quản trị chọn một quy trình mẫu ở Mẫu quy trình.")]
+        return ui.card("Hồ sơ theo chặng", body, icon="rectangle.split.3x1")
     tpl = await _active_template(ctx, key)
     cases = await ctx.all(
         """SELECT c.*, u.name AS owner, t.stages, t.version FROM flow.cases c JOIN flow.templates t ON t.id = c.template_id

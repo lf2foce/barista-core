@@ -19,6 +19,7 @@ from psycopg.types.json import Jsonb
 
 from barista.api import Action as A
 from barista.api import (
+    Ask,
     Ctx,
     Denied,
     Desk,
@@ -323,6 +324,10 @@ async def list_papers(ctx: Ctx, inp: PaperFilter) -> dict[str, Any]:
         ui.col("symbol", "Số"), ui.col("kind_label", "Loại"), ui.col("about", "Về", width=320),
         ui.col("state", "Trạng thái", "badge", labels=STATES, tones=TONES), ui.col("on", "Ngày", "date"), ui.col("author", "Người lập"),
     ], title="Giấy tờ & công văn", limit=1000,
+        # màn trống TỰ NÓI mình để làm gì + lối vào là NHỜ TRỢ LÝ soạn (không bắt gõ cả bài) — rà 23/11/2026, kế hoạch mục 3
+        empty="Nơi giữ mọi giấy tờ công ty phát hành — công văn, quyết định, phiếu… có số, ngày, người ký. Bắt đầu: bấm “Nhờ trợ lý soạn công văn”, "
+              "nói gửi ai, về việc gì — trợ lý soạn sẵn, bạn đọc rồi cấp số. Đưa quy chế, mẫu cũ vào Kho tài liệu trước để trợ lý soạn đúng giọng công ty. "
+              "Chứng từ của giao dịch (phiếu giữ chỗ, hợp đồng…) lập từ hồ sơ giao dịch.",
         kpis=[ui.kpi(labels["draft"], drafts, tone="orange" if drafts else None), ui.kpi(f"{labels['issued']} tháng này", issued),
               ui.kpi(labels["void"], voided)])
 
@@ -708,7 +713,9 @@ m.screens("docs", (
     # MỘT màn cho mọi giấy tờ, lọc theo họ (ADR 0251). Nút tạo DUY NHẤT ở đây: công văn (văn bản công ty, không có hồ sơ). Chứng từ lập TỪ
     # HỒ SƠ (nút trên thẻ hồ sơ của gói, ``papers.start_draft``), không còn hộp chọn mẫu + chọn hồ sơ từ danh sách dài. Khoá cũ ⇒ ``aliases`` giữ ghim.
     Screen("papers", "Giấy tờ & công văn", "doc.richtext", "papers.list", aliases=("compose",),
-           actions=(A("papers.draft_letter", style="primary"),),
+           # lối chính: trợ lý soạn (lệnh agent="allow", người cấp số); form gõ tay còn đó nhưng là lối phụ
+           actions=(A("papers.draft_letter", "Tự soạn"),),
+           ask=Ask("Nhờ trợ lý soạn công văn", "Soạn giúp công văn gửi … về việc … (dựa trên tài liệu trong Kho tài liệu nếu có): "),
            row_actions=ISSUE_ROW + DISCARD_ROW, row_click="open", open=Open("papers.view", {"paper_id": "id"}, "Xem giấy tờ")),
 ), rank=1)
 m.screens("work", (
