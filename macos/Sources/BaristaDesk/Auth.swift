@@ -11,6 +11,8 @@ struct AuthConfig: Decodable {
     struct Google: Decodable { let client_id: String }
     let google: Google?
     let dev: Bool
+    /// 0205 §5c: bản cài đã cấu hình gửi thư ⇒ đăng nhập bằng mã 6 số gửi qua email (email bất kỳ quản trị đã mời). Core cũ không có trường ⇒ tắt.
+    let email: Bool?
 }
 
 struct TenantChoice: Decodable, Identifiable, Hashable {
@@ -33,16 +35,31 @@ extension API {
     }
 
     static func loginGoogle(idToken: String, nonce: String, base: URL = API.defaultBase) async throws -> SessionGrant {
-        var req = URLRequest(url: base.appending(path: "/v1/auth/google"))
+        let d = try await postAuth("/v1/auth/google", ["id_token": idToken, "nonce": nonce], base: base, fallback: "Đăng nhập không thành công")
+        return try JSONDecoder().decode(SessionGrant.self, from: d)
+    }
+
+    /// Xin mã đăng nhập gửi về email. Core trả lời như nhau dù email có được mời hay không (không lộ ai có tài khoản) — chưa được mời thì không có thư.
+    static func startEmail(_ email: String, base: URL = API.defaultBase) async throws {
+        _ = try await postAuth("/v1/auth/email/start", ["email": email], base: base, fallback: "Chưa gửi được mã")
+    }
+
+    /// Đúng mã ⇒ phiên + các công ty người đó thuộc về (như đăng nhập Google).
+    static func verifyEmail(_ email: String, code: String, base: URL = API.defaultBase) async throws -> SessionGrant {
+        let d = try await postAuth("/v1/auth/email/verify", ["email": email, "code": code], base: base, fallback: "Mã không đúng hoặc đã hết hạn")
+        return try JSONDecoder().decode(SessionGrant.self, from: d)
+    }
+
+    private static func postAuth(_ path: String, _ body: [String: String], base: URL, fallback: String) async throws -> Data {
+        var req = URLRequest(url: base.appending(path: path))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(["id_token": idToken, "nonce": nonce])
+        req.httpBody = try JSONEncoder().encode(body)
         let (d, r) = try await URLSession.shared.data(for: req)
         guard (r as? HTTPURLResponse)?.statusCode == 200 else {
-            let detail = (try? JSONDecoder().decode([String: String].self, from: d))?["detail"]
-            throw APIError(message: detail ?? "Đăng nhập không thành công")
+            throw APIError(message: (try? JSONDecoder().decode([String: String].self, from: d))?["detail"] ?? fallback)
         }
-        return try JSONDecoder().decode(SessionGrant.self, from: d)
+        return d
     }
 
     /// Thu hồi phiên ở core (máy khác của cùng người vẫn đăng nhập).

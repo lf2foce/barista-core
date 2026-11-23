@@ -99,8 +99,13 @@ struct LoginView: View {
                             .font(.t12).foregroundStyle(.secondary)
                     }
                 }
+                if grant == nil, config?.email == true {
+                    EmailSignIn { session in
+                        if session.tenants.count == 1, let only = session.tenants.first { onSession(session, only.id) } else { grant = session }
+                    }
+                }
                 if config?.dev ?? true, grant == nil, !logins.isEmpty {
-                    if config?.google != nil {
+                    if config?.google != nil || config?.email == true {
                         Text("Đăng nhập dev — chỉ trên máy chạy core").font(.t12m).foregroundStyle(.secondary).padding(.top, 8)
                     }
                     ForEach(groups, id: \.0) { group, rows in
@@ -116,7 +121,7 @@ struct LoginView: View {
                         }
                     }
                 }
-                if config != nil, config?.google == nil, !(config?.dev ?? false) {
+                if config != nil, config?.google == nil, config?.email != true, !(config?.dev ?? false) {
                     Text("Core chưa cấu hình đăng nhập Google (BARISTA_GOOGLE_CLIENT_IDS, BARISTA_GOOGLE_APP_CLIENT_ID).")
                         .font(.t12).foregroundStyle(.secondary).textSelection(.enabled)
                 }
@@ -176,6 +181,83 @@ struct LoginView: View {
             } catch {
                 self.error = error.localizedDescription
             }
+        }
+    }
+}
+
+/// Đăng nhập bằng mã gửi qua email (0205 §5c) — email bất kỳ quản trị đã mời (Gmail, email công ty…). Hai bước: email ⇒ "Gửi mã", rồi mã 6 số ⇒ phiên.
+/// Chưa được mời thì core trả lời y hệt nhưng không gửi thư ⇒ câu nhắc ghi rõ "nếu email đã được mời".
+private struct EmailSignIn: View {
+    let onSession: (SessionGrant) -> Void
+    @AppStorage("loginEmail") private var email = ""
+    @State private var code = ""
+    @State private var sent = false
+    @State private var busy = false
+    @State private var error: String?
+    @FocusState private var codeFocused: Bool
+
+    private var trimmed: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Đăng nhập bằng email").font(.t12m).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                TextField("email@congty.vn", text: $email)
+                    .textFieldStyle(.roundedBorder).disabled(sent).onSubmit { if !sent { start() } }
+                    #if os(iOS)
+                    .keyboardType(.emailAddress).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    #endif
+                if sent {
+                    Button("Đổi email") { sent = false; code = ""; error = nil }.buttonStyle(.bordered)
+                } else {
+                    Button(busy ? "Đang gửi…" : "Gửi mã") { start() }
+                        .buttonStyle(.borderedProminent).disabled(busy || !trimmed.contains("@"))
+                }
+            }
+            if sent {
+                HStack(spacing: 8) {
+                    TextField("Mã 6 số", text: $code)
+                        .textFieldStyle(.roundedBorder).focused($codeFocused).onSubmit { verify() }
+                        .onChange(of: code) { _, v in
+                            let digits = String(v.filter(\.isNumber).prefix(6))
+                            if digits != v { code = digits }
+                            if digits.count == 6, !busy { verify() }   // dán / tự điền mã từ thư ⇒ đăng nhập luôn
+                        }
+                        #if os(iOS)
+                        .keyboardType(.numberPad).textContentType(.oneTimeCode)
+                        #endif
+                    Button(busy ? "Đang kiểm…" : "Đăng nhập") { verify() }
+                        .buttonStyle(.borderedProminent).disabled(busy || code.count != 6)
+                }
+                Text("Nếu \(trimmed) đã được mời, mã vừa tới hộp thư (hết hạn sau 10 phút). Không thấy thì xem thư rác, hoặc bấm Đổi email để gửi lại.")
+                    .font(.t12).foregroundStyle(.secondary)
+            } else {
+                Text("Dùng email mà quản trị đã mời — Gmail hay email công ty đều được.").font(.t12).foregroundStyle(.secondary)
+            }
+            if let error { Label(error, systemImage: "exclamationmark.triangle").font(.t12).foregroundStyle(Color.bad) }
+        }
+    }
+
+    private func start() {
+        guard trimmed.contains("@"), !busy else { return }
+        busy = true; error = nil
+        Task {
+            defer { busy = false }
+            do {
+                try await API.startEmail(trimmed)
+                sent = true
+                codeFocused = true
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func verify() {
+        guard code.count == 6, !busy else { return }
+        busy = true; error = nil
+        Task {
+            defer { busy = false }
+            do { onSession(try await API.verifyEmail(trimmed, code: code)) }
+            catch { self.error = error.localizedDescription; code = "" }
         }
     }
 }

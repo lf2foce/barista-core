@@ -34,6 +34,8 @@
         "BARISTA_META_ADS_VERIFY_TOKEN": "${BARISTA_META_ADS_VERIFY_TOKEN}",
         "BARISTA_META_ADS_APP_ID": "${BARISTA_META_ADS_APP_ID}",
         "BARISTA_META_ADS_SCOPES": "${BARISTA_META_ADS_SCOPES}",
+        "BARISTA_SMTP_URL": "${BARISTA_SMTP_URL}",
+        "BARISTA_MAIL_FROM": "${BARISTA_MAIL_FROM}",
         "TZ": "Asia/Ho_Chi_Minh"
       },
       "volumes": [
