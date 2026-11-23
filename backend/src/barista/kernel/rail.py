@@ -44,7 +44,7 @@ def build(role_keys: Iterable[str], pinned_keys: Iterable[str], visible: Sequenc
 
 def _known(ctx: Ctx) -> dict[str, str]:
     """Phân hệ công ty này có thể đặt lên thanh bên: khoá → tên (gói của phân hệ đang bật; không có phân hệ cá nhân)."""
-    from barista import workspaces   # phân hệ giả ``account`` (màn cá nhân) không bao giờ lên thanh bên
+    from barista import workspaces  # phân hệ giả ``account`` (màn cá nhân) không bao giờ lên thanh bên
 
     return {w.key: w.title for w in screens.assemble()
             if w.key != workspaces.ACCOUNT and not (ctx.p.packs is not None and w.pack and w.pack not in ctx.p.packs)}
