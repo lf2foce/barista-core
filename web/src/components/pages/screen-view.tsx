@@ -200,7 +200,9 @@ export function ScreenView({
   // ĐẦU THẺ GỌN (rà bố cục 18/11): trong khung làm việc, bộ lọc chính + nút hỏi trợ lý (+ ít nút lệnh) lên hàng tên thẻ ⇒ ô số lên sát đầu.
   // Màn nhiều bộ lọc / nhiều nút thì chỉ nút hỏi trợ lý lên đầu, hàng lọc vẫn nằm trong thân như cũ (đầu thẻ không thành một bức tường ô).
   const primary = split.inline;
-  const inHead = !!tools && primary.length <= 3 && spec.actions.length <= 2;
+  // chỉ MỘT ô lọc chính (vd Kỳ) mới lên hàng tên thẻ; từ hai ô trở lên thì xuống hàng riêng dưới tên — trước đây tới ba ô + hai nút cùng chen hàng
+  // tên làm tên thẻ bị bóp (rà giao diện 23/11/2026: Khoản phải thu, Tiền vào / ra theo tài khoản)
+  const inHead = !!tools && primary.length <= 1 && spec.actions.length <= 2;
   const showAsk = !!spec.ask && !(spec.ask.app_id && chat.builder?.appId === spec.ask.app_id);
   const askEl = showAsk && spec.ask ? (
     // nút của MÀN (vd "Tạo app" / "Sửa app" ⇒ trình tạo — 0098); đang sửa đúng app này trong trình tạo thì không cần. Trên đầu thẻ: nút phụ (viền), không giành mắt với số
