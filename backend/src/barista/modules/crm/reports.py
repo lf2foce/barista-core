@@ -141,8 +141,10 @@ async def health_report(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     gaps = await ctx.one(
         """SELECT count(*) FILTER (WHERE l.offering_id IS NULL AND l.offering_code = '' AND l.stage IN ('lead', 'prospect')) AS no_offering,
                   count(*) FILTER (WHERE l.offering_id IS NULL AND l.offering_code <> '') AS bad_offering_text,
-                  count(*) FILTER (WHERE l.stage IN ('lead', 'prospect') AND NOT EXISTS (
-                      SELECT 1 FROM core.memberships mb WHERE mb.user_id = l.owner_id AND mb.tenant_id = (SELECT core.tenant()) AND mb.active)) AS inactive_owner
+                  count(*) FILTER (WHERE l.stage IN ('lead', 'prospect') AND l.owner_id IS NOT NULL AND NOT EXISTS (
+                      SELECT 1 FROM core.memberships mb WHERE mb.user_id = l.owner_id AND mb.tenant_id = (SELECT core.tenant()) AND mb.active)) AS inactive_owner,
+                  -- lead CHƯA CHIA (không người phụ trách) khác lead của người đã nghỉ — trước đây NULL rơi vào nhánh "đã nghỉ" (rà 23/11/2026)
+                  count(*) FILTER (WHERE l.stage IN ('lead', 'prospect') AND l.owner_id IS NULL) AS unassigned
            FROM crm.leads l""")
     groups: dict[str, list[dict[str, Any]]] = {}
     for c in await ctx.all("SELECT name, phone FROM crm.customers WHERE phone IS NOT NULL"):
@@ -169,6 +171,8 @@ async def health_report(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
          "why": "{n} lead có tên [[offering|l]] lạ ⇒ thêm bí danh trong danh mục để gom đúng"},
         {"key": "inactive_owner", "n": gaps["inactive_owner"], "title": "lead đang theo của người đã nghỉ / bị khoá", "open": "crm.leads",
          "why": "{n} lead của người đã nghỉ ⇒ không ai chăm, số chăm sóc của đội thấp giả"},
+        {"key": "unassigned", "n": gaps["unassigned"], "title": "lead đang theo chưa chia cho ai", "open": "crm.leads",
+         "why": "{n} lead chưa có người phụ trách ⇒ chưa ai gọi; chia ở Lead đi đâu / Khách & lead"},
         {"key": "dup_customers", "n": len(pairs), "title": "cặp khách nghi trùng (cùng tên, SĐT gần giống)", "open": "crm.leads",
          "subtitle": ", ".join(names), "subtitle_resource": "crm",   # tên khách: chỉ người đọc được khách cả công ty (Sức khoẻ dữ liệu lọc)
          "why": "{n} cặp khách nghi trùng ⇒ số khách / lead có thể cao hơn thật"},

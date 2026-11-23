@@ -98,6 +98,13 @@ async def test_lead_gaps_are_counted(who: Who) -> None:
     await ok(admin, "admin.update_member", email=leaver.email, active=False)
     after = await _issues(gd)
     assert after[inactive] == step[inactive] + 1
+    # lead CHƯA CHIA (không người phụ trách) là loại riêng — không còn tính vào "người đã nghỉ" (rà 23/11/2026)
+    orphan = await ok(sale1, "crm.create_lead", name=f"Khách chưa chia {uuid.uuid4().hex[:4]}", phone=fresh_phone())
+    async with db.owner.connection() as conn:
+        await conn.execute("UPDATE crm.leads SET owner_id = NULL WHERE id = %s", (orphan["lead_id"],))
+    later = await _issues(gd)
+    assert later[inactive] == after[inactive] and later["lead đang theo chưa chia cho ai"] >= 1
+    after = later
     # khách nghi trùng: cùng tên (khác dấu / hoa thường), SĐT lệch 1 số (…109… ↔ …107…, dạng nào cũng được — 0199 lưu E.164)
     tag, p = uuid.uuid4().hex[:5], fresh_phone()
     await ok(sale1, "crm.create_lead", name=f"Nguyễn Văn Trùng {tag}", phone=p)

@@ -217,7 +217,7 @@ async def _done_when_block(ctx: Ctx, t: dict[str, Any]) -> dict[str, Any]:
 
 
 class BoardIn(Input):
-    key: str = field("Quy trình", "", options_query="flow.template_options_all", placeholder="Quy trình đầu tiên")
+    key: str = field("Quy trình", "", options_query="flow.template_options_all", placeholder="Quy trình bạn có nhiều hồ sơ nhất")
 
 
 @m.query("template_options_all", resource=None, title="Quy trình")
@@ -228,7 +228,11 @@ async def template_options_all(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
 @m.query("board", resource="flow", title="Bảng hồ sơ theo chặng")
 async def board(ctx: Ctx, inp: BoardIn) -> dict[str, Any]:
     """Kanban: mỗi cột một chặng, mỗi thẻ một hồ sơ (RLS: đúng phạm vi người xem). Không kéo thả — hồ sơ chuyển chặng khi đủ mục (code quyết)."""
-    key = inp.key or await ctx.val("SELECT key FROM flow.templates WHERE is_active ORDER BY name LIMIT 1")
+    # để trống ⇒ quy trình người xem đang có NHIỀU hồ sơ mở nhất (RLS: đúng phạm vi người đó) — trước đây lấy quy trình đầu theo TÊN, nên người làm
+    # quy trình khác mở ra thấy bảng của việc không phải mình (rà 23/11/2026); chưa có hồ sơ nào ⇒ quy trình đầu theo tên như cũ
+    key = inp.key or await ctx.val(
+        """SELECT t.key FROM flow.templates t LEFT JOIN flow.cases c ON c.template_id = t.id AND c.status = 'open'
+           WHERE t.is_active GROUP BY t.key, t.name ORDER BY count(c.id) DESC, t.name LIMIT 1""")
     if key is None:
         return ui.card("Hồ sơ theo chặng", [ui.b_callout("muted", "Chưa có quy trình nào", "Quản trị thêm ở Mẫu quy trình, hoặc nhờ trợ lý soạn.")],
                        icon="rectangle.split.3x1")
