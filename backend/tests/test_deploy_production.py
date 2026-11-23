@@ -62,7 +62,7 @@ def test_demo_instances_render_exactly_as_before():
     real = ops.known_instances() if ops.instances_dir().is_dir() else []
     found = [i for i in [*ops.known_instances(fixtures), *real] if not ops.production(i)]
     for inst in [*found, BASE, {**BASE, "env": "demo", "api_env": {"BARISTA_WEB_URL": "https://acme.example.vn"}}]:
-        if inst.get("api_env") or inst.get("gate") is False:
+        if inst.get("api_env") or inst.get("gate") is False or inst.get("landing") is True:
             got, want = json.loads(ops.render(TEMPLATE, inst, json_text=True)), json.loads(_legacy_render(TEMPLATE, inst))
             if inst.get("api_env"):
                 want["services"]["api"]["environment"] = {**want["services"]["api"]["environment"], "BARISTA_PUBLIC_API_URL": f"https://{inst['api_host']}",
@@ -73,6 +73,8 @@ def test_demo_instances_render_exactly_as_before():
                     del labels[k]
                 chain = f"traefik.http.routers.{inst['name']}-web.middlewares"
                 labels[chain] = ",".join(x for x in labels[chain].split(",") if x != gate)
+            if inst.get("landing") is True:   # khác biệt có chủ đích THỨ BA (23/11/2026): trang giới thiệu ở "/" cho người chưa đăng nhập
+                want["services"]["web"]["environment"] = {**want["services"]["web"]["environment"], "BARISTA_WEB_HOME": "landing"}
             assert got == want, inst["name"]
         else:
             assert ops.render(TEMPLATE, inst, json_text=True) == _legacy_render(TEMPLATE, inst), inst["name"]
@@ -118,6 +120,19 @@ def test_gate_false_drops_the_password_gate_in_production_and_public_demo(tmp_pa
     assert gated["services"]["web"]["deploy"]["labels"]["traefik.http.routers.acme-web.middlewares"].split(",")[0] == "acme-gate"
     for bad in ({**PROD, "gate": True}, {**BASE, "gate": "no"}):
         with pytest.raises(ValueError, match="gate"):
+            ops.load_instance("acme", _write(tmp_path, bad))
+
+
+def test_landing_adds_only_the_web_home_flag_and_accepts_only_true(tmp_path):
+    """``"landing": true`` (23/11/2026): web hiện trang giới thiệu ở "/" cho người chưa đăng nhập (web/src/proxy.ts) — chỉ thêm MỘT biến cho dịch vụ web,
+    không đụng api / cổng / chế độ đăng nhập. Vắng ⇒ không có biến ("/" về thẳng /login như trước)."""
+    plain = json.loads(ops.render(TEMPLATE, ops.load_instance("acme", _write(tmp_path, BASE)), json_text=True))
+    landed = json.loads(ops.render(TEMPLATE, ops.load_instance("acme", _write(tmp_path, {**BASE, "landing": True})), json_text=True))
+    assert "BARISTA_WEB_HOME" not in plain["services"]["web"]["environment"]
+    assert landed["services"]["web"]["environment"].pop("BARISTA_WEB_HOME") == "landing"
+    assert landed["services"]["web"] == plain["services"]["web"]   # (api nhận địa chỉ công khai theo host như mọi bản cài có tuỳ biến — test trên)
+    for bad in ({**BASE, "landing": False}, {**BASE, "landing": "yes"}):
+        with pytest.raises(ValueError, match="landing"):
             ops.load_instance("acme", _write(tmp_path, bad))
 
 

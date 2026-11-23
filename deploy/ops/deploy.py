@@ -107,6 +107,8 @@ def load_instance(name: str, directory: Path | None = None) -> dict:
         raise ValueError(f"instances/{name}.json: \"defaults_check\" chỉ nhận {', '.join(DEFAULTS_CHECK)} (vắng = warn)")
     if "gate" in inst and inst["gate"] is not False:
         raise ValueError(f"instances/{name}.json: \"gate\" chỉ nhận false (bỏ cổng mật khẩu) — vắng = có cổng")
+    if "landing" in inst and inst["landing"] is not True:
+        raise ValueError(f"instances/{name}.json: \"landing\" chỉ nhận true (trang giới thiệu ở / cho người chưa đăng nhập) — vắng = vào thẳng /login")
     if production(inst):
         if missing := [k for k in PRODUCTION_LOGIN if not isinstance(api_env.get(k), str) or not api_env[k].strip()]:
             raise ValueError(f"instances/{name}.json là \"env\": \"production\" nhưng api_env thiếu {', '.join(missing)} — production bắt buộc "
@@ -147,7 +149,7 @@ def render(template: str, inst: dict, *, json_text: bool) -> str:
         v = inst[m.group(1)]
         return json.dumps(v, ensure_ascii=False)[1:-1] if json_text else v
     text = PLACEHOLDER.sub(value, template)
-    if json_text and (inst.get("api_env") or production(inst) or inst.get("gate") is False):
+    if json_text and (inst.get("api_env") or production(inst) or inst.get("gate") is False or inst.get("landing") is True):
         stack = json.loads(text)
         api, web = stack["services"]["api"]["environment"], stack["services"]["web"]["environment"]
         # địa chỉ công khai theo host của bản cài — MỌI bản cài đi nhánh này (không chỉ production): thiếu ⇒ lõi tưởng mình ở localhost:8300 (OAuth /
@@ -157,6 +159,8 @@ def render(template: str, inst: dict, *, json_text: bool) -> str:
         if production(inst):
             api.update(PRODUCTION_API)
             web.update(PRODUCTION_WEB)
+        if inst.get("landing") is True:   # trang giới thiệu sản phẩm ở "/" cho người chưa đăng nhập (web/src/proxy.ts); vắng ⇒ "/" về thẳng /login
+            web["BARISTA_WEB_HOME"] = "landing"
         if inst.get("gate") is False:   # bỏ cổng mật khẩu: nhãn basicauth + mắt xích đầu của router web
             labels, gate = stack["services"]["web"]["deploy"]["labels"], f"{inst['name']}-gate"
             for k in [k for k in labels if k.startswith(f"traefik.http.middlewares.{gate}.")]:
