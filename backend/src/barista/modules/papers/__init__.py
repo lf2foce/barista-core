@@ -327,7 +327,7 @@ async def list_papers(ctx: Ctx, inp: PaperFilter) -> dict[str, Any]:
         # màn trống TỰ NÓI mình để làm gì + lối vào là NHỜ TRỢ LÝ soạn (không bắt gõ cả bài) — rà 23/11/2026, kế hoạch mục 3
         empty="Nơi giữ mọi giấy tờ công ty phát hành — công văn, quyết định, phiếu… có số, ngày, người ký. Bắt đầu: bấm “Nhờ trợ lý soạn công văn”, "
               "nói gửi ai, về việc gì — trợ lý soạn sẵn, bạn đọc rồi cấp số. Đưa quy chế, mẫu cũ vào Kho tài liệu trước để trợ lý soạn đúng giọng công ty. "
-              "Chứng từ của giao dịch (phiếu giữ chỗ, hợp đồng…) lập từ hồ sơ giao dịch.",
+              "Chứng từ gắn với một hồ sơ (vd hợp đồng) lập ngay từ hồ sơ đó.",
         kpis=[ui.kpi(labels["draft"], drafts, tone="orange" if drafts else None), ui.kpi(f"{labels['issued']} tháng này", issued),
               ui.kpi(labels["void"], voided)])
 
