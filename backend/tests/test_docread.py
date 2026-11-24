@@ -419,3 +419,28 @@ async def test_kb_upload_reads_a_scan_through_the_company_profile_and_says_why_w
     await _set(tid, "kb", scanned_pdf=True)
     text = await kb.read_upload(qt, "phieu-scan.pdf", fx("phieu-scan.pdf"), model=Spy().model("phieu-scan.pdf"))
     assert "ĐIỀU KHOẢN ĐẶT CỌC" in text and text.startswith("## Trang 1")
+
+
+def test_a_pack_reader_registers_once_and_never_replaces_another() -> None:
+    """Gói bộ đọc (api 1.85, ADR 0262): khai qua ``barista.api.docread.register`` ⇒ hồ sơ đọc chọn được bằng tên; tên trùng bộ đã có (của lõi hay gói khác) ⇒
+    từ chối — thay im lặng là đổi cách đọc của mọi công ty. Tên phải dạng khoá."""
+    from barista.api import docread as api_docread
+    from barista.docread import readers
+
+    class LocalOcr(api_docread.ExternalReader):
+        name = "ocr_thu_nghiem"
+        paid = False
+
+    r = LocalOcr()
+    api_docread.register(r)
+    try:
+        api_docread.register(r)                                     # cùng bộ ⇒ không lỗi (nạp lại gói)
+        assert "ocr_thu_nghiem" in readers.names()
+        with pytest.raises(ValueError, match="đã có"):
+            api_docread.register(LocalOcr())                        # bộ khác cùng tên
+        with pytest.raises(ValueError, match="đã có"):
+            api_docread.register(type("Fake", (api_docread.ExternalReader,), {"name": "model"})())   # không đè bộ của lõi
+        with pytest.raises(ValueError, match="dạng khoá"):
+            api_docread.register(type("Bad", (api_docread.ExternalReader,), {"name": "OCR Mới"})())
+    finally:
+        readers._REG.pop("ocr_thu_nghiem", None)

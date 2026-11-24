@@ -1,5 +1,5 @@
 {
- "version": "1.84.0",
+ "version": "1.85.0",
  "names": [
   "Action",
   "Ask",
@@ -156,17 +156,21 @@
   "docread": [
    "AudioRef",
    "Doc",
+   "ExternalReader",
    "Hints",
    "ImageRef",
    "Notice",
    "Page",
+   "Reader",
+   "Request",
    "Table",
    "Unit",
    "Usage",
    "extract_images",
    "read",
    "read_free",
-   "read_images"
+   "read_images",
+   "register"
   ],
   "entities": [
    "default",

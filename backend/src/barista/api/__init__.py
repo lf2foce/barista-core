@@ -100,7 +100,7 @@ type Ctx = _Ctx
 # gọi model NGOÀI giao dịch.
 type Prep = _Prep
 
-__version__ = "1.84.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
+__version__ = "1.85.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
 #                         1.7: gộp ba nhánh cùng mang 1.6 — regulations.declare / compare / known_codes (0154) · Module.inbound (webhook VÀO từ nhà cung cấp) · Pack(records=…) cấu hình mặc định qua lệnh của module sở hữu (0153)
 #                              · Module.consumes nhận thêm họ outreach / doc_read / paper_draft — dịch vụ lõi mở cho gói ngoài (0155)
 #                         1.8: NeedsConfirmation — lệnh tự biết việc trợ lý định làm chạm lịch / dữ liệu của NGƯỜI KHÁC ⇒ cả lệnh thành thẻ đề xuất (0158)
@@ -255,6 +255,8 @@ __version__ = "1.84.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                              người quản lý trực tiếp (không ``team_code``). Dữ liệu mẫu / test của gói ghi cơ cấu qua hai thao tác mới
 #                         1.84 (ADR 0258 — bề mặt Python không đổi): thủ tục DB ``core.tenant_fks(schemas)`` — migration của gói gọi cho schema của mình để
 #                              khoá ngoại giữa hai bảng cùng mang ``tenant_id`` mang cả ``tenant_id``; ``tests/test_meta.py`` chặn khoá ngoại thiếu
+#                         1.85 (ADR 0262): ``docread.register`` / ``ExternalReader`` / ``Reader`` / ``Request`` — GÓI khai bộ đọc (OCR trên máy, dịch vụ tài liệu);
+#                              công ty chọn bộ đọc bằng hồ sơ đọc theo mục đích (chuỗi), không đổi gói nghiệp vụ. Tên trùng bộ đã có ⇒ từ chối
 
 __all__ = [
     "VN",

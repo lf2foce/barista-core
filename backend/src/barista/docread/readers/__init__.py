@@ -6,6 +6,7 @@ trần của hồ sơ. Bộ NGOÀI (dịch vụ tài liệu của nhà cung cấ
 ``handles`` / ``read``; hiện CHƯA có bộ ngoài nào đi kèm (``ExternalReader`` là khung để cắm).
 """
 
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -57,7 +58,14 @@ _REG: dict[str, Reader] = {}
 
 
 def register(reader: Reader) -> None:
-    _REG[reader.name] = reader
+    """Cài một bộ đọc (bộ của lõi lúc nạp; GÓI bộ đọc qua ``barista.api.docread.register`` — api 1.85, ADR 0262). Tên là khoá trong chuỗi của hồ sơ đọc ⇒
+    dạng khoá, và KHÔNG thay được bộ đã có (gói không đè ``model`` / ``pypdf`` của lõi hay bộ của gói khác — thay im lặng là đổi cách đọc của mọi công ty)."""
+    name = getattr(reader, "name", "")
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]{1,39}", name):
+        raise ValueError(f"bộ đọc: tên {name!r} phải dạng khoá (chữ thường, số, gạch dưới)")
+    if name in _REG and _REG[name] is not reader:
+        raise ValueError(f"bộ đọc {name} đã có — đặt tên khác")
+    _REG[name] = reader
 
 
 def get(name: str) -> Reader | None:
