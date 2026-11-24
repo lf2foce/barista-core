@@ -2693,9 +2693,11 @@ async def pack_store(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
         badge, tone = (("Luôn bật", "muted") if key in registry.always_on() else ("Đang bật", "ok") if key in on
                        else ("Liên hệ để mở", "muted") if key not in allowed_      # gói trả tiền: nhà cung cấp cấp quyền
                        else (f"Cần {', '.join(no_right)}", "muted") if no_right else ("Có sẵn", "accent"))
+        # ``state``: trạng thái máy đọc (màn "Kết nối & kỹ năng" chia nhóm theo nó — ADR 0261), không đọc theo chữ trên nhãn
+        state = "on" if key in on or key in registry.always_on() else "locked" if key not in allowed_ or no_right else "available"
         tiles[pk.kind].append(
             {"title": label, "subtitle": desc, "badge": badge, "tone": tone, "module": registry.pack_module(key),   # biểu tượng + màu thẻ = của module khai gói (ModuleStyle)
-             "open": {"query": "admin.pack_info", "input": {"pack": key}}})
+             "open": {"query": "admin.pack_info", "input": {"pack": key}}, "state": state, "kind": pk.kind})
     titles = {"company": "Riêng của công ty bạn", "industry": "Nghiệp vụ theo ngành", "capability": "Năng lực dùng chung — ngành nào cũng dùng", "core": "Lõi"}
     # gói bán được nhưng CHƯA có mã trên bản cài (0163): chỉ thẻ chữ — không thao tác, không màn; bấm ⇒ trang mô tả (``admin.catalog_pack``)
     absent = [{"title": c.title, "subtitle": c.description, "badge": "Chưa có trên bản cài · Liên hệ", "tone": "warn",

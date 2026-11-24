@@ -1,6 +1,8 @@
 """KẾT NỐI & KỸ NĂNG (ADR 0261) — MỘT màn gom mọi thứ "cắm thêm" vào Barista, kiểu Plugins / Skills của ChatGPT. Màn chỉ GOM và chia tầng theo người xem; mỗi
 loại vẫn đi cơ chế + luật duyệt riêng của nó (không cơ chế mới):
 
+* ỨNG DỤNG (gói nghiệp vụ: Hoa hồng, Kế toán, Văn bản Word…): quản trị thấy gói đang dùng + gói có thể thêm (bằng chính trang Store của Quản trị, bấm thẻ ⇒
+  trang gói có nút bật); người khác thấy gói công ty đang dùng. Gói lõi không hiện.
 * KỸ NĂNG (``core.ai_skills``, 0198): cách trợ lý làm một việc — người xem thấy kỹ năng đang dùng cho vai mình.
 * KẾT NỐI CỦA TÔI: "Dùng Barista trong ChatGPT / Claude" (MCP của nhân viên, 0093) — địa chỉ để nối, số ứng dụng AI đang nối, nút ngắt.
 * KẾT NỐI CỦA CÔNG TY (chỉ ai xem được): nguồn dữ liệu ngoài (``connectors``, 0244) và app bên ngoài gọi vào (``connect``, 0140) — đọc bằng CHÍNH truy vấn của
@@ -10,18 +12,18 @@ Tầng hệ thống (gói, Store) không ở đây."""
 from typing import Any, Literal
 
 from barista.config import settings
-from barista.kernel import ai_skills, ui
+from barista.kernel import ai_skills, executor, registry, ui
 from barista.kernel.core_ops import m
 from barista.kernel.errors import Denied, NotFound
 from barista.kernel.executor import Ctx
 from barista.kernel.fields import Input, NoInput, field
 
-VIEWS = {"connections": "Kết nối", "skills": "Kỹ năng"}
+VIEWS = {"apps": "Ứng dụng", "connections": "Kết nối", "skills": "Kỹ năng"}
 HEALTH = {"ok": ("Đang chạy", "green"), "error": ("Lỗi", "red"), "new": ("Chưa chạy", "gray")}
 
 
 class PluginsIn(Input):
-    view: Literal["connections", "skills"] = field("Xem", "connections", options=VIEWS)
+    view: Literal["apps", "connections", "skills"] = field("Xem", "apps", options=VIEWS)
 
 
 def _mcp_address() -> str:
@@ -44,6 +46,8 @@ async def _rows(ctx: Ctx, query: str) -> list[dict[str, Any]] | None:
 
 @m.query("plugins", resource=None, title="Kết nối & kỹ năng", category="core")
 async def plugins(ctx: Ctx, inp: PluginsIn) -> dict[str, Any]:
+    if inp.view == "apps":
+        return await _apps(ctx)
     if inp.view == "skills":
         skills = await ai_skills.for_role(ctx.conn, ctx.p.role or "")
         tiles = [{"title": s["title"], "subtitle": s["when_to_use"], "badge": "Đang dùng", "tone": "green"} for s in skills]
@@ -94,3 +98,19 @@ async def disconnect_ai_apps(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     gone = await ctx.exec("""UPDATE core.mcp_tokens SET revoked_at = now()
                              WHERE user_id = core.me() AND tenant_id = core.tenant() AND revoked_at IS NULL""")
     return {"revoked": gone, "summary": "Đã ngắt các ứng dụng AI khỏi tài khoản" if gone else "Không có ứng dụng AI nào đang nối"}
+
+
+async def _apps(ctx: Ctx) -> dict[str, Any]:
+    if "admin.pack_store" in registry.OPS and executor.allowed(ctx.p, registry.OPS["admin.pack_store"]):
+        store = await ctx.call("admin.pack_store")
+        tiles = [t for b in store.get("blocks", []) if b.get("type") == "tiles" for t in b.get("items", []) if t.get("state") and t.get("kind") != "core"]
+        groups = [([t for t in tiles if t["state"] == "on"], "Công ty đang dùng"), ([t for t in tiles if t["state"] == "available"], "Có thể thêm"),
+                  ([t for t in tiles if t["state"] == "locked"], "Cần mở thêm")]
+        hint = "Bấm một ứng dụng để xem gồm gì và bật — bật kèm phần nó cần, cài sẵn vai, quyền, quy trình mặc định."
+    else:
+        on = [(k, pk) for k, pk in registry.PACKS.items() if pk.kind != "core" and (k in registry.always_on() or ctx.p.packs is None or k in ctx.p.packs)]
+        groups = [([{"title": pk.title, "subtitle": pk.description, "badge": "Đang dùng", "tone": "ok", "module": registry.pack_module(k)} for k, pk in on],
+                   "Công ty đang dùng")]
+        hint = "Muốn thêm ứng dụng, nhờ quản trị bật."
+    blocks = [ui.b_tiles(items, title) for items, title in groups if items]
+    return ui.card("Ứng dụng", blocks or [ui.b_callout("info", "Chưa có ứng dụng nào", hint)], subtitle=hint, icon="square.grid.2x2")
