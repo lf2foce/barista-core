@@ -350,7 +350,8 @@ export type OpenRef = { title?: string; query: string; input: Input };
 export type StepItem = { label: string; state: string; at?: Json; note?: string; owner?: string };
 export type StageItem = { label: string; status: string; required: boolean; hidden: boolean; value?: string; note?: string };
 export type Stage = { key: string; name: string; owner: string; state: string; items: StageItem[] };
-export type Tile = { title: string; subtitle?: string; badge?: string; tone?: string; module?: string; open?: OpenRef };
+/** `logo`: khoá logo thương hiệu (components/brand-logos.tsx) — có thì vẽ logo thay biểu tượng phân hệ. */
+export type Tile = { title: string; subtitle?: string; badge?: string; tone?: string; module?: string; logo?: string; open?: OpenRef };
 /** `file` (0128, tab Tệp của trao đổi): tệp đính kèm của dòng — app tải / vẽ ảnh thu nhỏ qua đường tải tệp sẵn có. */
 export type ListItem = { title: string; subtitle?: string; tone?: string; badge?: string; open?: OpenRef; ask?: string; file?: TalkFile };
 export type BoardCard = { id: string; title: string; subtitle?: string; tone?: string; badge?: string; open?: OpenRef };

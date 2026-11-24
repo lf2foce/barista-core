@@ -284,6 +284,16 @@ async def identity(token: str) -> dict[str, Any] | None:
             "tenant": row["tenant"], "client_id": r["client_id"]}
 
 
+async def client_names(client_ids: list[str]) -> list[str]:
+    """TÊN (chữ thường) ứng dụng của các mã client — cho màn "Ứng dụng" nhận ra ChatGPT / Claude của chính người xem. Bảng client chỉ kết nối owner đọc
+    (policy ``false``); người gọi đã tự lọc mã client qua token CỦA MÌNH (RLS ``user_id = core.me()``), ở đây chỉ trả tên, không gì khác."""
+    if not client_ids:
+        return []
+    async with db.owner.connection() as c:
+        cur = await c.execute("SELECT lower(coalesce(info->>'client_name', client_id)) AS name FROM core.mcp_clients WHERE client_id = ANY(%s)", (client_ids,))
+        return [r["name"] for r in await cur.fetchall()]
+
+
 async def signin_app(request_id: str) -> str | None:
     """Tên ứng dụng first-party của một yêu cầu đăng nhập còn hiệu lực — cho trang đăng nhập (người CHƯA đăng nhập) ghi "Đăng nhập <ứng dụng>" bằng tên
     nhà vận hành khai, không bằng chữ trên URL (giả được). Mã yêu cầu ngẫu nhiên, chỉ ai đang đi đúng luồng mới có; chỉ trả TÊN, không gì khác.

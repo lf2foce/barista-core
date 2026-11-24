@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo, hasBrandLogo } from "@/components/brand-logos";
 import { Check, ChevronRight, Circle, CircleDot, Clock, Lock, X } from "lucide-react";
 import * as fmt from "@/lib/format";
 import { cardToneVar } from "@/lib/format";
@@ -169,7 +170,7 @@ export function TilesBlock({ items, onOpen, rows = false }: { items: Tile[]; row
           const tone = cardToneVar(t.tone);
           const inner = (
             <>
-              <IconTile icon={moduleIcon(`${t.module ?? ""}.`)} tint={moduleTint(`${t.module ?? ""}.`)} size={44} />
+              {hasBrandLogo(t.logo) ? <BrandLogo name={t.logo!} size={44} /> : <IconTile icon={moduleIcon(`${t.module ?? ""}.`)} tint={moduleTint(`${t.module ?? ""}.`)} size={44} />}
               <span className="flex min-w-0 flex-1 flex-col gap-0.5 self-stretch border-b border-hairline py-3 text-left">
                 <span className="t14m truncate">{t.title}</span>
                 {t.subtitle ? <span className="t12 line-clamp-1 text-muted-foreground">{t.subtitle}</span> : null}

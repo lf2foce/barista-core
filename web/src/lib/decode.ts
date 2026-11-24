@@ -630,7 +630,7 @@ function decodeBlockBody(raw: unknown): Block {
           title: str(o.title),
           items: arr(o.items).map((i) => {
             const io = obj(i);
-            return { title: str(io.title), subtitle: optStr(io.subtitle), badge: optStr(io.badge), tone: optStr(io.tone), module: optStr(io.module), open: decodeOpen(io.open) };
+            return { title: str(io.title), subtitle: optStr(io.subtitle), badge: optStr(io.badge), tone: optStr(io.tone), module: optStr(io.module), logo: optStr(io.logo), open: decodeOpen(io.open) };
           }),
           ...(o.style === "rows" ? { style: "rows" as const } : {}),
         };

@@ -24,11 +24,12 @@ async def _token(user_id: object, tenant_id: object, client: str) -> None:
 async def test_each_person_sees_their_layer_and_the_company_layer_only_with_rights(who: Who) -> None:
     sale, admin = await who("sale1"), await who("admin")
     mine = await q(sale, "core.plugin_apps")
-    assert _titles(mine, OUTSIDE) == ["ChatGPT, Claude"]                                          # của tôi: ai cũng có; app công ty: chỉ ai quản lý
+    assert _titles(mine, OUTSIDE) == ["ChatGPT", "Claude"]                                          # của tôi: ai cũng có; app công ty: chỉ ai quản lý
     assert not any(a["command"] == "connect.install" for a in mine.get("actions", []))          # nút chỉ hiện cho ai chạy được
     assert any(a["command"] == "connect.install" for a in (await q(admin, "core.plugin_apps")).get("actions", []))
-    sources = lambda card: [b for b in card["blocks"] if b.get("type") == "callout" and "nguồn dữ liệu" in b.get("title", "")]  # noqa: E731
-    assert not sources(await q(sale, "core.connections")) and sources(await q(admin, "core.connections"))
+    for who_ in (sale, admin):                                                                   # kết nối: tài khoản của bạn trước; công ty chưa nối gì ⇒ không khung trống
+        card = await q(who_, "core.connections")
+        assert "Gmail" in _titles(card, "Của bạn") and _titles(card, "Của công ty") == [] and not any(b["type"] == "callout" for b in card["blocks"])
     skills = await q(sale, "core.my_skills")
     assert skills["title"] == "Kỹ năng" and skills["blocks"]
 
@@ -71,6 +72,7 @@ async def test_apps_view_is_the_store_for_admins_and_the_list_in_use_for_everyon
     full, mine = packs(await q(admin, "core.plugin_apps")), packs(await q(sale, "core.plugin_apps"))
     assert "Có sẵn trong Barista" in full and all(t["open"]["query"] == "admin.pack_info" for items in full.values() for t in items)
     assert all(t.get("kind") != "core" for items in full.values() for t in items)
-    assert all("open" not in t and t["badge"] == "Đang dùng" for items in mine.values() for t in items)
+    assert all("open" not in t and t["badge"] in ("Đang dùng", "Chưa bật") for items in mine.values() for t in items)   # thấy cả gói chưa bật, chỉ xem
     in_use = {t["title"] for items in full.values() for t in items if t["state"] == "on"}
-    assert {t["title"] for items in mine.values() for t in items} == in_use
+    assert {t["title"] for items in mine.values() for t in items if t["badge"] == "Đang dùng"} == in_use
+    assert {t["title"] for items in mine.values() for t in items} == {t["title"] for items in full.values() for t in items}

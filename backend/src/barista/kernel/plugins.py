@@ -12,7 +12,7 @@ Tầng hệ thống (gói, Store) không ở đây."""
 from typing import Any
 
 from barista.config import settings
-from barista.kernel import ai_skills, executor, registry, ui
+from barista.kernel import ai_skills, executor, oauth, packs, registry, ui
 from barista.kernel.core_ops import m
 from barista.kernel.errors import Denied, NotFound
 from barista.kernel.executor import Ctx
@@ -27,8 +27,14 @@ def _mcp_address() -> str:
 
 
 async def _my_ai_apps(ctx: Ctx) -> int:
-    return int(await ctx.val("""SELECT count(DISTINCT client_id) FROM core.mcp_tokens
-                                WHERE tenant_id = core.tenant() AND kind IN ('access', 'refresh') AND revoked_at IS NULL AND expires_at > now()""") or 0)
+    return len(await _my_ai_names(ctx))
+
+
+async def _my_ai_names(ctx: Ctx) -> list[str]:
+    """Tên (chữ thường) các ứng dụng AI đang nối vào tài khoản của người xem ở công ty này — tên do ứng dụng tự khai khi đăng ký (``client_name``)."""
+    rows = await ctx.all("""SELECT DISTINCT client_id FROM core.mcp_tokens
+                            WHERE tenant_id = core.tenant() AND kind IN ('access', 'refresh') AND revoked_at IS NULL AND expires_at > now()""")
+    return await oauth.client_names([r["client_id"] for r in rows])
 
 
 async def _rows(ctx: Ctx, query: str) -> list[dict[str, Any]] | None:
@@ -68,10 +74,7 @@ async def connections(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
                       "open": {"query": "connectors.list", "input": {}}})
     if tiles:
         blocks.append(ui.b_tiles(tiles, "Của công ty", rows=True))
-    elif sources is not None:
-        blocks.append(ui.b_callout("info", "Công ty chưa nối nguồn dữ liệu nào",
-                                   "Barista tự kéo dữ liệu từ sheet, CRM cũ, tổng đài… về đây theo lịch. App bên ngoài gọi VÀO Barista nằm ở Ứng dụng."))
-    mine = [{"title": title, "subtitle": sub, "module": icon, "badge": "Sắp có", "tone": "gray"} for title, sub, icon in PERSONAL]
+    mine = [{"title": title, "subtitle": sub, "logo": logo, "badge": "Sắp có", "tone": "gray"} for title, sub, logo in PERSONAL]
     return ui.card("Kết nối", [ui.b_tiles(mine, "Của bạn", rows=True), *blocks],
                    subtitle="Nối tài khoản của bạn để trợ lý làm việc trên đó, bằng đúng quyền của bạn")
 
@@ -99,8 +102,8 @@ async def disconnect_ai_apps(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
 
 # tài khoản CÁ NHÂN nối được (kiểu Plugins của ChatGPT): CHƯA có cơ chế — mỗi người đăng nhập tài khoản của mình (OAuth), trợ lý dùng bằng quyền người đó.
 # Hiện để người dùng thấy chỗ; nút "+" chỉ có khi cơ chế xong (ADR riêng). (tên, mô tả, khoá biểu tượng)
-PERSONAL = (("Gmail", "Đọc, tìm và soạn thư", "mail"), ("Google Drive", "Tài liệu, bảng tính, slide", "drive"),
-            ("Lịch Google", "Xem lịch, đặt lịch hẹn", "gcal"), ("Canva", "Thiết kế, ấn phẩm", "compose"))
+PERSONAL = (("Gmail", "Đọc, tìm và soạn thư", "gmail"), ("Google Drive", "Tài liệu, bảng tính, slide", "gdrive"),
+            ("Lịch Google", "Xem lịch, đặt lịch hẹn", "gcal"), ("Canva", "Thiết kế, ấn phẩm", "canva"))
 ROW_BADGE = {"on": ("Đang dùng", "green"), "available": ("Thêm", "accent")}   # nhãn nút bên phải theo trạng thái; "locked" giữ nhãn của Store (vd "Cần …", "Liên hệ")
 GROUPS = (("capability", "Có sẵn trong Barista"), ("industry", "Gói ngành"), ("company", "Riêng của công ty"))
 
@@ -114,15 +117,24 @@ async def _apps(ctx: Ctx) -> dict[str, Any]:
             t["badge"], t["tone"] = ROW_BADGE.get(t["state"], (t.get("badge"), "gray"))
         hint = "Bấm một ứng dụng để xem gồm gì và bật — bật kèm phần nó cần, cài sẵn vai, quyền, quy trình mặc định."
     else:
-        tiles = [{"title": pk.title, "subtitle": pk.description, "badge": "Đang dùng", "tone": "green", "module": registry.pack_module(k), "state": "on", "kind": pk.kind}
-                 for k, pk in registry.PACKS.items() if pk.kind != "core" and (k in registry.always_on() or ctx.p.packs is None or k in ctx.p.packs)]
+        on, hidden = await packs.enabled(ctx.conn, ctx.p.tenant_id), await packs.hidden(ctx.conn, ctx.p.tenant_id)
+        tiles = []
+        for k, pk in registry.PACKS.items():   # cả gói chưa bật (để biết còn gì) — chỉ xem, không mở trang bật gói
+            if pk.kind == "core" or k in hidden:
+                continue
+            used = k in registry.always_on() or k in on
+            tiles.append({"title": pk.title, "subtitle": pk.description, "badge": "Đang dùng" if used else "Chưa bật", "tone": "green" if used else "gray",
+                          "module": registry.pack_module(k), "state": "on" if used else "available", "kind": pk.kind})
         hint = "Muốn thêm ứng dụng, nhờ quản trị bật."
     order = {"on": 0, "available": 1, "locked": 2}
     blocks = [ui.b_tiles(sorted(items, key=lambda t: order.get(t["state"], 3)), title, rows=True)
               for kind, title in GROUPS if (items := [t for t in tiles if t.get("kind") == kind])]
-    n = await _my_ai_apps(ctx)
-    outside = [{"title": "ChatGPT, Claude", "subtitle": "Trợ lý AI quen thuộc của bạn đọc Barista bằng đúng quyền của bạn", "module": "agent",
-                "badge": f"Đã nối {n}" if n else "Nối", "tone": "green" if n else "accent", "open": {"query": "core.ai_link", "input": {}}}]
+    names = await _my_ai_names(ctx)
+    # ChatGPT / Claude của CHÍNH người xem (MCP): một dòng mỗi app cho dễ nhận, cùng trang hướng dẫn nối; số đang nối là tổng ứng dụng AI của người này
+    outside = [{"title": title, "subtitle": f"Hỏi số liệu, soạn đề xuất trong Barista ngay từ {title}, bằng đúng quyền của bạn", "logo": logo,
+                "badge": "Đã nối" if (on := any(w in nm for nm in names for w in words)) else "Nối", "tone": "green" if on else "accent",
+                "open": {"query": "core.ai_link", "input": {}}}
+               for title, logo, words in (("ChatGPT", "chatgpt", ("chatgpt", "openai")), ("Claude", "claude", ("claude", "anthropic")))]
     for r in await _rows(ctx, "connect.apps") or []:
         active = r.get("status") == "active"
         outside.append({"title": r.get("name") or "", "subtitle": "App của công ty gửi / nhận dữ liệu với Barista bằng khoá riêng", "module": "connect",
