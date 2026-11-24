@@ -1,12 +1,12 @@
 """KẾT NỐI & KỸ NĂNG (ADR 0261) — MỘT màn gom mọi thứ "cắm thêm" vào Barista, kiểu Plugins / Skills của ChatGPT. Màn chỉ GOM và chia tầng theo người xem; mỗi
 loại vẫn đi cơ chế + luật duyệt riêng của nó (không cơ chế mới):
 
-* ỨNG DỤNG (gói nghiệp vụ: Hoa hồng, Kế toán, Văn bản Word…): quản trị thấy gói đang dùng + gói có thể thêm (bằng chính trang Store của Quản trị, bấm thẻ ⇒
-  trang gói có nút bật); người khác thấy gói công ty đang dùng. Gói lõi không hiện.
+* ỨNG DỤNG — hàng kiểu cửa hàng ứng dụng, ba nhóm: CÓ SẴN (gói năng lực: Khách hàng, Tài chính…), GÓI NGÀNH (Bất động sản, Hoa hồng, Đào tạo…) và
+  APP BÊN NGOÀI — thứ ở ngoài NỐI VÀO Barista: ChatGPT / Claude của chính người xem (MCP, 0093) và app của công ty gọi vào bằng khoá riêng (``connect``, 0140).
+  Quản trị thấy cả gói có thể thêm (dữ liệu của trang Store, bấm ⇒ trang gói có nút bật); người khác thấy gói công ty đang dùng. Gói lõi không hiện.
+* KẾT NỐI — chiều ngược lại, Barista NỐI RA lấy dữ liệu: nguồn dữ liệu của công ty (``connectors``, 0244); tài khoản cá nhân (Gmail, Lịch) chưa có.
 * KỸ NĂNG (``core.ai_skills``, 0198): cách trợ lý làm một việc — người xem thấy kỹ năng đang dùng cho vai mình.
-* KẾT NỐI CỦA TÔI: "Dùng Barista trong ChatGPT / Claude" (MCP của nhân viên, 0093) — địa chỉ để nối, số ứng dụng AI đang nối, nút ngắt.
-* KẾT NỐI CỦA CÔNG TY (chỉ ai xem được): nguồn dữ liệu ngoài (``connectors``, 0244) và app bên ngoài gọi vào (``connect``, 0140) — đọc bằng CHÍNH truy vấn của
-  module đó và quyền người xem; không có quyền ⇒ phần đó không hiện.
+Phần của công ty đọc bằng CHÍNH truy vấn của module đó và quyền người xem; không có quyền ⇒ phần đó không hiện.
 Tầng hệ thống (gói, Store) không ở đây."""
 
 from typing import Any
@@ -58,30 +58,22 @@ async def my_skills(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
 @m.query("connections", resource=None, title="Kết nối", category="core")
 async def connections(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     blocks: list[dict[str, Any]] = []
-    n = await _my_ai_apps(ctx)
-    blocks.append(ui.b_tiles([{
-        "title": "ChatGPT, Claude…", "badge": f"Đã nối {n}" if n else "Chưa nối", "tone": "green" if n else "gray",
-        "subtitle": "Dùng trợ lý AI quen thuộc của bạn để hỏi số liệu và soạn đề xuất trong Barista, bằng đúng quyền của bạn",
-        "open": {"query": "core.ai_link", "input": {}}}], "Của tôi"))
-    company: list[dict[str, Any]] = []
-    sources, apps = await _rows(ctx, "connectors.list"), await _rows(ctx, "connect.apps")
+    sources = await _rows(ctx, "connectors.list")
+    tiles = []
     for r in sources or []:
         label, tone = HEALTH.get(str(r.get("health") or "new"), HEALTH["new"])
-        company.append({"title": r.get("label") or r.get("kind") or "", "subtitle": f"Nguồn dữ liệu · {r.get('kind') or ''}".rstrip(" ·"),
-                        "badge": label if r.get("status") == "active" else "Tạm dừng", "tone": tone if r.get("status") == "active" else "gray",
-                        "open": {"query": "connectors.list", "input": {}}})
-    for r in apps or []:
         active = r.get("status") == "active"
-        company.append({"title": r.get("name") or "", "subtitle": "App bên ngoài gửi / nhận dữ liệu với Barista",
-                        "badge": "Đang dùng" if active else "Đã thu hồi", "tone": "green" if active else "gray",
-                        "open": {"query": "connect.apps", "input": {}}})
-    if company:
-        blocks.append(ui.b_tiles(company, "Của công ty"))
-    elif sources is not None or apps is not None:   # xem được mà chưa có gì ⇒ vẫn hiện mục, chỉ chỗ thêm
-        blocks.append(ui.b_callout("info", "Công ty chưa nối gì",
-                                   "Nguồn dữ liệu (sheet, CRM cũ…) và app bên ngoài (CRM, tổng đài, phần mềm kế toán…) nối ở đây — bấm \"Thêm app bên ngoài\"."))
-    return ui.card("Kết nối", blocks, subtitle="Những gì đang nối với Barista — của bạn và của công ty",
-                   actions=[ui.act("connect.install", "Thêm app bên ngoài")])
+        tiles.append({"title": r.get("label") or r.get("kind") or "", "subtitle": f"Nguồn dữ liệu · {r.get('kind') or ''}".rstrip(" ·"),
+                      "badge": label if active else "Tạm dừng", "tone": tone if active else "gray", "module": "connectors",
+                      "open": {"query": "connectors.list", "input": {}}})
+    if tiles:
+        blocks.append(ui.b_tiles(tiles, "Nguồn dữ liệu của công ty", rows=True))
+    elif sources is not None:
+        blocks.append(ui.b_callout("info", "Công ty chưa nối nguồn dữ liệu nào",
+                                   "Barista tự kéo dữ liệu từ sheet, CRM cũ, tổng đài… về đây theo lịch. App bên ngoài gọi VÀO Barista nằm ở Ứng dụng."))
+    blocks.append(ui.b_callout("muted", "Gmail, Lịch Google của bạn — chưa có",
+                               "Khi có, bạn tự nối tài khoản của mình để trợ lý đọc thư và lịch bằng đúng quyền của bạn."))
+    return ui.card("Kết nối", blocks, subtitle="Barista lấy dữ liệu từ đâu — của công ty và của bạn")
 
 
 @m.query("ai_link", resource=None, title="Dùng Barista trong ChatGPT / Claude", category="core")
@@ -105,28 +97,42 @@ async def disconnect_ai_apps(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     return {"revoked": gone, "summary": "Đã ngắt các ứng dụng AI khỏi tài khoản" if gone else "Không có ứng dụng AI nào đang nối"}
 
 
+ROW_BADGE = {"on": ("Đang dùng", "green"), "available": ("Thêm", "accent")}   # nhãn nút bên phải theo trạng thái; "locked" giữ nhãn của Store (vd "Cần …", "Liên hệ")
+GROUPS = (("capability", "Có sẵn trong Barista"), ("industry", "Gói ngành"), ("company", "Riêng của công ty"))
+
+
 async def _apps(ctx: Ctx) -> dict[str, Any]:
-    if "admin.pack_store" in registry.OPS and executor.allowed(ctx.p, registry.OPS["admin.pack_store"]):
+    admin = "admin.pack_store" in registry.OPS and executor.allowed(ctx.p, registry.OPS["admin.pack_store"])
+    if admin:
         store = await ctx.call("admin.pack_store")
         tiles = [t for b in store.get("blocks", []) if b.get("type") == "tiles" for t in b.get("items", []) if t.get("state") and t.get("kind") != "core"]
-        groups = [([t for t in tiles if t["state"] == "on"], "Công ty đang dùng"), ([t for t in tiles if t["state"] == "available"], "Có thể thêm"),
-                  ([t for t in tiles if t["state"] == "locked"], "Cần mở thêm")]
+        for t in tiles:
+            t["badge"], t["tone"] = ROW_BADGE.get(t["state"], (t.get("badge"), "gray"))
         hint = "Bấm một ứng dụng để xem gồm gì và bật — bật kèm phần nó cần, cài sẵn vai, quyền, quy trình mặc định."
     else:
-        on = [(k, pk) for k, pk in registry.PACKS.items() if pk.kind != "core" and (k in registry.always_on() or ctx.p.packs is None or k in ctx.p.packs)]
-        groups = [([{"title": pk.title, "subtitle": pk.description, "badge": "Đang dùng", "tone": "ok", "module": registry.pack_module(k)} for k, pk in on],
-                   "Công ty đang dùng")]
+        tiles = [{"title": pk.title, "subtitle": pk.description, "badge": "Đang dùng", "tone": "green", "module": registry.pack_module(k), "state": "on", "kind": pk.kind}
+                 for k, pk in registry.PACKS.items() if pk.kind != "core" and (k in registry.always_on() or ctx.p.packs is None or k in ctx.p.packs)]
         hint = "Muốn thêm ứng dụng, nhờ quản trị bật."
-    blocks = [ui.b_tiles(items, title) for items, title in groups if items]
-    return ui.card("Ứng dụng", blocks or [ui.b_callout("info", "Chưa có ứng dụng nào", hint)], subtitle=hint, icon="square.grid.2x2")
+    order = {"on": 0, "available": 1, "locked": 2}
+    blocks = [ui.b_tiles(sorted(items, key=lambda t: order.get(t["state"], 3)), title, rows=True)
+              for kind, title in GROUPS if (items := [t for t in tiles if t.get("kind") == kind])]
+    n = await _my_ai_apps(ctx)
+    outside = [{"title": "ChatGPT, Claude", "subtitle": "Trợ lý AI quen thuộc của bạn đọc Barista bằng đúng quyền của bạn", "module": "agent",
+                "badge": f"Đã nối {n}" if n else "Nối", "tone": "green" if n else "accent", "open": {"query": "core.ai_link", "input": {}}}]
+    for r in await _rows(ctx, "connect.apps") or []:
+        active = r.get("status") == "active"
+        outside.append({"title": r.get("name") or "", "subtitle": "App của công ty gửi / nhận dữ liệu với Barista bằng khoá riêng", "module": "connect",
+                        "badge": "Đang dùng" if active else "Đã thu hồi", "tone": "green" if active else "gray", "open": {"query": "connect.apps", "input": {}}})
+    blocks.append(ui.b_tiles(outside, "App bên ngoài nối vào Barista", rows=True))
+    return ui.card("Ứng dụng", blocks, subtitle=hint, icon="square.grid.2x2", actions=[ui.act("connect.install", "Thêm app bên ngoài")])
 
 
 # PHÂN HỆ CHÍNH, luôn trên thanh bên cho MỌI vai (``fixed``), menu con như ChatGPT. Màn nào trống với người xem thì tự nói vì sao; phần của công ty chỉ hiện theo quyền.
 m.workspace(Workspace("plugins", "Kết nối & kỹ năng", "puzzlepiece.extension", (
     Screen("plugin_apps", "Ứng dụng", "square.grid.2x2", "core.plugin_apps", tint="purple", pinnable=False,
-           about="Các ứng dụng nghiệp vụ công ty đang dùng (Hoa hồng, Kế toán, Văn bản Word…); quản trị bấm vào để xem gồm gì và bật thêm."),
+           about="Ứng dụng có sẵn, gói ngành và app bên ngoài nối vào Barista (ChatGPT, Claude…); quản trị bấm vào để xem gồm gì và bật thêm."),
     Screen("connections", "Kết nối", "link", "core.connections", tint="teal", pinnable=False,
-           about="ChatGPT / Claude của bạn nối vào Barista, và nguồn dữ liệu, app bên ngoài của công ty (theo quyền)."),
+           about="Barista lấy dữ liệu từ đâu: nguồn dữ liệu của công ty (sheet, CRM cũ…) và sau này tài khoản của bạn (Gmail, Lịch)."),
     Screen("my_skills", "Kỹ năng", "sparkles", "core.my_skills", tint="orange", pinnable=False,
            about="Những việc trợ lý của bạn biết làm theo cách của công ty."),
 ), order=95, fixed=True))

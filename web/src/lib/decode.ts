@@ -632,6 +632,7 @@ function decodeBlockBody(raw: unknown): Block {
             const io = obj(i);
             return { title: str(io.title), subtitle: optStr(io.subtitle), badge: optStr(io.badge), tone: optStr(io.tone), module: optStr(io.module), open: decodeOpen(io.open) };
           }),
+          ...(o.style === "rows" ? { style: "rows" as const } : {}),
         };
       case "text":
         return { type: "text", title: str(o.title), markdown: str(o.markdown) };

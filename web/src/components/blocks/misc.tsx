@@ -160,7 +160,39 @@ export function ListBlock({ items, onOpen, onAsk }: { items: ListItem[]; onOpen:
 }
 
 /** Lưới thẻ (chợ gói…): biểu tượng + màu theo phân hệ (``module``), nhãn trạng thái tô theo ``tone`` — như TileView.swift. */
-export function TilesBlock({ items, onOpen }: { items: Tile[]; onOpen: (q: string, input: Input, title?: string) => void }) {
+export function TilesBlock({ items, onOpen, rows = false }: { items: Tile[]; rows?: boolean; onOpen: (q: string, input: Input, title?: string) => void }) {
+  if (rows) {
+    // kiểu cửa hàng ứng dụng (``style: "rows"``): hai cột hàng — biểu tượng · tên · một dòng mô tả · nút nhãn bên phải; vạch mảnh giữa các hàng
+    return (
+      <div className="grid gap-x-8 md:grid-cols-2">
+        {items.map((t, i) => {
+          const tone = cardToneVar(t.tone);
+          const inner = (
+            <>
+              <IconTile icon={moduleIcon(`${t.module ?? ""}.`)} tint={moduleTint(`${t.module ?? ""}.`)} size={44} />
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5 self-stretch border-b border-hairline py-3 text-left">
+                <span className="t14m truncate">{t.title}</span>
+                {t.subtitle ? <span className="t12 line-clamp-1 text-muted-foreground">{t.subtitle}</span> : null}
+              </span>
+              {t.badge ? (
+                <span className="t12m shrink-0 rounded-full px-3 py-1" style={{ color: tone, background: `color-mix(in oklab, ${tone} 12%, transparent)` }}>
+                  {t.badge}
+                </span>
+              ) : null}
+            </>
+          );
+          const cls = "flex w-full items-center gap-3";
+          return t.open ? (
+            <button key={i} type="button" className={cn(cls, "rounded-lg outline-none hover:opacity-85 focus-visible:ring-2 focus-visible:ring-ring")} onClick={() => onOpen(t.open!.query, t.open!.input, t.title)}>
+              {inner}
+            </button>
+          ) : (
+            <div key={i} className={cls}>{inner}</div>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">
       {items.map((t, i) => {

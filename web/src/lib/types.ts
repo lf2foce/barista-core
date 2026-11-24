@@ -425,7 +425,7 @@ export type Block = (
   | ({ type: "brief" } & Brief)
   | { type: "callout"; tone: string; title: string; text: string; facts: string[]; draft: string; actions: ActionSpec[] }
   | { type: "list"; title: string; items: ListItem[]; attach?: ListAttach }
-  | { type: "tiles"; title: string; items: Tile[] }
+  | { type: "tiles"; title: string; items: Tile[]; style?: "rows" }
   | { type: "text"; title: string; markdown: string }
   /** Ảnh trong thẻ (ui.b_image): `src` link ký ngắn hạn / đường /v1/…; trống ⇒ hiện `note` */
   | { type: "image"; src: string; caption: string; alt: string; note: string }

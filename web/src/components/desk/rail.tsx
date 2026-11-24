@@ -86,6 +86,8 @@ export function Rail() {
           <>
             {/* phân hệ theo vai nằm ngay dưới vạch sau "Tin nhắn" — không thêm vạch, không chữ nhóm (tự hiểu — anh Anh 24/11/2026) */}
             <div role="group" aria-label="Theo vai" className="flex w-full flex-col items-center gap-1.5 max-sm:hidden">{layout.role.map((w) => workspaceButton(w))}</div>
+            {/* phân hệ cố định (``fixed`` — vd "Kết nối & kỹ năng"): mọi vai, nối liền sau phân hệ theo vai, cuộn cùng (anh Anh 25/11/2026) */}
+            {layout.fixed.map((w) => workspaceButton(w))}
             {layout.pinned.length ? <RailGroup label="Đã ghim">{layout.pinned.map((w) => workspaceButton(w))}</RailGroup> : null}
             {here?.onRail ? workspaceButton(here.ws, "sm:hidden") : null}
             {here && !here.onRail ? (
@@ -97,11 +99,12 @@ export function Rail() {
             ) : null}
           </>
         ) : (
-          layout.all.filter((i) => !i.ws.fixed).map((i) => workspaceButton(i.ws))
+          <>
+            {layout.all.filter((i) => !i.ws.fixed).map((i) => workspaceButton(i.ws))}
+            {layout.fixed.map((w) => workspaceButton(w))}
+          </>
         )}
       </div>
-      {/* phân hệ cố định (``fixed`` — vd "Kết nối & kỹ năng"): mọi vai, ngay trên "Tất cả mục" */}
-      {layout.fixed.map((w) => workspaceButton(w))}
       {layout.grouped ? <AllItems layout={layout} /> : null}   {/* ngoài vùng cuộn: luôn thấy, ngay trên người dùng */}
       <PersonaMenu />
     </nav>

@@ -173,6 +173,9 @@ const MODULE_ICON: Record<string, string> = {
   training: "graduationcap.fill",
   books: "book.closed.fill",
   accounting_service: "briefcase.fill",
+  parties: "person.crop.rectangle.stack", hr: "person.text.rectangle", kpi: "target", schedule: "calendar", meet: "video", mgmt: "chart.bar.doc.horizontal",
+  pay: "banknote", findings: "doc.text.magnifyingglass", compose: "paintpalette", telephony: "phone", timekeeping: "clock.badge.checkmark",
+  word: "doc.richtext", connect: "app.connected.to.app.below", connectors: "arrow.triangle.2.circlepath", agent: "sparkles",
 };
 export function moduleIcon(op: string): string {
   return MODULE_ICON[op.split(".")[0] ?? ""] ?? "square.grid.2x2.fill";
@@ -198,6 +201,8 @@ const TINT: Record<string, string> = {
   training: "#af52de",
   books: "#34c759",
   accounting_service: "#5856d6",
+  parties: "#007aff", hr: "#5856d6", kpi: "#ff2d55", schedule: "#ff9500", meet: "#34c759", mgmt: "#5856d6", pay: "#34c759", findings: "#a2845e",
+  compose: "#ff2d55", telephony: "#34c759", timekeeping: "#00c7be", word: "#007aff", connect: "#30b0c7", connectors: "#30b0c7", agent: "#af52de",
 };
 export function moduleTint(op: string): string {
   return TINT[op.split(".")[0] ?? ""] ?? "#007aff";

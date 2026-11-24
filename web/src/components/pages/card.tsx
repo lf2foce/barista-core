@@ -318,7 +318,7 @@ export function CardView({ page: raw, onClose, onChanged, head }: { page: CardPa
           case "tiles":
             return (
               <Section key={i} title={b.title}>
-                <TilesBlock items={b.items} onOpen={(q, input, title) => desk.openPage(q, input, title)} />
+                <TilesBlock items={b.items} rows={b.style === "rows"} onOpen={(q, input, title) => desk.openPage(q, input, title)} />
               </Section>
             );
           case "text":

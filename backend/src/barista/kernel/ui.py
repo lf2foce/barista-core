@@ -423,9 +423,10 @@ def b_list(items: list[dict[str, Any]], title: str = "", *, needs: Needs = None)
     return gated({"type": "list", "title": title, "items": items}, needs)
 
 
-def b_tiles(items: list[dict[str, Any]], title: str = "", *, needs: Needs = None) -> dict[str, Any]:
-    """Lưới thẻ: ô {title, subtitle?, badge?, tone?, module? (biểu tượng + màu theo phân hệ), open?}."""
-    return gated({"type": "tiles", "title": title, "items": items}, needs)
+def b_tiles(items: list[dict[str, Any]], title: str = "", *, rows: bool = False, needs: Needs = None) -> dict[str, Any]:
+    """Lưới thẻ: ô {title, subtitle?, badge?, tone?, module? (biểu tượng + màu theo phân hệ), open?}. ``rows`` ⇒ vẽ thành hàng kiểu cửa hàng ứng dụng
+    (biểu tượng · tên · một dòng mô tả · nút nhãn bên phải), cùng dữ liệu; app chưa biết ``style`` vẫn vẽ lưới."""
+    return gated({"type": "tiles", "title": title, "items": items, **({"style": "rows"} if rows else {})}, needs)
 
 
 def b_text(markdown: str, title: str = "", *, needs: Needs = None) -> dict[str, Any]:
