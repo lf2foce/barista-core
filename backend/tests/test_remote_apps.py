@@ -198,7 +198,8 @@ async def test_remote_app_full_cycle(company: dict[str, Any]) -> None:
             webhooks.use_sender(None)
 
 
-async def test_app_access_never_exceeds_the_installer(company: dict[str, Any]) -> None:
+async def test_app_access_never_exceeds_the_installer(company: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "webhook_allow_private", False)   # luật thật; máy dev / CI có BARISTA_WEBHOOK_ALLOW_PRIVATE=1 ở .env (dev-db.sh)
     admin, owner = company["admin"], company["giamdoc"]
     # vượt quyền người cài (quản trị không có quyền sổ cái) ⇒ phiếu duyệt xong vẫn KHÔNG chạy
     r = await executor.run(admin, "connect.install", {"name": "App tham", "grants": "ledger:all:read"})
@@ -352,8 +353,9 @@ async def test_intake_ids_are_bound_to_the_app_and_hidden_when_the_app_cannot_re
                            (company["tid"], ref)) == 2
 
 
-def test_ssrf_guard_treats_embedded_and_special_ranges_as_private() -> None:
+def test_ssrf_guard_treats_embedded_and_special_ranges_as_private(monkeypatch: pytest.MonkeyPatch) -> None:
     """Review 08/11 (THẤP): NAT64, ánh xạ ::ffff:, IPv4-compatible, 6to4, Teredo, CGNAT, link-local… đều không công khai."""
+    monkeypatch.setattr(settings, "webhook_allow_private", False)   # luật thật; máy dev / CI có BARISTA_WEBHOOK_ALLOW_PRIVATE=1 ở .env (dev-db.sh)
     for ip in ("127.0.0.1", "10.1.2.3", "100.64.0.1", "169.254.169.254", "0.0.0.0", "192.168.1.1", "198.18.0.1", "224.0.0.1",
                "::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1", "::127.0.0.1", "64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe", "2002:7f00:1::1",
                "2001:0:4136:e378:8000:63bf:3fff:fdd2", "fe80::1", "fd00::1", "2001:db8::1", "ff02::1", "fe80::1%en0"):

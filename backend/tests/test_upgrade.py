@@ -1358,7 +1358,7 @@ async def test_links_in_messages_written_before_0128_show_in_the_files_tab_core(
         assert "talk/040_links_team_rooms.sql" in plan["pending"] and "talk/040_links_team_rooms.sql" not in plan["maintenance"]
         await migrate(URL)
         async with await AsyncConnection.connect(URL) as c:
-            rows = await (await c.execute("SELECT url, host FROM talk.links ORDER BY url")).fetchall()
+            rows = await (await c.execute('SELECT url, host FROM talk.links ORDER BY url COLLATE "C"')).fetchall()   # thứ tự mã ký tự như sorted(); DB en_US (CI) bỏ qua dấu câu
             assert rows == sorted([*talk.links(body), *talk.links(long_body)])
             assert sorted(talk.links(body)) == [("http://tai-lieu.test/hd.pdf", "tai-lieu.test"), ("https://Mau.example.vn/bang-gia?id=1", "mau.example.vn")]
             assert [len(h) for _, h in talk.links(long_body)] == [255]                       # tên miền cắt 255; link > 2000 ký tự bỏ qua
