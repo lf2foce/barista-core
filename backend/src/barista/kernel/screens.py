@@ -6,6 +6,7 @@ phân hệ khai ``m.workspace(Workspace(...))``; module khác GÓP màn vào ph�
 ráp (``assemble``) và lọc theo quyền từng người. Kernel không biết module / gói nào.
 """
 
+import dataclasses
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -145,6 +146,9 @@ class Workspace:
     order: int = 50          # vị trí trên menu (nhỏ lên trước)
     phone: bool = True       # False ⇒ app iPhone không hiện phân hệ này (màn quá rộng cho màn nhỏ — vd App của tôi, 0098)
     pack: str = ""           # gói của module SỞ HỮU phân hệ (registry điền) — công ty chưa bật gói ⇒ không có phân hệ, kể cả màn góp từ gói nền
+    # LUÔN TRÊN THANH BÊN cho MỌI vai (24/11/2026), ở chỗ cố định ngay trên "Tất cả mục" — vd "Kết nối & kỹ năng" (ADR 0261): phân hệ chính ai cũng cần, không phụ thuộc
+    # mặc định theo vai / ghim. Chỉ THÊM trường vào manifest; app cũ vẽ như phân hệ thường.
+    fixed: bool = False
 
 
 
@@ -177,7 +181,7 @@ def assemble() -> tuple[Workspace, ...]:
     for ws in sorted(WORKSPACES.values(), key=lambda w: (w.order, w.key)):
         parts = [(0, -1, ws.screens)] + [(c.rank, c.seq, c.screens) for c in CONTRIB if c.into == ws.key]
         parts.sort(key=lambda t: (t[0], t[1]))
-        out.append(Workspace(ws.key, ws.title, ws.icon, tuple(s for *_, ss in parts for s in ss), ws.order, ws.phone, ws.pack))
+        out.append(dataclasses.replace(ws, screens=tuple(s for *_, ss in parts for s in ss)))   # giữ MỌI trường của phân hệ (thêm trường mới không bị rơi)
     return tuple(out)
 
 

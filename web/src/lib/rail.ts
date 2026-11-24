@@ -10,6 +10,8 @@ export type RailLayout = {
   grouped: boolean;
   role: WorkspaceSpec[];
   pinned: WorkspaceSpec[];
+  /** Phân hệ ``fixed`` của server: luôn trên thanh bên, ở chỗ riêng ngay trên "Tất cả mục" — không nằm trong nhóm theo vai / đã ghim. */
+  fixed: WorkspaceSpec[];
   /** Mọi phân hệ người xem thấy, theo thứ tự menu — nội dung panel "Tất cả mục". */
   all: RailItem[];
 };
@@ -17,7 +19,8 @@ export type RailLayout = {
 export function railLayout(m: Manifest | null): RailLayout {
   const spaces = m?.workspaces ?? [];
   const byKey = new Map(spaces.map((w) => [w.key, w]));
-  const taken = new Set<string>();
+  const fixed = spaces.filter((w) => w.fixed);
+  const taken = new Set<string>(fixed.map((w) => w.key));
   const pick = (keys: string[] | undefined): WorkspaceSpec[] =>
     (keys ?? []).flatMap((k) => {
       const w = byKey.get(k);
@@ -25,19 +28,19 @@ export function railLayout(m: Manifest | null): RailLayout {
       taken.add(k);
       return [w];
     });
-  if (!m?.rail) return { grouped: false, role: [], pinned: [], all: spaces.map((ws) => ({ ws, place: null, pinned: ws.pinned === true })) };
+  if (!m?.rail) return { grouped: false, role: [], pinned: [], fixed, all: spaces.map((ws) => ({ ws, place: null, pinned: ws.pinned === true })) };
   const role = pick(m.rail.role);
   const pinned = pick(m.rail.pinned);
   // mặc định của vai lọc hết (không còn phân hệ nào thấy được) ⇒ như chưa khai: vẽ hết, đừng để thanh bên trống
-  if (role.length === 0) return { grouped: false, role: [], pinned: [], all: spaces.map((ws) => ({ ws, place: null, pinned: ws.pinned === true })) };
+  if (role.length === 0) return { grouped: false, role: [], pinned: [], fixed, all: spaces.map((ws) => ({ ws, place: null, pinned: ws.pinned === true })) };
   const placeOf = (k: string): RailPlace => (role.some((w) => w.key === k) ? "role" : pinned.some((w) => w.key === k) ? "pinned" : null);
-  return { grouped: true, role, pinned, all: spaces.map((ws) => ({ ws, place: placeOf(ws.key), pinned: ws.pinned === true })) };
+  return { grouped: true, role, pinned, fixed, all: spaces.map((ws) => ({ ws, place: placeOf(ws.key), pinned: ws.pinned === true })) };
 }
 
 /** Khoá phân hệ theo thứ tự hiện trên thanh bên (phím tắt Alt+số): vẽ hết ⇒ mọi phân hệ; có nhóm ⇒ "Theo vai" rồi "Đã ghim" (phần còn lại không có phím tắt). */
 export function railWorkspaceKeys(m: Manifest | null): string[] {
   const l = railLayout(m);
-  return l.grouped ? [...l.role, ...l.pinned].map((w) => w.key) : l.all.map((i) => i.ws.key);
+  return [...(l.grouped ? [...l.role, ...l.pinned] : l.all.map((i) => i.ws).filter((w) => !w.fixed)), ...l.fixed].map((w) => w.key);
 }
 
 /** Phân hệ đang mở mà thanh bên (rộng) không hiện — mở từ "Tất cả mục": vẫn có một mục sáng để biết mình đang ở đâu. `onRail`: nó đã có ở nhóm nào đó (màn hẹp
@@ -45,5 +48,5 @@ export function railWorkspaceKeys(m: Manifest | null): string[] {
 export function railCurrent(layout: RailLayout, workspaceKey: string | null): { ws: WorkspaceSpec; onRail: boolean } | null {
   if (!layout.grouped || !workspaceKey) return null;
   const hit = layout.all.find((i) => i.ws.key === workspaceKey);
-  return hit ? { ws: hit.ws, onRail: hit.place !== null } : null;
+  return hit ? { ws: hit.ws, onRail: hit.place !== null || !!hit.ws.fixed } : null;
 }

@@ -9,21 +9,17 @@ loại vẫn đi cơ chế + luật duyệt riêng của nó (không cơ chế m
   module đó và quyền người xem; không có quyền ⇒ phần đó không hiện.
 Tầng hệ thống (gói, Store) không ở đây."""
 
-from typing import Any, Literal
+from typing import Any
 
 from barista.config import settings
 from barista.kernel import ai_skills, executor, registry, ui
 from barista.kernel.core_ops import m
 from barista.kernel.errors import Denied, NotFound
 from barista.kernel.executor import Ctx
-from barista.kernel.fields import Input, NoInput, field
+from barista.kernel.fields import NoInput
+from barista.kernel.screens import Screen, Workspace
 
-VIEWS = {"apps": "Ứng dụng", "connections": "Kết nối", "skills": "Kỹ năng"}
 HEALTH = {"ok": ("Đang chạy", "green"), "error": ("Lỗi", "red"), "new": ("Chưa chạy", "gray")}
-
-
-class PluginsIn(Input):
-    view: Literal["apps", "connections", "skills"] = field("Xem", "apps", options=VIEWS)
 
 
 def _mcp_address() -> str:
@@ -44,18 +40,23 @@ async def _rows(ctx: Ctx, query: str) -> list[dict[str, Any]] | None:
     return list((page or {}).get("rows") or [])
 
 
-@m.query("plugins", resource=None, title="Kết nối & kỹ năng", category="core")
-async def plugins(ctx: Ctx, inp: PluginsIn) -> dict[str, Any]:
-    if inp.view == "apps":
-        return await _apps(ctx)
-    if inp.view == "skills":
-        skills = await ai_skills.for_role(ctx.conn, ctx.p.role or "")
-        tiles = [{"title": s["title"], "subtitle": s["when_to_use"], "badge": "Đang dùng", "tone": "green"} for s in skills]
-        return ui.card("Kỹ năng", [ui.b_tiles(tiles, "Trợ lý của bạn biết làm") if tiles else
-                                    ui.b_callout("info", "Chưa có kỹ năng nào cho vai của bạn",
-                                                 "Kỹ năng là cách trợ lý làm một việc hay gặp (soạn báo giá, đối soát…). Quản trị soạn hoặc bật thêm.")],
-                       subtitle="Cách trợ lý làm những việc hay gặp của công ty",
-                       actions=[ui.act("core.save_skill", "Soạn kỹ năng")])
+@m.query("plugin_apps", resource=None, title="Ứng dụng", category="core")
+async def plugin_apps(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    return await _apps(ctx)
+
+
+@m.query("my_skills", resource=None, title="Kỹ năng", category="core")
+async def my_skills(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    skills = await ai_skills.for_role(ctx.conn, ctx.p.role or "")
+    tiles = [{"title": s["title"], "subtitle": s["when_to_use"], "badge": "Đang dùng", "tone": "green"} for s in skills]
+    return ui.card("Kỹ năng", [ui.b_tiles(tiles, "Trợ lý của bạn biết làm") if tiles else
+                                ui.b_callout("info", "Chưa có kỹ năng nào cho vai của bạn",
+                                             "Kỹ năng là cách trợ lý làm một việc hay gặp (soạn báo giá, đối soát…). Quản trị soạn hoặc bật thêm.")],
+                   subtitle="Cách trợ lý làm những việc hay gặp của công ty", actions=[ui.act("core.save_skill", "Soạn kỹ năng")])
+
+
+@m.query("connections", resource=None, title="Kết nối", category="core")
+async def connections(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     blocks: list[dict[str, Any]] = []
     n = await _my_ai_apps(ctx)
     blocks.append(ui.b_tiles([{
@@ -114,3 +115,14 @@ async def _apps(ctx: Ctx) -> dict[str, Any]:
         hint = "Muốn thêm ứng dụng, nhờ quản trị bật."
     blocks = [ui.b_tiles(items, title) for items, title in groups if items]
     return ui.card("Ứng dụng", blocks or [ui.b_callout("info", "Chưa có ứng dụng nào", hint)], subtitle=hint, icon="square.grid.2x2")
+
+
+# PHÂN HỆ CHÍNH, luôn trên thanh bên cho MỌI vai (``fixed``), menu con như ChatGPT. Màn nào trống với người xem thì tự nói vì sao; phần của công ty chỉ hiện theo quyền.
+m.workspace(Workspace("plugins", "Kết nối & kỹ năng", "puzzlepiece.extension", (
+    Screen("plugin_apps", "Ứng dụng", "square.grid.2x2", "core.plugin_apps", tint="purple", pinnable=False,
+           about="Các ứng dụng nghiệp vụ công ty đang dùng (Hoa hồng, Kế toán, Văn bản Word…); quản trị bấm vào để xem gồm gì và bật thêm."),
+    Screen("connections", "Kết nối", "link", "core.connections", tint="teal", pinnable=False,
+           about="ChatGPT / Claude của bạn nối vào Barista, và nguồn dữ liệu, app bên ngoài của công ty (theo quyền)."),
+    Screen("my_skills", "Kỹ năng", "sparkles", "core.my_skills", tint="orange", pinnable=False,
+           about="Những việc trợ lý của bạn biết làm theo cách của công ty."),
+), order=95, fixed=True))

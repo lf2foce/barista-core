@@ -205,7 +205,8 @@ def manifest(p: Principal, tenant_name: str, team_name: str = "", mine: Personal
             account = screens_
             continue
         if screens_:
-            spaces.append({"key": w.key, "title": w.title, "icon": w.icon, "screens": screens_, **({} if w.phone else {"phone": False})})
+            spaces.append({"key": w.key, "title": w.title, "icon": w.icon, "screens": screens_, **({} if w.phone else {"phone": False}),
+                           **({"fixed": True} if w.fixed else {})})
     visible = {s["key"]: w["key"] for w in spaces for s in w["screens"]}
     by_place = {(w["key"], s["key"]) for w in spaces for s in w["screens"]}
     # thanh bên trái (ADR 0255): "Theo vai" (công ty đã đặt, không thì gói khai) + "Đã ghim" (phân hệ người này ghim) — chỉ phân hệ họ THẤY; vai không có mặc định

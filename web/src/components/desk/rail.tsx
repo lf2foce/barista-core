@@ -22,6 +22,9 @@ import { useDesk } from "./desk-context";
 // ADR 0255: phân hệ KHÔNG vẽ hết — "Theo vai" (gói / công ty khai) + "Đã ghim" (người dùng ghim cả phân hệ) + nút "Tất cả mục" (panel liệt kê hết, mỗi dòng có nút
 // ghim; tìm = ⌘K có sẵn). Vai không có mặc định nào ⇒ vẽ hết như trước. Server quyết ai thấy phân hệ / màn nào và phân hệ nào ở nhóm nào; web chỉ vẽ.
 
+/** Tên ngắn dưới biểu tượng thanh bên: phần trước "&" / "—" (vd "Kết nối & kỹ năng" ⇒ "Kết nối") — ô hẹp 76px. */
+const railTitle = (t: string) => t.split(/\s+[&—]\s+/)[0];
+
 /** Phím tắt chuyển mục: Alt+1…9 (⌘/Ctrl+số là phím chuyển tab của trình duyệt — trang không chặn được). */
 export const sectionKey = (i: number) => (i < 9 ? `Alt+${i + 1}` : "");
 
@@ -42,7 +45,7 @@ export function Rail() {
     const on = current === sectionId(s);
     const k = keyOf(s);
     return (
-      <RailButton key={w.key} title={w.title} selected={on} className={className} help={`${w.title} — ${w.screens.length} màn${k ? ` (${k})` : ""}`} onClick={() => desk.select(s)}>
+      <RailButton key={w.key} title={w.fixed ? railTitle(w.title) : w.title} selected={on} className={className} help={`${w.title} — ${w.screens.length} màn${k ? ` (${k})` : ""}`} onClick={() => desk.select(s)}>
         <SfIcon name={w.icon} className="size-[18px]" filled={on} />
       </RailButton>
     );
@@ -81,7 +84,8 @@ export function Rail() {
       <div className="no-scrollbar flex min-h-0 w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto max-sm:contents">
         {layout.grouped ? (
           <>
-            <RailGroup label="Theo vai">{layout.role.map((w) => workspaceButton(w))}</RailGroup>
+            {/* phân hệ theo vai nằm ngay dưới vạch sau "Tin nhắn" — không thêm vạch, không chữ nhóm (tự hiểu — anh Anh 24/11/2026) */}
+            <div role="group" aria-label="Theo vai" className="flex w-full flex-col items-center gap-1.5 max-sm:hidden">{layout.role.map((w) => workspaceButton(w))}</div>
             {layout.pinned.length ? <RailGroup label="Đã ghim">{layout.pinned.map((w) => workspaceButton(w))}</RailGroup> : null}
             {here?.onRail ? workspaceButton(here.ws, "sm:hidden") : null}
             {here && !here.onRail ? (
@@ -93,9 +97,11 @@ export function Rail() {
             ) : null}
           </>
         ) : (
-          layout.all.map((i) => workspaceButton(i.ws))
+          layout.all.filter((i) => !i.ws.fixed).map((i) => workspaceButton(i.ws))
         )}
       </div>
+      {/* phân hệ cố định (``fixed`` — vd "Kết nối & kỹ năng"): mọi vai, ngay trên "Tất cả mục" */}
+      {layout.fixed.map((w) => workspaceButton(w))}
       {layout.grouped ? <AllItems layout={layout} /> : null}   {/* ngoài vùng cuộn: luôn thấy, ngay trên người dùng */}
       <PersonaMenu />
     </nav>
@@ -107,7 +113,6 @@ function RailGroup({ label, children }: { label: string; children: React.ReactNo
   return (
     <div role="group" aria-label={label} className="flex w-full flex-col items-center gap-1.5 max-sm:hidden">
       <span className="my-0.5 h-px w-9 bg-foreground/10" aria-hidden />
-      <span className="t12 text-muted-foreground">{label}</span>
       {children}
     </div>
   );

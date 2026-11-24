@@ -55,8 +55,19 @@ describe("bố cục thanh bên theo manifest", () => {
     expect(l.all.find((i) => i.ws.key === "b")).toMatchObject({ place: null, pinned: false });
   });
 
+  it("phân hệ cố định (fixed) luôn có chỗ riêng cho mọi vai — không lặp trong Theo vai / Đã ghim, phím tắt ở cuối", () => {
+    const spaces = [...all, ws("hub", { fixed: true })];
+    const grouped = railLayout(manifest(spaces, { role: ["hub", "a"], pinned: ["hub", "b"] }));
+    expect(grouped.fixed.map((w) => w.key)).toEqual(["hub"]);
+    expect(grouped.role.map((w) => w.key)).toEqual(["a"]);
+    expect(grouped.pinned.map((w) => w.key)).toEqual(["b"]);
+    expect(railWorkspaceKeys(manifest(spaces, { role: ["a"], pinned: [] }))).toEqual(["a", "hub"]);
+    expect(railLayout(manifest(spaces)).fixed.map((w) => w.key)).toEqual(["hub"]);              // vai không có mặc định: vẫn có chỗ riêng
+    expect(railWorkspaceKeys(manifest(spaces))).toEqual(["a", "b", "c", "d", "e", "hub"]);
+  });
+
   it("chưa có manifest ⇒ rỗng, không lỗi", () => {
-    expect(railLayout(null)).toEqual({ grouped: false, role: [], pinned: [], all: [] });
+    expect(railLayout(null)).toEqual({ grouped: false, role: [], pinned: [], fixed: [], all: [] });
   });
 });
 

@@ -120,8 +120,7 @@ async def test_personal_screens_live_in_the_account_menu_and_rules_live_in_admin
     ``automations``) nằm ở Quản trị, không ở Quy trình & kế hoạch."""
     for who in ("giamdoc", "ketoan", "admin"):
         man = workspaces.manifest(await seed.who(co["tid"], who, co["d"]), "Công ty thử")
-        # menu tài khoản: Kết nối & kỹ năng (ADR 0261) + Trí nhớ của trợ lý — đều là màn CÁ NHÂN
-        assert [s["key"] for s in man["account"]] == ["plugins", "memory"] and man["account"][1]["title"] == "Trí nhớ của trợ lý"
+        assert [s["key"] for s in man["account"]] == ["memory"] and man["account"][0]["title"] == "Trí nhớ của trợ lý"
         assert "account" not in {w["key"] for w in man["workspaces"]}
         assert "memory" not in {s["key"] for w in man["workspaces"] for s in w["screens"]}
     man = workspaces.manifest(await seed.who(co["tid"], "admin", co["d"]), "Công ty thử")

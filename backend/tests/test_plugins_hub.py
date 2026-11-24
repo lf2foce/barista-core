@@ -20,11 +20,11 @@ async def _token(user_id: object, tenant_id: object, client: str) -> None:
 
 async def test_each_person_sees_their_layer_and_the_company_layer_only_with_rights(who: Who) -> None:
     sale, admin = await who("sale1"), await who("admin")
-    mine = await q(sale, "core.plugins", view="connections")
+    mine = await q(sale, "core.connections")
     assert _titles(mine, "Của tôi") == ["ChatGPT, Claude…"] and _titles(mine, "Của công ty") == []
     assert not any(a["command"] == "connect.install" for a in mine.get("actions", []))          # nút chỉ hiện cho ai chạy được
-    assert any(a["command"] == "connect.install" for a in (await q(admin, "core.plugins", view="connections")).get("actions", []))
-    skills = await q(sale, "core.plugins", view="skills")
+    assert any(a["command"] == "connect.install" for a in (await q(admin, "core.connections")).get("actions", []))
+    skills = await q(sale, "core.my_skills")
     assert skills["title"] == "Kỹ năng" and skills["blocks"]
 
 
@@ -40,28 +40,32 @@ async def test_disconnecting_ai_apps_revokes_only_my_own_tokens(who: Who) -> Non
     assert await owner_val("SELECT count(*) FROM core.mcp_tokens WHERE client_id = %s AND user_id = %s AND revoked_at IS NULL", (client, other.user_id)) == 1
 
 
-def test_the_hub_is_in_everyones_account_menu_and_the_store_is_off_the_menu() -> None:
-    screens = {s.key: w.key for w in workspaces() for s in w.screens}
-    assert screens.get("plugins") == "account" and "store" not in screens
+def test_the_hub_is_a_main_workspace_fixed_on_everyones_rail_with_three_sub_screens_and_the_store_is_off_the_menu() -> None:
+    by_key = {w.key: w for w in workspaces()}
+    hub = by_key["plugins"]
+    assert hub.fixed and [s.key for s in hub.screens] == ["plugin_apps", "connections", "my_skills"]   # phân hệ chính, menu con kiểu ChatGPT
+    assert all(s.about for s in hub.screens)
+    assert "plugins" not in {s.key for s in by_key["account"].screens}                                  # không còn là màn cá nhân
+    assert not any(s.query == "admin.pack_store" for w in workspaces() for s in w.screens)
 
 
 async def test_an_installed_outside_app_shows_in_the_company_layer_for_people_who_manage_it(who: Who) -> None:
     admin, sale = await who("admin"), await who("sale1")
     name = f"App thử {uuid.uuid4().hex[:6]}"
     await approved(admin, "connect.install", name=name, grants="crm:own:read")
-    assert name in _titles(await q(admin, "core.plugins", view="connections"), "Của công ty")
-    assert name not in _titles(await q(sale, "core.plugins", view="connections"), "Của công ty")
+    assert name in _titles(await q(admin, "core.connections"), "Của công ty")
+    assert name not in _titles(await q(sale, "core.connections"), "Của công ty")
 
 
 async def test_apps_view_is_the_store_for_admins_and_the_list_in_use_for_everyone_else(who: Who) -> None:
     """Ứng dụng (gói nghiệp vụ) kiểu App Store: quản trị thấy đang dùng + có thể thêm, bấm thẻ mở trang gói (có nút bật); nhân viên chỉ thấy gói công ty đang dùng,
     không mở được trang bật gói. Gói lõi không hiện."""
     admin, sale = await who("admin"), await who("sale1")
-    full = await q(admin, "core.plugins")                                             # mặc định: Ứng dụng
+    full = await q(admin, "core.plugin_apps")
     sections = {b["title"]: b["items"] for b in full["blocks"] if b.get("type") == "tiles"}
     assert "Công ty đang dùng" in sections and all(t["open"]["query"] == "admin.pack_info" for items in sections.values() for t in items)
     assert all(t.get("kind") != "core" for items in sections.values() for t in items)
-    mine = await q(sale, "core.plugins", view="apps")
+    mine = await q(sale, "core.plugin_apps")
     sale_sections = {b["title"]: b["items"] for b in mine["blocks"] if b.get("type") == "tiles"}
     assert list(sale_sections) == ["Công ty đang dùng"] and all("open" not in t for t in sale_sections["Công ty đang dùng"])
     assert {t["title"] for t in sale_sections["Công ty đang dùng"]} == {t["title"] for t in sections["Công ty đang dùng"]}
