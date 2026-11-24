@@ -1,7 +1,7 @@
 """Chuỗi duyệt — tạo phiếu và chốt người duyệt từng bước. (Quyết định duyệt / chạy lệnh đích: ``kernel/core_ops.py``.)
 
 Bước trong chuỗi (dữ liệu, quản trị sửa):
-  {"kind": "team_lead"}                 trưởng đội của người xin; người xin là trưởng ⇒ lên đội cha
+  {"kind": "team_lead"}                 trưởng đội của người xin; người xin là trưởng ⇒ lên đội cha; cả nhánh chưa có trưởng ⇒ chủ tài khoản
   {"kind": "role", "role": "accountant"} mọi người đang hoạt động có vai trò đó
   {"kind": "user", "email": "…"}         đích danh
   {"kind": "owner"}                      chủ tài khoản công ty (core.memberships.owner — 0029; trách nhiệm kiêm cùng vai nghiệp vụ)
@@ -46,6 +46,9 @@ async def resolve_step(conn: Conn, tenant_id: UUID, step: dict[str, Any], reques
             WHERE tm.user_id <> ALL(%(ex)s)
             ORDER BY up.depth""", {"home": await teams.home(conn, tenant_id, requester), "ex": list(exclude | {requester})})
         ids = [r["user_id"] for r in rows if r["depth"] == rows[0]["depth"]] if rows else []
+        if not ids:   # người xin chưa thuộc đội nào, hoặc cả nhánh cây chưa có trưởng (đội mới, cơ cấu đang dựng lại): phiếu không kẹt — chủ tài khoản
+            label, ids = await resolve_step(conn, tenant_id, {"kind": "owner"}, requester, exclude)   # duyệt thay, nhãn nói rõ vì sao
+            return f"{label} (chưa có trưởng nhóm)", ids
         return step.get("label") or "Trưởng nhóm", ids
     if kind == "role":
         rows = await _rows(conn, """

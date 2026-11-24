@@ -47,7 +47,9 @@ async def test_records_take_the_home_team_and_teamless_people_still_work(who: Wh
     board = await q(loner, "flow.tasks")
     assert "Việc của người chưa có đội" in str(board)                                  # "việc của tôi" chạy với danh sách đội rỗng
     async with db.tenant_tx(loner, read_only=True) as conn:
-        assert await resolve_step(conn, loner.tenant_id, {"kind": "team_lead"}, loner.user_id, set()) == ("Trưởng nhóm", [])  # type: ignore[arg-type]
+        label, ids = await resolve_step(conn, loner.tenant_id, {"kind": "team_lead"}, loner.user_id, set())  # type: ignore[arg-type]
+    owners = set(await owner_val("SELECT array_agg(user_id) FROM core.memberships WHERE tenant_id = %s AND owner AND active", (loner.tenant_id,)) or [])
+    assert label == "Chủ tài khoản (chưa có trưởng nhóm)" and set(ids) == owners - {loner.user_id} and ids   # không đội ⇒ phiếu vẫn có người duyệt
 
 
 async def test_team_lead_approval_walks_up_from_the_home_team(who: Who) -> None:
