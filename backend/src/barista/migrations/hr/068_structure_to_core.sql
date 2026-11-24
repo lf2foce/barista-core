@@ -5,8 +5,9 @@
 -- Quy tắc chép — KHÔNG đoán lịch sử:
 --   * Hai nguồn BỔ SUNG cho nhau: phân công đội nói "là thành viên (đội chính) từ ngày – đến ngày", nhiệm kỳ trưởng nói "là trưởng từ ngày – đến ngày". Với
 --     mỗi (người, đội) hai dãy khoảng được GHÉP thành các đoạn nối nhau — vd thành viên tháng 1–6, trưởng tháng 3–4 ⇒ thành viên → trưởng → thành viên.
---     Mỗi đoạn mang dấu NGƯỜI SỬA / LÚC SỬA / lý do lùi ngày của dòng nguồn (cả hai nguồn cùng phủ ⇒ dấu của lần sửa sau cùng): ``hr.structure_on`` dùng dấu
---     này để người sửa cơ cấu không tự xác nhận phần chia liên quan.
+--     Mỗi đoạn mang dấu NGƯỜI SỬA của TỪNG nguồn (base/113): ``home_by / home_at`` từ dòng phân công đội, ``lead_by / lead_at`` từ dòng nhiệm kỳ trưởng —
+--     hai nguồn cùng phủ một đoạn thì đoạn giữ CẢ HAI người (``edited_by`` = lần sửa sau cùng, kèm lý do lùi ngày của lần đó). ``hr.structure_on`` dùng các
+--     dấu này để người sửa cơ cấu không tự xác nhận phần chia liên quan.
 --   * Dòng ĐANG MỞ của hr chỉ dùng khi KHỚP dòng đang mở của lõi (base/112 mở từ ngày chuyển, đánh dấu "không rõ từ khi nào"): cùng là thành viên chính /
 --     cùng là trưởng. Khớp ⇒ dòng của lõi lấy ngày bắt đầu thật; lệch ⇒ giữ bên lõi (bên đang cấp quyền), ghi chú, phần ĐÃ ĐÓNG vẫn chép.
 --   * Chỉ người có tài khoản (thành viên đội của lõi là tài khoản); cá nhân không tài khoản ⇒ ghi chú, không chép.
@@ -42,6 +43,7 @@ DECLARE
     use_open BOOLEAN;
     -- đoạn đang gom (các đoạn liền nhau cùng tính chất gộp làm một)
     a_lo DATE; a_hi DATE; a_home BOOLEAN; a_lead BOOLEAN; a_role TEXT; a_editor UUID; a_at TIMESTAMPTZ; a_reason TEXT;
+    a_home_by UUID; a_home_at TIMESTAMPTZ; a_lead_by UUID; a_lead_at TIMESTAMPTZ;
 BEGIN
     FOR g IN SELECT DISTINCT tenant_id, user_id, team_id FROM hr_structure_src LOOP
         SELECT * INTO c FROM core.team_terms tt
@@ -80,27 +82,36 @@ BEGIN
                                                 ORDER BY i.edited_at DESC LIMIT 1) l ON true
                              WHERE seg.hi IS NOT NULL AND (m.kind IS NOT NULL OR l.kind IS NOT NULL))
                 SELECT false AS last, lo, hi, is_home, is_lead, head_role, CASE WHEN by_lead THEN l_editor ELSE m_editor END AS editor,
-                       CASE WHEN by_lead THEN l_at ELSE m_at END AS edited_at, CASE WHEN by_lead THEN l_reason ELSE m_reason END AS reason FROM cov
-                UNION ALL SELECT true, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL     -- dòng chốt: đẩy đoạn đang gom ra
+                       CASE WHEN by_lead THEN l_at ELSE m_at END AS edited_at, CASE WHEN by_lead THEN l_reason ELSE m_reason END AS reason,
+                       m_editor, m_at, l_editor, l_at FROM cov
+                UNION ALL SELECT true, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL     -- dòng chốt: đẩy đoạn đang gom ra
                 ORDER BY 1, 2
             LOOP
                 IF NOT s.last AND a_lo IS NOT NULL AND a_hi = s.lo AND a_home = s.is_home AND a_lead = s.is_lead AND a_role IS NOT DISTINCT FROM s.head_role THEN
                     a_hi := s.hi;
                     IF s.edited_at > a_at THEN a_editor := s.editor; a_at := s.edited_at; a_reason := s.reason; END IF;
+                    IF s.m_at > a_home_at THEN a_home_by := s.m_editor; a_home_at := s.m_at; END IF;
+                    IF s.l_at > a_lead_at THEN a_lead_by := s.l_editor; a_lead_at := s.l_at; END IF;
                     CONTINUE;
                 END IF;
                 IF a_lo IS NOT NULL THEN
                     IF a_hi IS NULL THEN     -- đoạn còn mở = dòng đang mở của lõi: lấy ngày bắt đầu thật
                         UPDATE core.team_terms tt SET valid_from = a_lo, since_unknown = false, head_role = coalesce(a_role, tt.head_role),
-                                                      edited_by = a_editor, edited_at = a_at, backdate_reason = a_reason
+                                                      edited_by = a_editor, edited_at = a_at, backdate_reason = a_reason,
+                                                      home_by = CASE WHEN a_home THEN a_home_by ELSE tt.home_by END, home_at = CASE WHEN a_home THEN a_home_at ELSE tt.home_at END,
+                                                      lead_by = a_lead_by, lead_at = a_lead_at
                         WHERE tt.id = c.id;
                     ELSE
-                        INSERT INTO core.team_terms (tenant_id, user_id, team_id, is_lead, is_home, valid_from, valid_to, head_role, edited_by, edited_at, backdate_reason)
-                        VALUES (g.tenant_id, g.user_id, g.team_id, a_lead, a_home, a_lo, a_hi, a_role, a_editor, a_at, a_reason);
+                        -- đoạn chỉ là trưởng (không phải thành viên chính): căn cứ thành viên của đoạn do chính dòng nhiệm kỳ trưởng ghi
+                        INSERT INTO core.team_terms (tenant_id, user_id, team_id, is_lead, is_home, valid_from, valid_to, head_role, edited_by, edited_at, backdate_reason,
+                                                     home_by, home_at, lead_by, lead_at)
+                        VALUES (g.tenant_id, g.user_id, g.team_id, a_lead, a_home, a_lo, a_hi, a_role, a_editor, a_at, a_reason,
+                                CASE WHEN a_home THEN a_home_by ELSE a_lead_by END, CASE WHEN a_home THEN a_home_at ELSE a_lead_at END, a_lead_by, a_lead_at);
                     END IF;
                 END IF;
                 a_lo := s.lo; a_hi := s.hi; a_home := s.is_home; a_lead := s.is_lead; a_role := s.head_role;
                 a_editor := s.editor; a_at := s.edited_at; a_reason := s.reason;
+                a_home_by := s.m_editor; a_home_at := s.m_at; a_lead_by := s.l_editor; a_lead_at := s.l_at;
             END LOOP;
         EXCEPTION WHEN exclusion_violation OR unique_violation OR check_violation THEN
             INSERT INTO core.team_terms_migration_notes (tenant_id, note, data)

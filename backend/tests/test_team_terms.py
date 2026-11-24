@@ -140,3 +140,31 @@ async def test_moving_home_team_answers_by_date_and_a_team_keeps_its_parent_hist
     assert await owner_val("""SELECT p.code FROM core.team_parent_log l JOIN core.teams t ON t.id = l.team_id JOIN core.teams p ON p.id = l.parent_id
                               WHERE t.code = %s AND l.valid_to IS NULL""", (b,)) == a
     assert [t["code"] for t in (await _structure(sale, today()))["teams"]][:2] == [b, a]
+
+
+async def test_who_placed_the_member_and_who_made_them_lead_are_both_kept(who: Who) -> None:
+    """Rà 24/11/2026: một dòng lịch sử mang hai căn cứ (thành viên, trưởng) do hai người ghi được. A xếp người vào đội, B phong trưởng ⇒ bên đọc cơ cấu tại
+    một ngày trả CẢ A lẫn B là người sửa (không ai trong hai người tự xác nhận phần chia liên quan) — kể cả khi thay đổi ghi thẳng bằng SQL."""
+    admin, boss = await who("admin"), await who("giamdoc")
+    code = await _team(admin)
+    sale = await fresh_sale(who, code)
+
+    async def as_user(actor: Any, sql: str, *params: Any) -> None:
+        async with db.tenant_tx(actor) as conn:       # phiên của chính người đó (core.me() = họ), ghi thẳng bảng — không qua lệnh
+            await conn.execute(sql, params)   # type: ignore[arg-type]
+
+    team_id = await owner_val("SELECT id FROM core.teams WHERE code = %s", (code,))
+    await as_user(admin, "DELETE FROM core.team_members WHERE user_id = %s AND team_id = %s", sale.user_id, team_id)
+    await as_user(admin, "INSERT INTO core.team_members (tenant_id, user_id, team_id, is_lead, is_home) VALUES (%s, %s, %s, false, true)",
+                  admin.tenant_id, sale.user_id, team_id)                                          # A xếp vào đội
+    await as_user(boss, "UPDATE core.team_members SET is_lead = true WHERE user_id = %s AND team_id = %s", sale.user_id, team_id)   # B phong trưởng
+    async with await psycopg.AsyncConnection.connect(settings.owner_database_url) as c:
+        row = await (await c.execute("SELECT home_by, lead_by, edited_by FROM core.team_terms WHERE user_id = %s AND team_id = %s AND valid_to IS NULL",
+                                     (sale.user_id, team_id))).fetchone()
+    assert row == (admin.user_id, boss.user_id, boss.user_id)
+    got = await _structure(sale, today())
+    assert {str(admin.user_id), str(boss.user_id)} <= set(got["editors"]) and got["last_editor"] == str(boss.user_id)
+    # thôi làm trưởng (B ghi): căn cứ trưởng hết, căn cứ thành viên vẫn do A ghi
+    await as_user(boss, "UPDATE core.team_members SET is_lead = false WHERE user_id = %s AND team_id = %s", sale.user_id, team_id)
+    assert await owner_val("SELECT home_by FROM core.team_terms WHERE user_id = %s AND team_id = %s AND valid_to IS NULL AND lead_by IS NULL",
+                           (sale.user_id, team_id)) == admin.user_id

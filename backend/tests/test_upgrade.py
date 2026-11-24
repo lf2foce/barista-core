@@ -72,7 +72,8 @@ NEW_MAINTENANCE = NEW_MAINTENANCE | {"crm/084_campaign_plan_routing.sql"}
 # 112 / 068 (0256): một nguồn cho cơ cấu đội — ràng buộc "một đội một trưởng" trên core.team_members (bản cũ đặt trưởng thứ hai sẽ lỗi); hr bỏ bảng trưởng
 # đội + cột đội của phân công mà bản cũ còn đọc ⇒ DỪNG dịch vụ
 NEW_MAINTENANCE = NEW_MAINTENANCE | {"base/112_team_terms.sql", "hr/068_structure_to_core.sql"}
-NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | {"word/001_documents.sql", "word/002_chat.sql",   # 0251 lát 2: cột chat của văn bản (chỉ thêm, mặc định hằng) ⇒ không bảo trì
+NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | {"base/113_team_term_editors.sql",   # 0256: người sửa theo từng căn cứ (thêm cột + thân hàm trigger) ⇒ không bảo trì riêng
+                                              "word/001_documents.sql", "word/002_chat.sql",   # 0251 lát 2: cột chat của văn bản (chỉ thêm, mặc định hằng) ⇒ không bảo trì
                # 0227: văn bản Word sửa trong app (schema mới, chỉ thêm) ⇒ không bảo trì
                                               "mgmt/001_snapshots.sql",   # 0213: bản chốt tháng của Báo cáo quản trị (bảng mới, chỉ thêm) ⇒ không bảo trì
                                               "base/089_task_start_deps.sql",   # 0222: việc thêm start_on / phase / depends_on (cột có mặc định, ràng buộc kiểm trên dòng mới) ⇒ không bảo trì
@@ -1559,6 +1560,10 @@ async def test_0256_hr_structure_history_becomes_joined_spans_in_core_with_who_e
             assert await rows("SELECT edited_by, edited_at, head_role FROM core.team_terms WHERE tenant_id = %s AND user_id = %s AND is_lead", tid, ua) == [
                 (editor, closed_at, "sales_lead")]
             assert {r[0] for r in await rows("SELECT edited_by FROM core.team_terms WHERE tenant_id = %s AND user_id = %s AND NOT is_lead", tid, ua)} == {ua}
+            # hai nguồn cùng phủ đoạn trưởng của A: GIỮ CẢ HAI người sửa — người ghi phân công đội (ua) và người ghi nhiệm kỳ trưởng (editor) — base/113
+            assert await rows("SELECT home_by, lead_by FROM core.team_terms WHERE tenant_id = %s AND user_id = %s AND is_lead", tid, ua) == [(ua, editor)]
+            assert await rows("SELECT home_by, lead_by FROM core.team_terms WHERE tenant_id = %s AND user_id = %s AND is_lead", tid, ub) == [(editor, editor)]
+            assert await rows("SELECT count(*) FROM core.team_terms WHERE tenant_id = %s AND NOT is_lead AND lead_by IS NOT NULL", tid) == [(0,)]
             assert await rows("SELECT edited_by, head_role FROM core.team_terms WHERE tenant_id = %s AND user_id = %s AND is_lead", tid, ub) == [(editor, "sales_lead")]
             # C: lịch sử đã đóng ở đội 1 vào lõi; hiện tại giữ theo Quản trị (đội 1, không rõ từ khi nào), không có dòng đội 2; có ghi chú
             got = await rows("SELECT team_id, valid_from, valid_to, since_unknown FROM core.team_terms WHERE tenant_id = %s AND user_id = %s ORDER BY valid_from", tid, uc)

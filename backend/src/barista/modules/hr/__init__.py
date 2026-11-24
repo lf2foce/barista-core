@@ -230,11 +230,13 @@ async def set_assignment(ctx: Ctx, inp: SetAssignment) -> dict[str, Any]:
 
 # ── Đội / trưởng đội tại một ngày: đọc LÕI (``core.team_terms``, khoảng nửa mở [valid_from, valid_to) — 0256) ──
 
-_HOME_ON = """SELECT DISTINCT ON (tt.user_id) tt.user_id, tt.team_id, t.name AS team, tt.edited_by AS editor, tt.edited_at
+_HOME_ON = """SELECT DISTINCT ON (tt.user_id) tt.user_id, tt.team_id, t.name AS team, tt.home_by AS editor, tt.home_at AS edited_at,
+                     tt.edited_by AS touched_by, tt.edited_at AS touched_at
               FROM core.team_terms tt JOIN core.teams t ON t.id = tt.team_id
               WHERE tt.user_id = ANY(%(u)s) AND tt.is_home AND tt.valid_from <= %(d)s AND (tt.valid_to IS NULL OR tt.valid_to > %(d)s)
               ORDER BY tt.user_id, tt.valid_from DESC"""
-_LEAD_ON = """SELECT DISTINCT ON (tt.team_id) tt.team_id, tt.user_id, tt.head_role, tt.edited_by AS editor, tt.edited_at
+_LEAD_ON = """SELECT DISTINCT ON (tt.team_id) tt.team_id, tt.user_id, tt.head_role, tt.lead_by AS editor, tt.lead_at AS edited_at,
+                     tt.edited_by AS touched_by, tt.edited_at AS touched_at
               FROM core.team_terms tt
               WHERE tt.team_id = ANY(%(t)s) AND tt.is_lead AND tt.valid_from <= %(d)s AND (tt.valid_to IS NULL OR tt.valid_to > %(d)s)
               ORDER BY tt.team_id, tt.valid_from DESC"""
@@ -411,6 +413,8 @@ async def structure_on(ctx: Ctx, inp: StructureOn) -> dict[str, Any]:
                 c["head_party_id"] = str((await ctx.call_system("parties.ensure_member", user_id=h["user_id"]))["party_id"])
                 c["head_role"] = h["head_role"]   # vai công ty của trưởng lúc nhận chức (chụp trên dòng); None = chưa ghi
                 facts.append(h)
+    # dòng của lõi mang người sửa THEO CĂN CỨ (thành viên / trưởng — base/113) + người chạm dòng lần cuối (sửa lùi ngày, đóng dòng): tính cả hai
+    facts += [{"editor": f["touched_by"], "edited_at": f["touched_at"]} for f in facts if f.get("touched_by")]
     stamped = [f for f in facts if f["editor"]]
     return {"team_id": chain[0]["team_id"] if chain else None, "team_source": source if chain else "", "managers": managers, "teams": chain,
             "editors": sorted({str(f["editor"]) for f in stamped}),
