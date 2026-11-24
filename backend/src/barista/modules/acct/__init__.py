@@ -120,7 +120,7 @@ m.workspace(Workspace("accounting", "Kế toán", "banknote.fill", (
                         A("acct.credit_receivable", "Giảm phải thu", bind={"code": "code"}, when={"status": ["open", "partial", "paid"]}),
                         A("acct.reverse_receipt", "Đảo phiếu thu", bind={"code": "code"}, when={"status": ["partial", "paid"]}),
                         A("acct.issue_vat_invoice", "Ghi hoá đơn GTGT", bind={"code": "code"}, when={"vat": ["ready"]}))),
-), order=70))
+), order=70, page=True))   # kế toán cần nhìn hết bảng ⇒ màn trọn ngăn, không khung tra nhanh
 # Menu Kế toán theo nhịp việc (rà vai kế toán 18/11/2026): tiền về & đối soát → phải thu → chi & phải trả → sổ sách & thuế → báo cáo → thiết lập.
 # Thứ tự nhóm trên menu = thứ tự màn ĐẦU TIÊN của nhóm (app vẽ theo thứ tự xuất hiện) ⇒ màn thiết lập / báo cáo khai ở hạng cao (90 / 70).
 m.screens("accounting", (

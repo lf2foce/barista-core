@@ -149,6 +149,9 @@ class Workspace:
     # LUÔN TRÊN THANH BÊN cho MỌI vai (24/11/2026), ở chỗ cố định ngay trên "Tất cả mục" — vd "Kết nối & kỹ năng" (ADR 0261): phân hệ chính ai cũng cần, không phụ thuộc
     # mặc định theo vai / ghim. Chỉ THÊM trường vào manifest; app cũ vẽ như phân hệ thường.
     fixed: bool = False
+    # XEM TRỌN MÀN (25/11/2026): màn của phân hệ chiếm trọn ngăn phải như màn chat — không đầu "Khung làm việc", không viền thẻ, không kệ "Đã mở". Cho phân hệ
+    # cần nhìn hết bảng (Kế toán); phân hệ để tra nhanh giữ khung linh hoạt. Chỉ THÊM trường vào manifest; app cũ vẽ như thường.
+    page: bool = False
 
 
 

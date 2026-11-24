@@ -95,7 +95,8 @@ export type ScreenSpec = {
 
 /** `pinned`: người xem tự ghim CẢ PHÂN HỆ này lên thanh bên (ADR 0255) — kể cả khi nó đã nằm ở nhóm "Theo vai". Core cũ không gửi. */
 /** `fixed`: phân hệ LUÔN trên thanh bên cho mọi vai, ở chỗ cố định ngay trên "Tất cả mục" (vd "Kết nối & kỹ năng" — ADR 0261). Core cũ không gửi. */
-export type WorkspaceSpec = { key: string; title: string; icon: string; screens: ScreenSpec[]; pinned?: boolean; fixed?: boolean };
+/** `page`: màn của phân hệ chiếm trọn ngăn phải như màn chat (không đầu "Khung làm việc", không viền thẻ, không kệ) — phân hệ cần nhìn hết bảng (vd Kế toán). */
+export type WorkspaceSpec = { key: string; title: string; icon: string; screens: ScreenSpec[]; pinned?: boolean; fixed?: boolean; page?: boolean };
 
 export type Manifest = {
   user: { id: string; name: string; email: string; role: string; role_label: string; team: string | null };

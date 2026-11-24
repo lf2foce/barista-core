@@ -8,7 +8,7 @@ import type { OpenRef, ThreadBlockData } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { IconTile, moduleIcon, moduleTint } from "@/components/icons";
 import { Initials, Spinner } from "@/components/primitives";
-import { ThreadBlock } from "@/components/blocks/thread";
+import { ThreadBlock, ThreadHeadSlot } from "@/components/blocks/thread";
 import { ThreadFiles } from "@/components/blocks/thread-files";
 import { CardFrame } from "./canvas";
 import { ColumnHeader, HeaderGroup, Orb, PANE_HEADER, pillBtn } from "./column";
@@ -306,6 +306,7 @@ function ThreadDetail({ item }: { item: TalkItem }) {
   // ngăn "Tệp" (0128): cùng chỗ với ngăn Thành viên / Hồ sơ — mở cái này thì đóng cái kia; bấm một dòng ⇒ luồng nhảy tới đúng tin
   const [filesOpen, setFilesOpen] = useState(false);
   const [jump, setJump] = useState<{ id: number } | null>(null);
+  const [headSlot, setHeadSlot] = useState<HTMLElement | null>(null);   // chỗ chuông của luồng trên hàng tiêu đề (ThreadHeadSlot)
 
   useEffect(() => {
     let alive = true;
@@ -382,10 +383,13 @@ function ThreadDetail({ item }: { item: TalkItem }) {
             {state.block.files.title || "Tệp"}
           </button>
         ) : null}
+        {/* chuông của luồng (bật / tắt thông báo) — thread.tsx đổ vào đây để nằm cùng hàng Thành viên / Tệp */}
+        <span ref={setHeadSlot} className="flex shrink-0 items-center gap-1.5 empty:hidden" />
       </DetailHeader>
       <div className="flex min-h-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {state ? (
+            <ThreadHeadSlot.Provider value={headSlot}>
             <ThreadBlock
               block={state.block}
               fill
@@ -396,6 +400,7 @@ function ThreadDetail({ item }: { item: TalkItem }) {
                 setInspectorOpen(true);
               }}
             />
+            </ThreadHeadSlot.Provider>
           ) : error ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
               <TriangleAlert className="size-7 text-muted-foreground" aria-hidden />

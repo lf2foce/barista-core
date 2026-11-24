@@ -16,11 +16,11 @@ export function KpiRow({ kpis: all, inset = false, onChanged }: { kpis: Kpi[]; i
   const kpis = fmt.shownKpis(all);   // chưa có gì thì ẩn: ô 0 / trống không vẽ, cả hàng 0 thì không có hàng
   if (!kpis.length) return null;
   return (
-    // một ô số đứng riêng thì chiếm cả ô; ≤ 6 ô thì giãn đều cùng một hàng khi đủ rộng (không để ô thứ năm rơi xuống hàng riêng — rà UI 18/11);
+    // một ô số đứng riêng thì gọn (tối đa 320px — cả hàng cho một con số trông trống, rà 25/11); ≤ 6 ô thì giãn đều cùng một hàng khi đủ rộng (không để ô thứ năm rơi xuống hàng riêng — rà UI 18/11);
     // hẹp (điện thoại) vẫn ÍT NHẤT hai cột — ô tối thiểu là min(150px, nửa hàng), không để mỗi ô một hàng đẩy bảng xuống mấy màn (rà bố cục 18/11)
     // hai cột (thẻ hẹp hơn chỗ cho ba ô) mà số ô lẻ ⇒ ô cuối trải hết hàng, không để nửa hàng trống
     <div className="@container flex min-w-0 flex-col">
-    <div className={cn("grid flex-1 gap-2.5", kpis.length === 1 ? "grid-cols-1" : kpis.length <= 6
+    <div className={cn("grid flex-1 gap-2.5", kpis.length === 1 ? "grid-cols-[minmax(0,320px)]" : kpis.length <= 6
       ? "grid-cols-[repeat(auto-fit,minmax(min(150px,calc(50%-5px)),1fr))] @max-[469px]:[&>*:last-child:nth-child(odd)]:col-span-2"
       : "grid-cols-[repeat(auto-fill,minmax(min(180px,calc(50%-5px)),1fr))] @max-[559px]:[&>*:last-child:nth-child(odd)]:col-span-2")}>
       {kpis.map((k) => {

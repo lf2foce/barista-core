@@ -36,12 +36,22 @@ export function CanvasView() {
   // phân hệ một màn: màn là CẢ khung (không đầu khung, không thẻ bọc) — màn tự vẽ các ngăn của mình (FullFrame)
   // …hoặc màn tự khai ``full_frame`` (vd Soạn: agent + văn bản) — trọn khung dù phân hệ có nhiều màn
   const bare = hero?.kind === "screen" && ((!!solo && hero.id === solo.id) || fullScreen?.id === hero.id);
+  // phân hệ XEM TRỌN MÀN (``page`` — vd Kế toán): màn chiếm trọn ngăn như màn chat — không đầu khung, không viền thẻ, không kệ; thẻ tự giữ tên + nút
+  const pageWs = desk.section.kind === "workspace" ? desk.manifest?.workspaces.find((w) => w.key === (desk.section as { key: string }).key) : undefined;
+  const pageMode = !bare && !chat.builder && !!pageWs?.page && hero?.kind === "screen";
   if (bare) {
     // phân hệ một màn: màn là CẢ khung — không đầu khung, không đệm, không kệ; màn tự vẽ ngăn của mình (FullFrame)
     return (
       <FullFrameProvider>
         <div className="relative flex h-full min-h-0 flex-col bg-background"><FrameContent key={hero.id} item={hero} /></div>
       </FullFrameProvider>
+    );
+  }
+  if (pageMode && hero) {
+    return (
+      <div className="relative flex h-full min-h-0 flex-col bg-surface">
+        <CardFrame key={hero.id} item={hero} page />
+      </div>
     );
   }
   return (
@@ -188,7 +198,8 @@ function iconOfCard(c: ChatCard): string {
 
 /** Thẻ lớn: mặt thẻ bo 20, viền mảnh, không đổ bóng; đầu thẻ = ô biểu tượng + tên + nút đóng. */
 /** `onClose`: thay hành vi nút đóng (vd ngăn kiểm tra cạnh cuộc trò chuyện chỉ ẩn ngăn, không đóng thẻ). */
-export function CardFrame({ item, onClose, closeLabel = "Đóng thẻ", inCanvasView = false }: { item: CanvasItem; onClose?: () => void; closeLabel?: string; inCanvasView?: boolean }) {
+/** `page`: màn của phân hệ xem trọn màn — không viền / bo thẻ, không nút phóng to / đóng (màn là cả ngăn); hẹp thì có nút về cột bên trái như đầu khung. */
+export function CardFrame({ item, onClose, closeLabel = "Đóng thẻ", inCanvasView = false, page = false }: { item: CanvasItem; onClose?: () => void; closeLabel?: string; inCanvasView?: boolean; page?: boolean }) {
   const desk = useDesk();
   const st = itemStyle(item);
   // nội dung tự vẽ khung (khối soạn với AI — 0231) ⇒ thẻ không vẽ đầu / viền, chỉ giao các nút cho khối (không lồng hai lớp khung)
@@ -210,15 +221,17 @@ export function CardFrame({ item, onClose, closeLabel = "Đóng thẻ", inCanvas
           <RefreshCw className="size-4" />
         </button>
       ) : null}
-      {inCanvasView ? (
+      {inCanvasView && !page ? (
         <button type="button" onClick={desk.toggleCanvasMax} className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" aria-label={desk.canvasMax ? "Thu nhỏ" : "Phóng to"} aria-pressed={desk.canvasMax} title={desk.canvasMax ? "Thu nhỏ (Esc)" : "Phóng to — thẻ chiếm trọn màn hình"}>
           {desk.canvasMax ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
         </button>
       ) : null}
       {item.kind === "screen" ? <PinButton spec={item.spec} /> : null}
-      <button type="button" onClick={onClose ?? (() => desk.closeItem(item.id))} className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" aria-label={closeLabel} title={closeLabel}>
-        <X className="size-4" />
-      </button>
+      {page ? null : (
+        <button type="button" onClick={onClose ?? (() => desk.closeItem(item.id))} className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" aria-label={closeLabel} title={closeLabel}>
+          <X className="size-4" />
+        </button>
+      )}
     </>
   );
   // đầu thẻ gọn: màn cắm bộ lọc chính + nút hỏi trợ lý vào `tools`, đặt khoảng ngày làm phụ đề (`ownSub`) — ô số lên sát đầu thẻ.
@@ -230,10 +243,19 @@ export function CardFrame({ item, onClose, closeLabel = "Đóng thẻ", inCanvas
   return (
     <FrameShellProvider value={{ actions: bare ? actions : null, setBare }}>
       {/* điện thoại: CẢ thẻ cuộn (đầu thẻ + bộ lọc trôi đi theo) — đầu thẻ ghim cố định ăn mất nửa màn hình nhỏ, bảng chỉ còn vài dòng */}
-      <section className={cn("@container flex min-h-0 flex-1 flex-col", !bare && "gap-3 rounded-[20px] border border-border bg-surface p-3 max-sm:overflow-y-auto min-[980px]:p-4")} aria-label={st.title}>
+      <section className={cn("@container flex min-h-0 flex-1 flex-col", !bare && (page ? "gap-3 bg-surface p-3 max-sm:overflow-y-auto min-[980px]:px-6 min-[980px]:py-4"
+                                                                                : "gap-3 rounded-[20px] border border-border bg-surface p-3 max-sm:overflow-y-auto min-[980px]:p-4"))} aria-label={st.title}>
         {bare ? null : (
           <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-2 @min-[760px]:grid-cols-[auto_minmax(220px,1fr)_auto_auto]">
-            <IconTile icon={st.icon} tint={st.tint} />
+            {page ? (
+              <span className="flex items-center gap-2">
+                {desk.railHidden ? <RailToggle /> : null}
+                <button type="button" onClick={() => desk.setNarrowShowsCanvas(false)} className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-surface hover:bg-accent min-[980px]:hidden" aria-label="Về cột bên trái" title="Về cột bên trái">
+                  <ChevronLeft className="size-4" />
+                </button>
+                <IconTile icon={st.icon} tint={st.tint} />
+              </span>
+            ) : <IconTile icon={st.icon} tint={st.tint} />}
             <div className="min-w-0">
               <h3 className="t16 truncate">{st.title}</h3>
               <p className={cn("t12 text-muted-foreground", ownSub ? "line-clamp-2 select-text" : "truncate")} title={ownSub ? [sub, ownSub].join(" · ") : undefined}>{ownSub ?? sub}</p>

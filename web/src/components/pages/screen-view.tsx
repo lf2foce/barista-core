@@ -203,7 +203,8 @@ export function ScreenView({
   const primary = split.inline;
   // chỉ MỘT ô lọc chính (vd Kỳ) mới lên hàng tên thẻ; từ hai ô trở lên thì xuống hàng riêng dưới tên — trước đây tới ba ô + hai nút cùng chen hàng
   // tên làm tên thẻ bị bóp (rà giao diện 23/11/2026: Khoản phải thu, Tiền vào / ra theo tài khoản)
-  const inHead = !!tools && primary.length <= 1 && spec.actions.length <= 2;
+  // Màn CÓ nút lệnh ⇒ cũng xuống hàng riêng: lọc trái, lệnh phải, một hàng — lọc + lệnh + Excel chen hàng tên làm gãy dòng (rà 25/11/2026: Phí CĐT, Hàng ôm, Cá nhân & tổ chức)
+  const inHead = !!tools && primary.length <= 1 && spec.actions.length === 0;
   const showAsk = !!spec.ask && !(spec.ask.app_id && chat.builder?.appId === spec.ask.app_id);
   const askEl = showAsk && spec.ask ? (
     // nút của MÀN (vd "Tạo app" / "Sửa app" ⇒ trình tạo — 0098); đang sửa đúng app này trong trình tạo thì không cần. Trên đầu thẻ: nút phụ (viền), không giành mắt với số
@@ -219,7 +220,7 @@ export function ScreenView({
       {spec.ask.title}
     </button>
   ) : null;
-  const actionEls = spec.actions.map((a) =>
+  const actionEl = (a: (typeof spec.actions)[number]) =>
     a.command === "kb.add_document" ? (
       // 0225: Kho tài liệu — cửa chính là THẢ FILE (máy đọc + đoán, người xác nhận); dán chữ chỉ là lối phụ, nhỏ, cho ca hiếm
       <div key={a.command + a.title} className="flex items-center gap-2">
@@ -250,8 +251,10 @@ export function ScreenView({
       </span>
     ) : (
       <button key={a.command + a.title} type="button" className={actionClass(a.style)} onClick={() => desk.openForm(a, { onDone: changed })}>{a.title}</button>
-    ),
-  );
+    );
+  // bảng TRỐNG mà nút chính đã nằm giữa màn (ô trống) ⇒ không lặp lại trên hàng lệnh (rà 25/11/2026: Hàng ôm hiện cùng một nút hai lần)
+  const emptyActs = table && table.rows.length === 0 ? (table.empty_actions?.length ? table.empty_actions : spec.actions.filter((a) => a.style === "primary").slice(0, 2)) : [];
+  const actionEls = spec.actions.filter((a) => !emptyActs.some((e) => e.command === a.command && e.title === a.title)).map(actionEl);
   // Xuất Excel chỉ khi bảng CÓ dòng: bảng rỗng không có gì để xuất (rà UI 20/11: 20/46 màn rỗng vẫn hiện nút)
   const canExport = !!table && table.rows.length > 0;
   const exportButton = canExport ? (
@@ -318,9 +321,7 @@ export function ScreenView({
           </div>
           {table.rows.length === 0 ? (
             <Empty text={table.empty === "Chưa có dữ liệu" && spec.about ? spec.about : table.empty}>
-              {(table.empty_actions?.length ? table.empty_actions : spec.actions.filter((a) => a.style === "primary").slice(0, 2)).map((a) => (
-                <button key={a.command + a.title} type="button" className={actionClass(a.style)} onClick={() => desk.openForm(a, { onDone: changed })}>{a.title}</button>
-              ))}
+              {emptyActs.map(actionEl)}
             </Empty>
           ) : mode === "board" && table.views?.board ? (
             <div className="min-h-0 flex-1 overflow-auto">

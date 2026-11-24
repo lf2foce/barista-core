@@ -1,7 +1,8 @@
 "use client";
 
 import { ArrowDown, ArrowUp, AtSign, Bell, BellOff, CircleCheck, CornerUpLeft, FileText, Files as FilesIcon, ListPlus, MessagesSquare, MoreHorizontal, Paperclip, Pencil, Pin, Sparkles, X } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, ApiError, listenSignals } from "@/lib/api";
 import { newKey } from "@/lib/idempotency";
 import * as fmt from "@/lib/format";
@@ -574,33 +575,28 @@ function FilesButton({ th, open, onClick }: { th: ThreadState; open: boolean; on
   );
 }
 
-/** "Tóm tắt" (0115): câu hỏi do server soạn, gửi cho trợ lý RIÊNG của người bấm — trả lời không vào luồng chung. */
-function AssistMenu({ th }: { th: ThreadState }) {
-  if (!th.t.assist.length || !th.messages.length) return null;
+/** "Tóm tắt" (0115) kiểu Messenger: CHỈ hiện khi có nhiều tin chưa đọc (đọc không kịp mới cần tóm tắt) — một dải trên luồng, bấm ⇒ câu hỏi do server soạn
+ *  gửi cho trợ lý RIÊNG của người bấm (trả lời không vào luồng chung). Đọc kịp thì không có nút; cần tìm lại thì dùng ô tìm. */
+const CATCH_UP_MIN = 5;
+function CatchUp({ th }: { th: ThreadState }) {
+  const unread = th.messages.filter((m) => !m.mine && !m.recalled && m.id > th.t.last_read).length;
+  if (!th.t.assist.length || unread < CATCH_UP_MIN) return null;
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger className="t12m inline-flex h-7 items-center gap-1 rounded-lg border border-border bg-surface px-2 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring" title="Nhờ trợ lý tóm tắt — chỉ anh/chị thấy">
-        <Sparkles className="size-3.5 text-primary" aria-hidden /> Tóm tắt
-      </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-60">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Trợ lý trả lời riêng anh/chị</DropdownMenuLabel>
-          {th.t.assist.map((a) => (
-            <DropdownMenuItem key={a.title} onClick={() => th.askPrivately(a.prompt)}>
-              {a.title}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <div className="flex items-center gap-2 border-b border-hairline bg-primary/6 px-4 py-1.5">
+      <span className="t12 min-w-0 flex-1 text-muted-foreground">{unread} tin chưa đọc</span>
+      <button type="button" onClick={() => th.askPrivately(th.t.assist[0].prompt)} title="Trợ lý tóm tắt — chỉ anh/chị thấy"
+              className="t12m inline-flex h-7 items-center gap-1 rounded-lg px-2 text-primary outline-none hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-ring">
+        <Sparkles className="size-3.5" aria-hidden /> Tóm tắt cho tôi
+      </button>
+    </div>
   );
 }
 
-function MuteButton({ th }: { th: ThreadState }) {
+function MuteButton({ th, big = false }: { th: ThreadState; big?: boolean }) {
   if (!th.t.thread_id || !th.t.can_post) return null;
   const label = th.t.muted ? "Bật lại thông báo" : "Tắt thông báo trao đổi này";
   return (
-    <button type="button" onClick={() => void th.mute()} aria-pressed={th.t.muted} aria-label={label} title={label} className="grid size-7 place-items-center rounded-lg border border-border bg-surface outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+    <button type="button" onClick={() => void th.mute()} aria-pressed={th.t.muted} aria-label={label} title={label} className={cn("grid place-items-center rounded-lg border border-border bg-surface outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring", big ? "size-8" : "size-7")}>
       {th.t.muted ? <BellOff className="size-3.5 text-muted-foreground" /> : <Bell className="size-3.5" />}
     </button>
   );
@@ -665,10 +661,10 @@ function Boxed({ th }: { th: ThreadState }) {
         <h3 className="t16">{t.title}</h3>
         {messages.length ? <span className="t12 text-muted-foreground">{messages.length}</span> : null}
         <span className="flex-1" />
-        <AssistMenu th={th} />
         <FilesButton th={th} open={showFiles} onClick={() => setShowFiles((v) => !v)} />
         <BlockActions th={th} />
       </div>
+      <CatchUp th={th} />
       {showFiles && t.files ? (
         <ThreadFiles files={t.files} className="max-h-96" onClose={() => setShowFiles(false)} onJump={(id) => {
           setShowFiles(false);
@@ -701,6 +697,9 @@ function Boxed({ th }: { th: ThreadState }) {
   );
 }
 
+/** Chỗ trên hàng tiêu đề của khung tin nhắn mà luồng đặt nút chuông vào (messages.tsx vẽ + cấp, thread.tsx đổ vào bằng portal). */
+export const ThreadHeadSlot = createContext<HTMLElement | null>(null);
+
 /** Luồng chiếm cả cột: tin liền nhau của cùng một người gộp thành một lượt nói — tên + ảnh chỉ ở tin đầu (như iMessage / Lark). */
 function Filled({ th }: { th: ThreadState }) {
   const { t, messages, firstUnread, lastId } = th;
@@ -713,14 +712,19 @@ function Filled({ th }: { th: ThreadState }) {
     else el.scrollTop = el.scrollHeight;
   }, [lastId, t.focus_id]);
   const direct = isDirect(t);
+  // chuông lên hàng tiêu đề của khung tin nhắn (ThreadHeadSlot — messages.tsx), cạnh Thành viên / Tệp; không có chỗ đó thì nằm ở hàng nút như cũ
+  const headSlot = useContext(ThreadHeadSlot);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-end gap-1.5 border-b border-hairline px-3 py-1.5">
-        <AssistMenu th={th} />
-        <MuteButton th={th} />
-        <BlockActions th={th} />
-      </div>
+      {headSlot ? createPortal(<MuteButton th={th} big />, headSlot) : null}
+      {t.actions.length || !headSlot ? (
+        <div className="flex items-center justify-end gap-1.5 border-b border-hairline px-3 py-1.5">
+          {headSlot ? null : <MuteButton th={th} />}
+          <BlockActions th={th} />
+        </div>
+      ) : null}
       <Pinned th={th} />
+      <CatchUp th={th} />
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-3.5" role="log" aria-label={`Trao đổi: ${t.subject_title}`}>
         <OlderButton th={th} />
         {messages.length === 0 ? (
