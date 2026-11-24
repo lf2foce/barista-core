@@ -228,6 +228,89 @@ async def set_assignment(ctx: Ctx, inp: SetAssignment) -> dict[str, Any]:
     return {"assignment_id": row}
 
 
+class Place(Input):
+    email: str = field("Email", max_length=200, example="an@congty.vn")
+    unit: str = field("Đơn vị", "", max_length=300, example="Miền Bắc / Khối 1 / Team A", placeholder="Không đổi",
+                      help="Tên đơn vị, hoặc đường dẫn từ trên xuống cách nhau bằng dấu / — công ty chỉ có đội thì ghi mỗi tên đội. Đơn vị chưa có sẽ được tạo")
+    manager: str = field("Quản lý trực tiếp", "", max_length=200, example="dung@congty.vn", placeholder="Không đổi", help="Email hoặc họ tên")
+
+
+def _fold(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def _unit_kind(name: str) -> str:
+    """Loại đơn vị đoán từ tên (0225: máy đoán, sửa sau ở màn Đội) — loại là CHỨC NĂNG, không phải cấp."""
+    n = _fold(name)
+    for kind, words in (("branch", ("chi nhánh", "cn ", "cơ sở")), ("accounting", ("kế toán", "tài chính")), ("marketing", ("marketing", "mkt", "truyền thông")),
+                        ("admin", ("hành chính", "nhân sự", "văn phòng", "vận hành"))):
+        if any(n.startswith(w) or f" {w}" in f" {n}" for w in words):
+            return kind
+    return "sales"
+
+
+async def _unit_by_path(ctx: Ctx, path: str) -> tuple[str, list[str]]:
+    """Mã đơn vị ở cuối đường dẫn ``A / B / C`` (cấp sâu bao nhiêu tuỳ công ty — 0257); đơn vị chưa có được tạo bằng ĐÚNG lệnh thêm đội (quyền người gọi)."""
+    parts = [x.strip() for x in path.replace(">", "/").split("/") if x.strip()]
+    if not parts:
+        raise Invalid("Thiếu tên đơn vị")
+    teams = await ctx.all("SELECT t.id, t.code, t.name, t.parent_id FROM core.teams t LIMIT 5000")
+    parent: UUID | None = None
+    code, made = "", []
+    for i, name in enumerate(parts):
+        hits = [t for t in teams if _fold(t["name"]) == _fold(name) or t["code"].casefold() == name.casefold()]
+        if i > 0:
+            hits = [t for t in hits if t["parent_id"] == parent]
+        elif len(hits) > 1:   # tên đầu đường dẫn trùng nhiều đơn vị: ưu tiên đơn vị gốc; vẫn trùng ⇒ hỏi, không đoán
+            hits = [t for t in hits if t["parent_id"] is None] or hits
+        if len(hits) > 1:
+            raise Invalid(f"Có {len(hits)} đơn vị tên “{name}” — ghi đường dẫn đầy đủ từ trên xuống (vd Miền Bắc / {name})")
+        if hits:
+            parent, code = hits[0]["id"], hits[0]["code"]
+            continue
+        new = await ctx.call("admin.upsert_team", name=name, kind=_unit_kind(name), parent_code=code)
+        teams.append({"id": new["team_id"], "code": new["code"], "name": name, "parent_id": parent})
+        parent, code = new["team_id"], new["code"]
+        made.append(name)
+    return code, made
+
+
+@m.command("place", resource="hr", action="manage", title="Xếp người vào cơ cấu", agent="propose", importable=True,
+           purpose="Đưa cơ cấu công ty vào: mỗi người thuộc đơn vị nào và báo cáo cho ai — nhập từng người, tải cả file, hoặc nhờ trợ lý.",
+           reversible="Chạy lại lệnh với đơn vị và người quản lý cũ")
+async def place(ctx: Ctx, inp: Place) -> dict[str, Any]:
+    """MỘT dòng = một người: đơn vị (tên hoặc đường dẫn, tạo nếu chưa có) + người quản lý trực tiếp. Chỉ gọi các lệnh đang có (thêm đội, đổi đội chính, ghi
+    quản lý) ⇒ quyền, lịch sử theo ngày, phiếu duyệt giữ nguyên một cửa. KHÔNG đặt trưởng: trưởng là quyền, ghi ở "Ghi trưởng đội" (0256, 0257)."""
+    who = await ctx.one("""SELECT u.id, u.email, u.name FROM core.users u JOIN core.memberships mb ON mb.user_id = u.id
+                           WHERE lower(u.email) = %s""", (inp.email.strip().lower(),))
+    if who is None:
+        raise NotFound(f"Không có thành viên {inp.email}")
+    out: dict[str, Any] = {"email": who["email"], "unit": "", "units_created": [], "moved": False, "manager_set": False}
+    if inp.unit.strip():
+        code, made = await _unit_by_path(ctx, inp.unit)
+        home = await ctx.val("""SELECT t.code FROM core.team_members tm JOIN core.teams t ON t.id = tm.team_id WHERE tm.user_id = %s AND tm.is_home""", (who["id"],))
+        if home != code:
+            await ctx.call("admin.update_member", email=who["email"], team_code=code)
+        out.update(unit=code, units_created=made, moved=home != code)
+    if inp.manager.strip():
+        key = inp.manager.strip()
+        hits = await ctx.all("""SELECT u.id FROM core.users u JOIN core.memberships mb ON mb.user_id = u.id
+                                WHERE lower(u.email) = %s OR lower(u.name) = %s LIMIT 3""", (key.lower(), key.lower()))
+        if not hits:
+            raise NotFound(f"Không thấy người quản lý “{key}”")
+        if len(hits) > 1:
+            raise Invalid(f"Có nhiều người tên “{key}” — ghi email của người quản lý")
+        if hits[0]["id"] == who["id"]:
+            raise Invalid("Người quản lý không thể là chính người này")
+        me = (await ctx.call_system("parties.ensure_member", user_id=who["id"]))["party_id"]
+        boss = (await ctx.call_system("parties.ensure_member", user_id=hits[0]["id"]))["party_id"]
+        current = await ctx.val("SELECT manager_party_id FROM hr.assignments WHERE party_id = %s AND valid_to IS NULL", (me,))
+        if str(current or "") != str(boss):
+            await set_assignment(ctx, SetAssignment(party_id=UUID(str(me)), manager_party_id=UUID(str(boss)), valid_from=None, reason=""))
+            out["manager_set"] = True
+    return out
+
+
 # ── Đội / trưởng đội tại một ngày: đọc LÕI (``core.team_terms``, khoảng nửa mở [valid_from, valid_to) — 0256) ──
 
 _HOME_ON = """SELECT DISTINCT ON (tt.user_id) tt.user_id, tt.team_id, t.name AS team, tt.home_by AS editor, tt.home_at AS edited_at,
@@ -348,10 +431,60 @@ async def org(ctx: Ctx, inp: StaffOn) -> dict[str, Any]:
         h = heads.get(str(r["id"]))
         r["head"] = names.get(h, "") if h else ""
         r["vacant"] = "no" if h else "yes"
-    return ui.table(rows, [ui.col("code", "Mã đội"), ui.col("name", "Đội"), ui.col("kind", "Loại"), ui.col("parent", "Thuộc"),
-                           ui.col("head", "Trưởng đội"), ui.col("vacant", "Khuyết", "badge", labels={"yes": "Khuyết", "no": "—"}, tones={"yes": "orange"})],
+    await _levels_and_suggestions(ctx, rows, day)
+    return ui.table(rows, [ui.col("code", "Mã đội"), ui.col("name", "Đội"), ui.col("level", "Cấp", "number"), ui.col("kind", "Loại"), ui.col("parent", "Thuộc"),
+                           ui.col("people", "Số người", "number"), ui.col("head", "Trưởng đội"),
+                           ui.col("vacant", "Khuyết", "badge", labels={"yes": "Khuyết", "no": "—"}, tones={"yes": "orange"}),
+                           ui.col("suggest", "Gợi ý trưởng (theo tuyến quản lý)")],
                     title=f"Cơ cấu đội tại {day:%d/%m/%Y}", limit=2000, empty="Chưa có đội",
-                    kpis=[ui.kpi("Đội khuyết trưởng", sum(1 for r in rows if r["vacant"] == "yes"))])
+                    kpis=[ui.kpi("Đội khuyết trưởng", sum(1 for r in rows if r["vacant"] == "yes")),
+                          ui.kpi("Số cấp", max((r["level"] for r in rows), default=0), hint="Tính từ cây đội — công ty tự đặt bao nhiêu cấp cũng được")])
+
+
+async def _levels_and_suggestions(ctx: Ctx, rows: list[dict[str, Any]], day: date) -> None:
+    """Ba cột TÍNH RA, không lưu (0257): cấp của đội = khoảng cách tới gốc; số người = thành viên chính của đội và cây con; gợi ý trưởng cho đội đang khuyết =
+    người trong đội mà quản lý trực tiếp KHÔNG nằm trong đội (đỉnh tuyến báo cáo bên trong đội) và có người bên dưới. Một đỉnh ⇒ gợi ý (kèm email để nút
+    "Ghi trưởng đội" điền sẵn); nhiều đỉnh ⇒ liệt kê cho người chọn; máy không tự đặt ai."""
+    by_code = {r["code"]: r for r in rows}
+
+    def level(r: dict[str, Any], seen: frozenset[str] = frozenset()) -> int:
+        up = by_code.get(r["parent"] or "")
+        return 1 if up is None or r["code"] in seen else 1 + level(up, seen | {r["code"]})
+    homes = await ctx.all("""SELECT tt.team_id, tt.user_id FROM core.team_terms tt
+                             WHERE tt.is_home AND tt.valid_from <= %(d)s AND (tt.valid_to IS NULL OR tt.valid_to > %(d)s) LIMIT 20000""", {"d": day})
+    own: dict[str, list[UUID]] = {}
+    for h in homes:
+        own.setdefault(str(h["team_id"]), []).append(h["user_id"])
+    for r in rows:
+        r["level"], r["people"], r["suggest"], r["suggest_email"] = level(r), len(own.get(str(r["id"]), [])), "", ""
+    for r in sorted(rows, key=lambda x: -x["level"]):          # cộng dồn từ lá lên gốc
+        up = by_code.get(r["parent"] or "")
+        if up is not None and up is not r:
+            up["people"] += r["people"]
+    vacant = [r for r in rows if r["vacant"] == "yes" and own.get(str(r["id"]))]
+    if not vacant:
+        return
+    links = await ctx.all("""SELECT a.party_id, a.manager_party_id FROM hr.assignments a
+                             WHERE a.valid_from <= %(d)s AND (a.valid_to IS NULL OR a.valid_to >= %(d)s) LIMIT 20000""", {"d": day})
+    users = await _logins(ctx, list({x["party_id"] for x in links} | {x["manager_party_id"] for x in links}))
+    boss = {users[str(x["party_id"])]: users[str(x["manager_party_id"])] for x in links
+            if str(x["party_id"]) in users and str(x["manager_party_id"]) in users}
+    people = {u["id"]: u for u in await ctx.all("SELECT id, name, email FROM core.users WHERE id = ANY(%s)", ([u for r in vacant for u in own[str(r["id"])]],))}
+    for r in vacant:
+        inside = set(own[str(r["id"])])
+        under: dict[UUID, int] = {}
+        for u in inside:                                       # mỗi người đếm cho đỉnh của mình bên trong đội
+            top, hops = u, 0
+            while boss.get(top) in inside and hops < 50:
+                top, hops = boss[top], hops + 1
+            if top != u:
+                under[top] = under.get(top, 0) + 1
+        tops = sorted(under.items(), key=lambda kv: -kv[1])
+        if len(tops) == 1:
+            who = people.get(tops[0][0], {})
+            r["suggest"], r["suggest_email"] = f"{who.get('name', '')} — {tops[0][1]} người bên dưới", who.get("email", "")
+        elif tops:
+            r["suggest"] = "Cần chọn: " + "; ".join(f"{people.get(u, {}).get('name', '')} ({n})" for u, n in tops[:4])
 
 
 @m.titles(resource="hr")
@@ -605,7 +738,8 @@ m.screens(
             row_click="open", open=Open("hr.history", {"party_id": "party_id"}, "Lịch sử"),
         ),
         Screen("hr_org", "Cơ cấu đội theo ngày", "point.3.connected.trianglepath.dotted", "hr.org", group="Nhân sự", min_scope="all",
-               actions=(A("admin.set_team_lead", style="primary"),)),
+               actions=(A("admin.set_team_lead", style="primary"), A("hr.place")),
+               row_actions=(A("admin.set_team_lead", "Ghi trưởng đội", bind={"team_code": "code", "email": "suggest_email"}, when={"vacant": ["yes"]}),)),
     ),
     rank=25,
 )

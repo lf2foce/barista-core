@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-17 gói · 29 module · 1019 thao tác (287 nội bộ) · 21 bên nghe sự kiện.
+17 gói · 29 module · 1020 thao tác (287 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
@@ -43,7 +43,7 @@
 | `findings` | Báo cáo chạy song song | `findings` | — | `modules/findings.py` | 0 | 7 | 1 |
 | `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (16 file) | 37 | 49 | 33 |
 | `health` | Sức khoẻ dữ liệu | `base` | — | `modules/health.py` | 0 | 2 | 1 |
-| `hr` | Hồ sơ làm việc | `hr` | `hr` | `modules/hr/` (2 file) | 12 | 14 | 4 |
+| `hr` | Hồ sơ làm việc | `hr` | `hr` | `modules/hr/` (2 file) | 13 | 14 | 4 |
 | `kb` | Tài liệu | `base` | `kb` | `modules/kb/` (4 file) | 15 | 23 | 12 |
 | `kpi` | KPI & xếp hạng | `kpi` | `kpi` | `modules/kpi.py` | 4 | 6 | 2 |
 | `leadflow` | Chia lead & hạn xử lý | `crm` | `leadflow` | `modules/leadflow/` (7 file) | 16 | 21 | 14 |
