@@ -7,7 +7,7 @@
 # và sửa trong lúc test không lọt vào bản gửi. Không có đường bỏ qua test: chỉ KHÔNG CHẠY LẠI khi đúng nội dung đó vừa qua kiểm đủ (deploy/checks.sh stamp_ok).
 #   INSTANCE=<tên> bash deploy/release.sh               # kiểm (~2 phút) + phát hành (~2–4 phút) — BẮT BUỘC nêu bản cài, không có mặc định
 #   CHECK_ONLY=1 INSTANCE=<tên> bash deploy/release.sh  # chỉ kiểm trên checkout riêng, KHÔNG gửi lên VPS
-# Mọi bản cài dùng chung ảnh của commit (+ bộ gói) — đã có thì không dựng lại.
+# Mọi bản cài dùng chung ảnh của commit (+ bộ gói) — đã có thì không dựng lại. Ảnh lõi do GitHub Actions dựng (images.yml); VPS kéo + ghép gói.
 # File bản cài: ../barista-ops/instances/<tên>.json (hoặc BARISTA_OPS_DIR) — nguồn duy nhất, lõi không mang file bản cài. Gói ngoài lõi bản cài khai ("packs": {"<khoá>":
 # "v<X.Y.Z>"}) lấy đúng tag <khoá>/v<X.Y.Z> từ ../barista-packs (git archive — deploy/packs.py), kiểm requires-core, test CÙNG lõi, gửi kèm mã
 # lõi trong cùng một tar.gz (0155). Thiếu tag / không khớp lõi ⇒ dừng trước khi test.
@@ -93,4 +93,6 @@ ssh phenau-vps "set -euo pipefail; D=/root/$INSTANCE/ops; S=${SHA:0:8}; T=\$(mkt
     mode=600; [ -e \$dst ] && { mode=\$(stat -c %a \$dst); cp -p \$dst \$dst.bak-\$S; }
     install -D -m \$mode \$f \$dst; echo \"  script vận hành: cập nhật \$dst\"
   done" < "$OPS_TAR"
-ssh phenau-vps "python3 /root/$INSTANCE/ops/deploy.py $INSTANCE_ARG$RELEASE_COMMAND $SHA" < "$SHIP/release.tar.gz"
+# Ảnh do CI dựng sẵn (.github/workflows/images.yml) — VPS chỉ kéo. CI hỏng mà buộc phải phát hành: BARISTA_BUILD_ON_VPS=1 (dựng trên VPS, rủi ro sự cố 23/11)
+BUILD_ON_VPS=""; [ "${BARISTA_BUILD_ON_VPS:-}" = 1 ] && BUILD_ON_VPS="BARISTA_BUILD_ON_VPS=1 "
+ssh phenau-vps "${BUILD_ON_VPS}python3 /root/$INSTANCE/ops/deploy.py $INSTANCE_ARG$RELEASE_COMMAND $SHA" < "$SHIP/release.tar.gz"

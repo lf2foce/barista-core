@@ -341,7 +341,15 @@ def test_the_api_image_tag_follows_the_pack_set_and_pruning_knows_it(tmp_path: P
     assert removed == [f"barista-api:{SHA}-p{'0' * 12}"]                               # ảnh cũ có gói cũng được dọn, ảnh đang dùng giữ
 
 
-def test_build_tags_the_api_image_with_the_pack_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("on_vps", [True, False])
+def test_build_tags_the_api_image_with_the_pack_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, on_vps: bool) -> None:
+    """Api có gói: dựng trên VPS (``BARISTA_BUILD_ON_VPS=1``) bằng api.Dockerfile, hoặc (mặc định) kéo ảnh lõi của CI rồi dựng LỚP MỎNG
+    api-packs.Dockerfile ghép gói lên ảnh lõi — gói riêng tư không lên CI công khai. Web không có gói ⇒ chỉ kéo."""
+    if on_vps:
+        monkeypatch.setenv("BARISTA_BUILD_ON_VPS", "1")
+    else:
+        monkeypatch.delenv("BARISTA_BUILD_ON_VPS", raising=False)
+        monkeypatch.setattr(ops, "_pull", lambda service, sha: f"{ops.REGISTRY}/barista-{service}:{sha}")
     src = tmp_path / "src.tar.gz"
     with tarfile.open(src, "w:gz") as t:
         for name, data in (("deploy/stack.json", (REPO / "deploy/stack.json").read_bytes()),
@@ -353,15 +361,26 @@ def test_build_tags_the_api_image_with_the_pack_set(tmp_path: Path, monkeypatch:
     state: dict[str, str] = {}
     monkeypatch.setattr(ops, "_revision", lambda image: state.get(image))
 
+    files: list[str] = []
+
     def docker(*args, **kw):
-        tag = args[args.index("-t") + 1]
-        built.append(tag)
-        state[tag] = SHA
+        if args[:2] == ("docker", "tag"):
+            state[args[3]] = SHA
+        elif "-t" in args:
+            tag = args[args.index("-t") + 1]
+            built.append(tag)
+            files.append(args[args.index("-f") + 1])
+            state[tag] = SHA
         return ""
     monkeypatch.setattr(ops, "command", docker)
     inst = {**SAMPLE_INSTANCE, "root": str(tmp_path), "packs": {"trade_finance": {"version": "v1.0.0", "commit": "a" * 40}}}   # bản cài thật: ghim bắt buộc
     _, images = ops.build(SHA, src, inst)
-    assert images == {"api": f"barista-api:{ops.api_tag(SHA, ONE)}", "web": f"barista-web:{SHA}"} and built == list(images.values())
+    assert images == {"api": f"barista-api:{ops.api_tag(SHA, ONE)}", "web": f"barista-web:{SHA}"}
+    if on_vps:
+        assert built == list(images.values()) and files == ["deploy/api.Dockerfile", "deploy/web.Dockerfile"]
+    else:
+        assert built == [images["api"]] and files == ["deploy/api-packs.Dockerfile"]   # chỉ lớp ghép gói; ảnh lõi + web kéo từ CI
+        assert state.get(f"barista-api:{SHA}") == SHA and state.get(f"barista-web:{SHA}") == SHA
     with pytest.raises(ValueError, match="khác cấu hình"):
         ops.build(SHA, src, {**inst, "packs": {}})
 
@@ -537,3 +556,13 @@ def test_images_are_built_in_a_resource_capped_builder(monkeypatch: pytest.Monke
         raise FileNotFoundError("docker")
     monkeypatch.setattr(subprocess, "run", missing)
     assert ops._builder() == []                                                     # không có docker (máy dev / test)
+
+
+def test_the_thin_pack_layer_installs_packs_exactly_like_the_full_api_image() -> None:
+    """Ảnh CI chỉ có lõi; gói ghép trên VPS bằng api-packs.Dockerfile. Bước chép + cài gói phải GIỐNG HỆT api.Dockerfile (đường dựng trên VPS) —
+    không thì cùng commit + cùng bộ gói ra hai ảnh khác nhau tuỳ đường."""
+    def pack_steps(name: str) -> list[str]:
+        lines = (REPO / "deploy" / name).read_text().splitlines()
+        return [x for x in lines if x.startswith(("COPY deploy/packs", "RUN for d in ./packs"))]
+    full, thin = pack_steps("api.Dockerfile"), pack_steps("api-packs.Dockerfile")
+    assert len(full) == 2 and thin == full

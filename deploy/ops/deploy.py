@@ -9,14 +9,15 @@ mọi bản cài (một lần dựng mỗi commit): có sẵn đúng nhãn revis
 của bản đang chạy / để quay lui đọc từ Dokploy + release.json / rollback.json, không viết cứng — bản cài còn chạy ảnh mang tên cũ (trước 16/11/2026)
 vẫn quay lui được, ảnh tên cũ được dọn như ảnh khác khi hết dùng. Khoá SSH của CI bị ép chạy `deploy.py receive`, không shell, không
 chuyển tiếp — chỉ nhận đúng `deploy <sha 40 ký tự> <số lượt CI>`, kèm stdin là `git archive` (tar.gz) của đúng commit đó. Khác
-barista_bds: ảnh DỰNG TRÊN VPS (anh cho phép 31/10) từ mã CI gửi — VPS không cần quyền đọc GitHub; giải nén ra thư mục tạm riêng
-mỗi lần (không có thư mục mã dùng chung bị sửa dở).
+barista_bds: ảnh lõi do GitHub Actions dựng sẵn (images.yml, GHCR công khai — từ 24/11/2026; trước đó dựng trên VPS), VPS chỉ kéo — không cần
+khoá đọc GitHub; mã nhận được giải nén ra thư mục tạm riêng mỗi lần (gói ngoài lõi + stack.json lấy từ đó).
 
 Một lần phát hành:
-1. Dựng barista-api:<thẻ> + barista-web:<sha> từ mã nhận được (đã có ⇒ dùng lại) (chỉ CI giữ khoá SSH này), nhãn revision phải khớp sha.
+1. Lấy barista-api:<thẻ> + barista-web:<sha> (đã có ⇒ dùng lại): kéo ảnh CI của commit (``_fetch``; ``BARISTA_BUILD_ON_VPS=1`` ⇒ dựng như
+   cũ), nhãn revision phải khớp sha.
    GÓI NGOÀI LÕI (0155): mã nhận được có thể kèm ``deploy/packs/<khoá>/`` + ``manifest.json`` (máy phát hành lấy đúng tag từ barista-packs —
    deploy/packs.py); bộ gói phải ĐÚNG ``"packs"`` của file bản cài trên máy này, không thì dừng. Có gói ⇒ ảnh api mang thẻ
-   ``<sha>-p<dấu bộ gói>`` (api.Dockerfile cài từng gói vào ảnh); VPS vẫn không cần quyền đọc GitHub.
+   ``<sha>-p<dấu bộ gói>`` (lớp mỏng api-packs.Dockerfile cài từng gói lên ảnh lõi); VPS vẫn không cần quyền đọc GitHub.
 2. Chạy `python -m barista.seed` từ ẢNH MỚI, một lần, ngoài Traefik (migration có advisory lock; DB trống thì nạp mẫu — bản cài
    ``"env": "production"`` KHÔNG nạp mẫu, chỉ migration: ``production``). Migration chỉ được
    THÊM — bản cũ vẫn chạy được trên schema mới trong lúc chuyển / khi quay lui. Migration lỗi ⇒ bản đang chạy không bị đụng.
@@ -546,17 +547,58 @@ def _builder() -> list[str]:
     return ["buildx", "build", "--builder", BUILDER, "--load"]
 
 
+# ẢNH DỰNG SẴN Ở CI (sự cố 23/11/2026 — dựng trên VPS dùng chung làm Swarm khởi động lại mọi dịch vụ): mỗi commit trên main, GitHub Actions
+# (.github/workflows/images.yml, repo công khai, không secret nào ngoài token sẵn có) đẩy ``<REGISTRY>/barista-api:<sha>`` (CHỈ lõi) +
+# ``barista-web:<sha>`` lên GHCR công khai. VPS chỉ KÉO (mạng + đĩa, không ăn RAM như dựng) rồi đặt tên tại máy như trước (``barista-api:<sha>``…) ⇒
+# Dokploy, quay lui, dọn ảnh không đổi. Api có gói ngoài lõi ⇒ lớp MỎNG trên ảnh lõi (deploy/api-packs.Dockerfile: chép gói + cài --no-deps, vài
+# giây) — gói riêng tư không bao giờ lên CI công khai. Ảnh chưa có (CI còn chạy) ⇒ chờ tới ``PULL_WAIT``; quá hạn ⇒ DỪNG, không tự dựng trên VPS.
+# ``BARISTA_BUILD_ON_VPS=1`` ⇒ dựng cả hai ảnh trên VPS như cũ (builder có trần) — chỉ khi CI hỏng mà buộc phải phát hành.
+REGISTRY = os.environ.get("BARISTA_IMAGE_REGISTRY", "ghcr.io/lf2foce")
+PULL_WAIT = 20 * 60   # giây — dựng ảnh ở CI ~5–10 phút sau khi đẩy main; release.sh kiểm ~8 phút trước khi tới đây
+PULL_EVERY = 30
+
+
+def _pull(service: str, sha: str) -> str:
+    """Kéo ảnh CI ``<REGISTRY>/barista-<service>:<sha>``; chưa có ⇒ thử lại mỗi ``PULL_EVERY`` giây tới ``PULL_WAIT``. Trả tên ảnh ở registry."""
+    remote = f"{REGISTRY}/{IMAGE_PREFIX}-{service}:{sha}"
+    deadline = time.monotonic() + PULL_WAIT
+    while True:
+        r = subprocess.run(["docker", "pull", "--quiet", remote], capture_output=True, text=True)
+        if r.returncode == 0:
+            return remote
+        if time.monotonic() >= deadline:
+            raise ValueError(f"Chưa kéo được {remote} sau {PULL_WAIT // 60} phút ({r.stderr.strip()[-200:]}). Xem GitHub Actions 'images' của commit "
+                             "này; CI hỏng mà buộc phải phát hành: BARISTA_BUILD_ON_VPS=1 (dựng trên VPS — rủi ro sự cố 23/11/2026)")
+        print(f"  chờ ảnh CI {remote} …", flush=True)
+        time.sleep(PULL_EVERY)
+
+
+def _fetch(service: str, sha: str, target: str, work: str) -> None:
+    """Ảnh ``target`` từ ảnh CI của commit: kéo ảnh lõi, đặt tên tại máy ``barista-<service>:<sha>`` (bỏ tên registry — dọn ảnh chỉ thấy tên
+    tại máy); ``target`` khác ảnh lõi (api có gói) ⇒ dựng lớp mỏng ghép gói lên ảnh lõi."""
+    core = image(service, sha)
+    if _revision(core) != sha:
+        remote = _pull(service, sha)
+        command("docker", "tag", remote, core)
+        command("docker", "image", "rm", remote)   # chỉ gỡ tên registry; ảnh còn tên tại máy
+    if target != core:
+        command("docker", "build", "--quiet", "--build-arg", f"BASE={core}", "-f", "deploy/api-packs.Dockerfile", "-t", target, ".", cwd=work)
+
+
 def build(sha: str, source: Path, instance: dict) -> tuple[str, dict[str, str]]:
-    """Dựng hai ảnh từ mã nguồn (tar.gz của `git archive <sha>`, kèm gói ngoài lõi của bản cài ở ``deploy/packs/`` — ``shipped_packs``) giải
-    nén ra thư mục tạm; nhãn revision = sha. Ảnh đã có (bản cài khác vừa phát hành cùng commit + cùng bộ gói) ⇒ dùng lại, không dựng lần hai.
-    Trả (deploy/stack.json của commit đã điền theo bản cài, ảnh từng dịch vụ)."""
+    """Ảnh của commit (tar.gz của `git archive <sha>`, kèm gói ngoài lõi của bản cài ở ``deploy/packs/`` — ``shipped_packs``) giải nén ra thư mục
+    tạm: kéo ảnh CI (``_fetch``), hoặc dựng trên VPS khi ``BARISTA_BUILD_ON_VPS=1``; nhãn revision = sha. Ảnh đã có (bản cài khác vừa phát hành cùng
+    commit + cùng bộ gói) ⇒ dùng lại. Trả (deploy/stack.json của commit đã điền theo bản cài, ảnh từng dịch vụ)."""
     with tempfile.TemporaryDirectory(prefix="build-", dir=instance["root"]) as work:
         with tarfile.open(source, "r:gz") as t:
             t.extractall(work, filter="data")
         images = {"api": image("api", api_tag(sha, shipped_packs(Path(work), instance))), "web": image("web", sha)}
+        on_vps = os.environ.get("BARISTA_BUILD_ON_VPS") == "1"
         how = None
         for s in SERVICES:
-            if _revision(images[s]) != sha:
+            if _revision(images[s]) != sha and not on_vps:
+                _fetch(s, sha, images[s], work)
+            elif _revision(images[s]) != sha:
                 how = _builder() if how is None else how
                 command("docker", *(how or ["build"]), "--quiet", "--build-arg", f"BARISTA_RELEASE={sha}", "-f", f"deploy/{s}.Dockerfile",
                         "-t", images[s], ".", cwd=work)

@@ -273,6 +273,7 @@ def _archive(tmp_path) -> Path:
 
 @pytest.mark.parametrize("have", [True, False])
 def test_build_reuses_the_shared_image_of_this_commit_and_renders_the_stack(tmp_path, monkeypatch, have):
+    monkeypatch.setenv("BARISTA_BUILD_ON_VPS", "1")   # đường dựng trên VPS (CI hỏng); đường mặc định kéo ảnh CI: test_build_pulls_the_ci_image…
     built: list[str] = []
     state = {"barista-api": SHA if have else None, "barista-web": SHA if have else None}
     monkeypatch.setattr(ops, "_revision", lambda image: state[image.split(":")[0]])
@@ -291,6 +292,39 @@ def test_build_reuses_the_shared_image_of_this_commit_and_renders_the_stack(tmp_
     assert built == ([] if have else [f"barista-api:{SHA}", f"barista-web:{SHA}"])
     assert stack["services"]["api"]["volumes"] == [f"{tmp_path}/files:{ops.FILES_MOUNT}"]
     assert "traefik.http.routers.bank-web.rule" in stack["services"]["web"]["deploy"]["labels"]
+
+
+def test_build_pulls_the_ci_image_instead_of_building_on_the_vps(tmp_path, monkeypatch):
+    """Sự cố 23/11/2026: dựng ảnh trên VPS dùng chung làm Swarm khởi động lại mọi dịch vụ. Mặc định: kéo ảnh CI của commit (images.yml), đặt tên
+    tại máy như trước (Dokploy / quay lui / dọn ảnh không đổi), gỡ tên registry; không ``docker build`` nào. Chưa kéo được tới hạn ⇒ dừng, không
+    tự dựng."""
+    monkeypatch.delenv("BARISTA_BUILD_ON_VPS", raising=False)
+    calls: list[tuple] = []
+    state: dict[str, str] = {}
+    monkeypatch.setattr(ops, "_revision", lambda image: state.get(image))
+
+    def docker(*args, **kw):
+        calls.append(args)
+        if args[:2] == ("docker", "tag"):
+            state[args[3]] = SHA
+        return ""
+    monkeypatch.setattr(ops, "command", docker)
+    pulled: list[str] = []
+    monkeypatch.setattr(ops.subprocess, "run", lambda args, **kw: pulled.append(args[-1]) or ops.subprocess.CompletedProcess(args, 0, "", ""))
+    inst = {**ops.load_instance("bank", FIXTURES), "root": str(tmp_path), "packs": {}}
+    _, images = ops.build(SHA, _archive(tmp_path), inst)
+    assert images == {"api": f"barista-api:{SHA}", "web": f"barista-web:{SHA}"}
+    assert pulled == [f"{ops.REGISTRY}/barista-api:{SHA}", f"{ops.REGISTRY}/barista-web:{SHA}"]
+    assert calls == [("docker", "tag", f"{ops.REGISTRY}/barista-api:{SHA}", f"barista-api:{SHA}"), ("docker", "image", "rm", f"{ops.REGISTRY}/barista-api:{SHA}"),
+                     ("docker", "tag", f"{ops.REGISTRY}/barista-web:{SHA}", f"barista-web:{SHA}"), ("docker", "image", "rm", f"{ops.REGISTRY}/barista-web:{SHA}")]
+
+    state.clear()
+    monkeypatch.setattr(ops, "PULL_WAIT", 0)
+    monkeypatch.setattr(ops.subprocess, "run", lambda args, **kw: ops.subprocess.CompletedProcess(args, 1, "", "manifest unknown"))
+    calls.clear()
+    with pytest.raises(ValueError, match="BARISTA_BUILD_ON_VPS=1"):
+        ops.build(SHA, _archive(tmp_path), inst)
+    assert calls == []                                                              # ảnh CI chưa có ⇒ dừng, không dựng trên VPS
 
 
 def test_migrate_seeds_the_profile_of_the_install(tmp_path, monkeypatch):
