@@ -111,11 +111,11 @@ async def test_a_non_admin_cannot_request_a_pack_or_open_the_catalog_page(tmp_pa
     assert await owner_val("SELECT count(*) FROM core.pack_requests WHERE tenant_id = %s", (tid,)) == 0
 
 
-async def test_the_store_screen_is_named_store_and_reaches_the_remote_apps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_the_store_is_off_the_menu_and_its_page_still_reaches_the_remote_apps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from barista.workspaces import workspaces
 
-    screen = next(s for w in workspaces() for s in w.screens if s.query == "admin.pack_store")
-    assert screen.title == "Store"
+    # Store ẩn khỏi menu từ 24/11/2026 (ADR 0261 — tầng hệ thống; người dùng thấy "Kết nối & kỹ năng"); truy vấn vẫn chạy cho nhà vận hành
+    assert not any(s.query == "admin.pack_store" for w in workspaces() for s in w.screens)
     monkeypatch.setattr(settings, "pack_catalog_file", str(tmp_path / "khong-co.json"))
     _, admin = await _admin()
     store = await q(admin, "admin.pack_store")

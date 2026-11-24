@@ -395,7 +395,7 @@ def test_pack_guards_list_names_every_source_scanning_test() -> None:
 
 # Màn chưa có câu "để làm gì" (cơ chế lõi G1 — ``Screen.about``) của các gói TRONG repo này, đo 24/11/2026. Chỉ được GIẢM: màn mới phải có ``about``; viết
 # thêm cho màn cũ thì hạ số này xuống đúng số mới. Gói ngoài repo (barista-packs) tự giữ con số của mình.
-SCREENS_WITHOUT_ABOUT = 158
+SCREENS_WITHOUT_ABOUT = 157
 
 
 def test_new_screens_say_what_they_are_for() -> None:

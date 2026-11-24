@@ -8,7 +8,7 @@ import {
   BookText, Brain, Briefcase, ChartBarBig, Settings, Send, Stethoscope, Paperclip, ToggleRight, SquarePen, Files, Hourglass,
   AppWindow, ArrowRightLeft, ShoppingBag, Zap, Book, CalendarPlus, ShoppingCart, ChartPie, ClipboardCheck, ShieldAlert, Folder, SquareFunction,
   Globe, ListTree, ListOrdered, Star, UserCog, UsersRound, CalendarSearch, IdCard, Phone, PhoneCall, Grid2x2, Table, Tag, Target, Type, Timer,
-  Trophy, Video, FileSearch, Image, Flag, List, Link, PanelLeft,
+  Trophy, Video, FileSearch, Image, Flag, List, Link, PanelLeft, Puzzle,
   type LucideIcon,
 } from "lucide-react";
 
@@ -119,6 +119,7 @@ const MAP: Record<string, LucideIcon> = {
   "chart.bar.doc.horizontal": ChartBarBig,
   gearshape: Settings,
   "brain.head.profile": Brain,
+  "puzzlepiece.extension": Puzzle,
   link: Link,   // Kết nối ngoài (0244)
   "app.connected.to.app.below": AppWindow,
   "arrow.left.arrow.right.circle": ArrowRightLeft,
