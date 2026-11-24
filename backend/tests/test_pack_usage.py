@@ -125,8 +125,8 @@ async def test_a_failing_counter_write_never_fails_the_query(monkeypatch: pytest
 async def test_one_company_failing_to_flush_does_not_drop_the_others() -> None:
     tid, _, staff = await _company()
     usage._pending.clear()
-    usage._pending[(uuid.uuid4(), clock.today(), "", staff.user_id, "human")] = 5        # công ty không tồn tại ⇒ khoá ngoại lỗi
-    usage._pending[(tid, clock.today() - timedelta(days=0), "", staff.user_id, "human")] = 2
+    usage._pending[(uuid.uuid4(), clock.today(), "", staff.user_id, "human", "")] = 5        # công ty không tồn tại ⇒ khoá ngoại lỗi
+    usage._pending[(tid, clock.today() - timedelta(days=0), "", staff.user_id, "human", "")] = 2
     assert await usage.flush() == 1
     assert await owner_val("SELECT sum(queries) FROM core.usage_reads WHERE tenant_id = %s", (tid,)) == 2
 
@@ -138,3 +138,22 @@ async def test_system_link_and_app_callers_are_not_counted() -> None:
     await executor.query(system_principal(tid), "core.notifications", {})
     await executor.query(admin, "core.notifications", {}, quiet=True)           # kiểm tra lặp của kênh tức thì không tính
     assert not usage._pending
+
+
+async def test_reads_are_counted_per_query_so_unused_screens_show_up_and_desk_cards_do_not_count() -> None:
+    """ADR 0260: biết MÀN nào được mở. Người thật đọc một truy vấn ⇒ có dòng theo tên truy vấn; thẻ gọn tự tải của bàn việc (``count=False``) không tính;
+    màn mở bằng truy vấn đó có số đọc, màn chưa ai mở hiện "Chưa ai mở"."""
+    tid, admin, staff = await _company()
+    usage._pending.clear()
+    assert (await executor.query(staff, "acct.receivables", {})).status == "ok"
+    assert (await executor.query(staff, "acct.receivables", {})).status == "ok"
+    assert (await executor.query(staff, "acct.payables", {}, count=False)).status == "ok"          # tự tải: không đếm
+    assert await usage.flush() >= 1
+    assert await owner_val("SELECT sum(queries) FROM core.usage_reads WHERE tenant_id = %s AND query = 'acct.receivables' AND via = 'human'", (tid,)) == 2
+    assert await owner_val("SELECT count(*) FROM core.usage_reads WHERE tenant_id = %s AND query = 'acct.payables'", (tid,)) == 0
+    page = await q(admin, "core.screen_usage")
+    by = {r["id"]: r for r in page["rows"]}
+    assert by["accounting/receivables"]["reads"] == 2 and by["accounting/receivables"]["users"] == 1 and by["accounting/receivables"]["state"] == "used"
+    assert by["accounting/payables"]["reads"] == 0 and by["accounting/payables"]["state"] == "unused"
+    assert [r["reads"] for r in page["rows"]] == sorted(r["reads"] for r in page["rows"])           # ít dùng nhất lên đầu
+    assert next(k for k in page["kpis"] if k["label"] == "Chưa ai mở")["value"] >= 1

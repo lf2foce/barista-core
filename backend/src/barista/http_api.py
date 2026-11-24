@@ -572,7 +572,8 @@ async def query(name: str, request: Request, x_dev_user: DevUser = None, x_tenan
             page = ui.Paging(max(0, int(qp.get("offset") or 0)), min(max(1, int(qp["limit"])), ui.PAGE_MAX))
         except ValueError as e:
             raise HTTPException(422, "limit / offset phải là số") from e
-    r = await executor.query(p, name, body, later=qp.get("later") == "1" and not compact, part=(qp.get("part") or None) if not compact else None, page=page)
+    r = await executor.query(p, name, body, later=qp.get("later") == "1" and not compact, part=(qp.get("part") or None) if not compact else None, page=page,
+                             count=not compact)   # thẻ gọn của bàn việc tự tải, không phải người mở màn ⇒ không đếm (ADR 0260)
     if r.ok and compact and (small := ui.compact(r.output)) is not None:
         r = executor.Result(r.status, small)   # thẻ gọn (0094 đợt 2): cùng truy vấn, cùng quyền — server cắt bớt, app vẽ bằng bộ vẽ trang sẵn có
     return _result(r)

@@ -3121,6 +3121,8 @@ _ADMIN_SCREENS = (
                         A("admin.set_agent_policy", "Nới: tự làm", bind={"command": "id"}, preset={"mode": "allow"}, when={"can_promote": ["yes"]},
                           style="primary"))),
     Screen("audit", "Nhật ký thao tác", "list.bullet.rectangle.fill", "admin.audit", tint="gray", group="Hệ thống"),
+    Screen("screen_usage", "Màn nào đang được dùng", "chart.bar.xaxis", "core.screen_usage", tint="gray", group="Hệ thống", pinnable=False,
+           about="Xem màn nào người trong công ty đang mở và màn nào chưa ai mở trong 30 ngày qua, để biết nên giữ, gộp hay bỏ màn nào."),
     Screen("agent_actions", "Hành động của trợ lý", "point.3.connected.trianglepath.dotted", "admin.agent_actions", tint="purple", group="Hệ thống",
            open=Open("admin.trace", {"audit_id": "id"}, "Chuỗi hành động")),
     Screen("ai_usage", "Lượt dùng trợ lý AI", "gauge.with.dots.needle.bottom.50percent", "core.ai_usage", group="Hệ thống"),

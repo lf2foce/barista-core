@@ -1470,13 +1470,13 @@ async def _propose_as(p: Principal, name: str, inp: dict[str, Any], reason: str 
 
 
 async def query(p: Principal, name: str, inp: dict[str, Any] | None = None, *, quiet: bool = False, later: bool = False,
-                part: str | None = None, page: ui.Paging | None = None) -> Result:
+                part: str | None = None, page: ui.Paging | None = None, count: bool = True) -> Result:
     """``later``: bên gọi tự tải khối tải sau (``ui.b_later`` / ``ui.part`` — web qua ``?later=1``); mặc định executor chạy luôn các khối đó và ghép
     vào thẻ. ``part``: chỉ dựng một phần ``ui.part`` của thẻ (web tải phần đó — ``?part=``). ``page``: bên gọi xin MỘT trang của bảng (``?limit=``
-    / ``?offset=``) — xem ``ui.slice_page`` / ``ui.paging``."""
+    / ``?offset=``) — xem ``ui.slice_page`` / ``ui.paging``. ``count=False``: không tính vào bộ đếm lượt dùng (thẻ gọn tự tải của bàn việc — không phải người mở màn)."""
     door(p, f"query {name}")
     with timing.span("executor"):
-        r = localized(p, await _query_with(p, name, inp, quiet=quiet, parts=ui._Parts(name, dict(inp or {}), part) if part or later else None, page=page))
+        r = localized(p, await _query_with(p, name, inp, quiet=quiet, parts=ui._Parts(name, dict(inp or {}), part) if part or later else None, page=page, count=count))
     if page is not None and r.ok:
         r = Result(r.status, ui.slice_page(r.output, page), approval_id=r.approval_id)
     if not later and r.ok:
@@ -1485,11 +1485,11 @@ async def query(p: Principal, name: str, inp: dict[str, Any] | None = None, *, q
 
 
 async def _query_with(p: Principal, name: str, inp: dict[str, Any] | None, *, quiet: bool = False, parts: ui._Parts | None = None,
-                      page: ui.Paging | None = None) -> Result:
+                      page: ui.Paging | None = None, count: bool = True) -> Result:
     """``_query`` với chế độ phần tải sau / trang của lượt này (biến ngữ cảnh — handler đọc qua ``ui.part`` / ``ui.paging``)."""
     t1, t2 = ui._PARTS.set(parts), ui._PAGING.set(page)
     try:
-        return await _query(p, name, inp, quiet=quiet)
+        return await _query(p, name, inp, quiet=quiet, count=count)
     finally:
         ui._PARTS.reset(t1)
         ui._PAGING.reset(t2)
@@ -1522,7 +1522,7 @@ async def _fill_later(p: Principal, r: Result, depth: int) -> Result:
     return Result(r.status, {**out, "blocks": blocks}, approval_id=r.approval_id)
 
 
-async def _query(p: Principal, name: str, inp: dict[str, Any] | None = None, *, quiet: bool = False) -> Result:
+async def _query(p: Principal, name: str, inp: dict[str, Any] | None = None, *, quiet: bool = False, count: bool = True) -> Result:
     """Chạy một TRUY VẤN (đọc) trong giao dịch READ ONLY. ``quiet``: kiểm tra lặp lại của kênh tức thì (mỗi người nghe, mỗi tín hiệu) — lỗi bất ngờ
     (DB bận, mất kết nối) trả ``error`` cho bên gọi tự thử lại, KHÔNG ghi lỗi hệ thống / báo nhà vận hành mỗi lần (một sự cố thành nghìn dòng)."""
     op = registry.get(name)
@@ -1558,10 +1558,10 @@ async def _query(p: Principal, name: str, inp: dict[str, Any] | None = None, *, 
                     out = ui.card("", parts.got or [])
             zone = clock.zone()   # múi giờ công ty của giao dịch (0169) — bộ đếm mức dùng ghi theo NGÀY của công ty
         await run_after(ctx)   # việc hẹn sau khi đọc xong (vd ghi dấu mục nhớ đã được đưa ra) — giao dịch đọc không ghi được
-        if not quiet:
+        if not quiet and count:
             try:
                 with clock.using(zone):
-                    usage.note_query(p, op.module)   # mức dùng (0163): chỉ tăng bộ đếm trong bộ nhớ, không SQL; lỗi gì cũng không được làm hỏng truy vấn
+                    usage.note_query(p, op.module, op.name)   # mức dùng (0163): chỉ tăng bộ đếm trong bộ nhớ, không SQL; lỗi gì cũng không được làm hỏng truy vấn
             except Exception:
                 log.exception("bộ đếm mức dùng lỗi")
         return Result("ok", visible_actions(p, jsonable(out)))

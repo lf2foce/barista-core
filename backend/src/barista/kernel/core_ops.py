@@ -726,4 +726,5 @@ from barista.kernel import (  # noqa: E402, F401
     import_log,
     rail,
     record_files,
+    screen_usage,
 )

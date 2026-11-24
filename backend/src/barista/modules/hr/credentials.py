@@ -623,8 +623,10 @@ _ROW_ACTIONS = (A("hr.verify_credentials", "Xác nhận", bind={"credential_id":
 m.workspace(Workspace("hr", "Nhân sự", "person.text.rectangle.fill", (
     Screen("hr_my_credentials", "Chứng chỉ của tôi", "checkmark.seal", "hr.my_credentials", tint="blue",
            desk=Desk("watch", say=_say_mine, menu=True, rank=70)),
-    Screen("hr_team_credentials", "Chứng chỉ của đội", "person.2.badge.gearshape", "hr.credentials", tint="orange", min_scope="team", max_scope="team"),
-    Screen("hr_credentials", "Chứng chỉ nhân sự", "checkmark.seal.fill", "hr.credentials", tint="indigo", min_scope="all",
+    # MỘT màn cho mọi phạm vi (gộp màn "Chứng chỉ của đội" — cùng truy vấn, chỉ khác phạm vi, 24/11/2026): truy vấn đã chỉ trả người trong phạm vi người xem;
+    # nút ghi / xác nhận tự ẩn với ai không chạy được lệnh. Khoá cũ giữ ở ``aliases`` để ghim đã lưu vẫn mở được.
+    Screen("hr_credentials", "Chứng chỉ nhân sự", "checkmark.seal.fill", "hr.credentials", tint="indigo", min_scope="team", aliases=("hr_team_credentials",),
+           about="Chứng chỉ hành nghề và giấy phép của người trong phạm vi bạn quản lý: ai đã hết hạn, sắp hết hạn, còn thiếu.",
            actions=(A("hr.record_credential", style="primary"), A("hr.verify_credentials")), row_actions=_ROW_ACTIONS,
            desk=Desk("watch", say=_say_company, menu=True, rank=70)),
     Screen("hr_credential_kinds", "Loại chứng chỉ", "list.bullet.rectangle", "hr.credential_kinds", min_scope="all", pinnable=False,
