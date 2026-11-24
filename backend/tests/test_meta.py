@@ -75,7 +75,7 @@ CORE_WRITERS = {"admin": "quản trị cấu hình lõi (người, đội, vai, 
                 "connect": "app từ xa (0140): sổ app / quyền / token / webhook ở core vì xác thực (kernel) đọc trước khi có công ty"}
 MODULE_FILES = module_files()   # module ↔ file (một file, hoặc package — 0088)
 OWN_SCHEMA = {mod: (mod if mod in BUSINESS_SCHEMAS else None) for mod in MODULE_FILES}
-CORE_READABLE = {"users", "team_members", "teams", "memberships", "roles", "grants", "tenant", "me", "today", "ensure_user",
+CORE_READABLE = {"users", "team_members", "team_terms", "team_parent_log", "teams", "memberships", "roles", "grants", "tenant", "me", "today", "ensure_user",
                  "legal_entities", "default_entity",   # pháp nhân (0099): chiều dùng chung trên chứng từ tiền
                  "embed_profiles"}   # hồ sơ nhúng theo công ty (0232): CHỈ vòng quét ``kb.embed_sweep`` đọc để biết model đang dùng của từng công ty; nhà vận hành ghi, kb không ghi
 SQL_REF = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_]+)\.([a-z_]+)", re.IGNORECASE)

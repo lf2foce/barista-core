@@ -19,6 +19,7 @@ from psycopg.types.json import Jsonb
 from barista.api import Action as A
 from barista.api import (
     Ctx,
+    Day,
     Denied,
     Event,
     ImportKey,
@@ -229,9 +230,30 @@ async def invite_user(ctx: Ctx, inp: Invite) -> dict[str, Any]:
             "changes": [{"label": "Vai trò", "before": await _role_ref(ctx, before) if before else "Chưa có trong công ty", "after": await _role_ref(ctx, inp.role)}]}
 
 
+async def _step_down(ctx: Ctx, tid: UUID, keep: UUID | None = None) -> UUID | None:
+    """Một đội một trưởng tại một thời điểm (0256): trưởng đang giữ (khác ``keep``) thành thành viên thường. Trả người vừa thôi."""
+    return await ctx.val("UPDATE core.team_members SET is_lead = false WHERE team_id = %s AND is_lead AND user_id IS DISTINCT FROM %s RETURNING user_id",
+                         (tid, keep))
+
+
+def _since(inp_from: date | None, reason: str) -> tuple[date | None, str]:
+    """Ngày hiệu lực người dùng nêu ⇒ (ngày lùi hoặc None nếu là hôm nay / bỏ trống, lý do lưu). Tương lai và lùi quá hạn mức thiếu lý do ⇒ từ chối."""
+    if inp_from is None or inp_from == today():
+        return None, ""
+    if inp_from > today():
+        raise Invalid("Chưa ghi trước cho tương lai được: thay đổi cơ cấu có hiệu lực từ lúc ghi")
+    why = team_tree.backdate_reason(inp_from, reason, today())
+    if why is None:
+        raise Invalid(f"Lùi ngày hiệu lực quá {team_tree.BACKDATE_DAYS} ngày (từ {inp_from:%d/%m/%Y}) cần ghi lý do — lịch sử cơ cấu ảnh hưởng người hưởng "
+                      "hoa hồng đã dựng từ nó")
+    return inp_from, why
+
+
 async def _set_home_team(ctx: Ctx, uid: UUID, tid: UUID, lead: bool) -> None:
     """Đội chính: đơn vị mặc định của hồ sơ người đó tạo. Đổi đội chính thay dòng cũ; các đội tham gia khác giữ nguyên (0109)."""
     left = await ctx.all("DELETE FROM core.team_members WHERE user_id = %s AND is_home AND team_id <> %s RETURNING team_id", (uid, tid))
+    if lead:
+        await _step_down(ctx, tid, keep=uid)
     await ctx.exec(
         """INSERT INTO core.team_members (user_id, team_id, is_lead, is_home) VALUES (%s, %s, %s, true)
            ON CONFLICT (tenant_id, user_id, team_id) DO UPDATE SET is_lead = EXCLUDED.is_lead, is_home = true""",
@@ -293,6 +315,8 @@ async def add_team(ctx: Ctx, inp: AddTeam) -> dict[str, Any]:
     if tid is None:
         raise Invalid("Cần chọn đội")
     home = not await ctx.val("SELECT 1 FROM core.team_members WHERE user_id = %s AND is_home", (uid,))
+    if inp.is_lead:
+        await _step_down(ctx, tid, keep=uid)
     await ctx.exec("""INSERT INTO core.team_members (user_id, team_id, is_lead, is_home) VALUES (%s, %s, %s, %s)
                       ON CONFLICT (tenant_id, user_id, team_id) DO UPDATE SET is_lead = EXCLUDED.is_lead""", (uid, tid, inp.is_lead, home))
     ctx.emit("admin.team_members_changed", team_id=tid)
@@ -315,6 +339,78 @@ async def remove_team(ctx: Ctx, inp: TeamMemberRef) -> dict[str, Any]:
     ctx.emit("admin.team_members_changed", team_id=tid)
     return {"user_id": uid, "team_id": tid, "subject": await _person(ctx, uid, inp.email),
             "changes": [{"label": "Đội / cơ sở", "before": inp.team_code, "after": "Đã bỏ"}]}
+
+
+class TeamLead(Input):
+    team_code: str = field("Đội", options_query="admin.team_options")
+    email: str = field("Trưởng đội", "", options_query="admin.member_options", placeholder="Bỏ trống chức trưởng đội", help="Để trống = đội khuyết trưởng từ ngày này")
+    valid_from: Day | None = field("Từ ngày", None, example="01/11/2026", placeholder="Hôm nay", help="Trưởng trước đó thôi từ ngày này")
+    reason: str = field("Lý do lùi ngày", "", max_length=300, help=f"Bắt buộc khi lùi quá {team_tree.BACKDATE_DAYS} ngày so với hôm nay (ghi vào nhật ký)",
+                        group="Thêm chi tiết")
+
+
+async def _team_lead_access(ctx: Ctx, inp: TeamLead) -> str | None:
+    """Đặt / bỏ trưởng đội là đổi quyền (phạm vi "đội mình quản", người duyệt bước trưởng nhóm — 0029) và đổi người hưởng theo cơ cấu (0160)."""
+    return f"đội {inp.team_code}: {'trưởng mới ' + inp.email.lower() if inp.email.strip() else 'bỏ trống chức trưởng'}" + (
+        f" từ {inp.valid_from:%d/%m/%Y}" if inp.valid_from else "")
+
+
+@m.command("set_team_lead",
+           purpose="Ghi ai đứng đầu một đội và từ ngày nào — quyền xem cả đội và người hưởng theo cơ cấu cùng đọc dòng này.",
+           reversible="Chạy lại lệnh với trưởng trước đó",
+           resource="core.admin", action="manage", title="Ghi trưởng đội từ ngày", agent="propose", sensitive=_team_lead_access)
+async def set_team_lead(ctx: Ctx, inp: TeamLead) -> dict[str, Any]:
+    """MỘT nơi ghi trưởng đội (ADR 0256): hiện tại ở ``core.team_members`` (quyền đọc), lịch sử có ngày do DB tự chép sang ``core.team_terms`` (hoa hồng
+    đọc theo ngày ký). Một đội một trưởng: trưởng cũ thành thành viên thường. Người chưa ở đội được thêm vào đội (đội chính nếu chưa có đội nào)."""
+    tid = await _team_id(ctx, inp.team_code)
+    if tid is None:
+        raise Invalid("Cần chọn đội")
+    day, why = _since(inp.valid_from, inp.reason)
+    current = await ctx.val("SELECT user_id FROM core.team_members WHERE team_id = %s AND is_lead", (tid,))
+    if not inp.email.strip():
+        if current is None:
+            raise Invalid("Đội đang không có trưởng")
+        await _step_down(ctx, tid)
+        if day:
+            await team_tree.until(ctx.conn, current, tid, day, why)
+        uid = None
+    else:
+        uid = await _member_id(ctx, inp.email)
+        if current == uid and day is None:
+            raise Invalid("Người này đang là trưởng đội")
+        if current != uid:
+            await _step_down(ctx, tid, keep=uid)
+            home = not await ctx.val("SELECT 1 FROM core.team_members WHERE user_id = %s AND is_home", (uid,))
+            await ctx.exec("""INSERT INTO core.team_members (user_id, team_id, is_lead, is_home) VALUES (%s, %s, true, %s)
+                              ON CONFLICT (tenant_id, user_id, team_id) DO UPDATE SET is_lead = true""", (uid, tid, home))
+        if day:
+            await team_tree.since(ctx.conn, uid, tid, day, why)
+    ctx.emit("admin.team_members_changed", team_id=tid)
+    when = f"{(inp.valid_from or today()):%d/%m/%Y}"
+    return {"team_id": tid, "user_id": uid, "summary": f"{inp.team_code}: {'khuyết trưởng' if uid is None else 'trưởng mới'} từ {when}",
+            "changes": [{"label": "Trưởng đội", "before": "", "after": (inp.email.lower() or "Khuyết") + f" (từ {when})"}]}
+
+
+class TeamSince(TeamMemberRef):
+    valid_from: Day = field("Ở đội này từ ngày", example="01/11/2026")
+    reason: str = field("Lý do lùi ngày", "", max_length=300, help=f"Bắt buộc khi lùi quá {team_tree.BACKDATE_DAYS} ngày so với hôm nay (ghi vào nhật ký)")
+
+
+@m.command("set_team_since",
+           purpose="Sửa ngày một người bắt đầu ở đội khi ghi muộn — người hưởng theo cơ cấu tính theo ngày ký, không theo ngày nhập.",
+           reversible="Chạy lại với ngày đúng (chỉ lùi được về trước)",
+           resource="core.admin", action="manage", title="Sửa ngày vào đội", agent="propose")
+async def set_team_since(ctx: Ctx, inp: TeamSince) -> dict[str, Any]:
+    """Chỉ sửa LỊCH SỬ (``core.team_terms``): quyền hôm nay không đổi. Dòng liền trước mà dòng này thay chỗ (đội chính cũ) rút ngắn theo."""
+    uid = await _member_id(ctx, inp.email)
+    tid = await _team_id(ctx, inp.team_code)
+    if tid is None or not await ctx.val("SELECT 1 FROM core.team_members WHERE user_id = %s AND team_id = %s", (uid, tid)):
+        raise NotFound("Người này không ở đội đó")
+    day, why = _since(inp.valid_from, inp.reason)
+    if day:
+        await team_tree.since(ctx.conn, uid, tid, day, why)
+    return {"user_id": uid, "team_id": tid, "subject": await _person(ctx, uid, inp.email),
+            "changes": [{"label": "Ở đội từ", "before": "", "after": f"{inp.valid_from:%d/%m/%Y}"}]}
 
 
 class UpdateMember(Input):

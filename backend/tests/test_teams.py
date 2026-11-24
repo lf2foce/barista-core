@@ -125,6 +125,7 @@ async def test_one_person_in_two_teams_keeps_one_home_and_lists_do_not_duplicate
     target = await _team(tenant, "KD-C")
     assert target != home_before
     await approved(admin, "admin.add_team", email=sale.email, team_code="KD-C")
+    lead_c = await owner_val("SELECT u.email FROM core.team_members tm JOIN core.users u ON u.id = tm.user_id JOIN core.teams t ON t.id = tm.team_id WHERE t.tenant_id = %s AND t.code = %s AND tm.is_lead", (tenant, "KD-C"))
     try:
         again = await who("sale1")
         assert again.home_team == home_before and set(again.member_teams) == {home_before, target}
@@ -135,12 +136,14 @@ async def test_one_person_in_two_teams_keeps_one_home_and_lists_do_not_duplicate
         lead = await ok(sale, "crm.create_lead", name="Khách đội chính", phone=f"0108{uuid.uuid4().int % 10**6:06d}", offering_code="HSR")
         assert await owner_val("SELECT team_id FROM crm.leads WHERE id = %s", (lead["lead_id"],)) == home_before   # hồ sơ theo đội chính
         assert await owner_val("SELECT count(*) FROM core.team_members WHERE tenant_id = %s AND user_id = %s AND is_home", (tenant, sale.user_id)) == 1
-        await approved(admin, "admin.add_team", email=sale.email, team_code="KD-C", is_lead=True)
+        await approved(admin, "admin.add_team", email=sale.email, team_code="KD-C", is_lead=True)   # một đội một trưởng (0256): thay trưởng đang giữ
         assert target in (await who("sale1")).managed_teams                                             # trưởng ở đội thêm: có phạm vi đội đó
         r = await executor.run(admin, "admin.remove_team", {"email": sale.email, "team_code": (await _code(tenant, home_before))})
         assert r.status == "invalid" and "đội chính" in (r.error or "")                                 # phải đổi đội chính trước
     finally:
         await approved(admin, "admin.remove_team", email=sale.email, team_code="KD-C")
+        if lead_c:   # trả trưởng gốc của đội mẫu dùng chung
+            await approved(admin, "admin.set_team_lead", team_code="KD-C", email=lead_c)
     assert (await who("sale1")).member_teams == (home_before,)
 
 

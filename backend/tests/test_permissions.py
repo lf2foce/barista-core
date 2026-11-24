@@ -55,6 +55,7 @@ async def test_duplicate_phone_does_not_reveal_owner(who: Who) -> None:
 async def test_grant_change_takes_effect_and_last_admin_is_kept(who: Who) -> None:
     admin = await who("admin")
     await approved(admin, "admin.set_grant", role="sale", resource="crm", scope="team", actions=["read", "write"])
+    lead_a = await owner_val("SELECT u.email FROM core.team_members tm JOIN core.users u ON u.id = tm.user_id JOIN core.teams t ON t.id = tm.team_id WHERE t.tenant_id = %s AND t.code = %s AND tm.is_lead", (admin.tenant_id, "KD-A"))
     try:
         # sale1 không làm trưởng đội nào ⇒ phạm vi team = của mình + (không đội nào) — vẫn chỉ thấy của mình
         assert await _lead_owners(await who("sale1")) == {"Nguyễn Văn An"}
@@ -62,6 +63,8 @@ async def test_grant_change_takes_effect_and_last_admin_is_kept(who: Who) -> Non
         assert await _lead_owners(await who("sale1")) == {"Nguyễn Văn An", "Hoàng Thị Bích"}
     finally:
         await approved(admin, "admin.update_member", email="sale1@sanmau.demo", is_lead=False)
+        if lead_a:   # một đội một trưởng (0256): sale1 đã thay trưởng đội mẫu dùng chung ⇒ trả lại
+            await approved(admin, "admin.set_team_lead", team_code="KD-A", email=lead_a)
         await approved(admin, "admin.set_grant", role="sale", resource="crm", scope="own", actions=["read", "write"])
     # bỏ quyền quản trị của mọi quản trị: thành phiếu chờ chủ tài khoản (0029); duyệt xong vẫn bị chặn vì phải còn một quản trị
     r = await executor.run(admin, "admin.set_grant", {"role": "admin", "resource": "core.admin", "scope": "all", "actions": []})

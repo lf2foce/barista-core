@@ -31,8 +31,11 @@ async def test_title_change_closes_the_old_row_and_past_dates_answer_as_of(who: 
     code = f"M{str(me)[:8]}"
     await ok(admin, "hr.set_employment", party_id=me, employee_code=code, title="Nhân viên", started_on=d0.isoformat())
     await ok(admin, "hr.set_employment", party_id=me, employee_code=code, title="Trưởng nhóm", started_on=d1.isoformat())
-    await ok(admin, "hr.set_assignment", party_id=me, team_code="KD-A", valid_from=d0.isoformat(), reason="Dữ liệu thử")
-    await ok(admin, "hr.set_assignment", party_id=me, team_code="KD-B", valid_from=d1.isoformat(), reason="Dữ liệu thử")
+    # đội của một người ghi ở Quản trị (một nguồn ở lõi — 0256); Hồ sơ làm việc đọc lại theo ngày
+    await ok(admin, "admin.update_member", email=sale.email, team_code="KD-A")
+    await ok(admin, "admin.set_team_since", email=sale.email, team_code="KD-A", valid_from=d0.isoformat(), reason="Dữ liệu thử")
+    await ok(admin, "admin.update_member", email=sale.email, team_code="KD-B")
+    await ok(admin, "admin.set_team_since", email=sale.email, team_code="KD-B", valid_from=d1.isoformat(), reason="Dữ liệu thử")
 
     async def on(day: Any) -> dict[str, Any]:
         return next(r for r in (await q(admin, "hr.staff", on=day.isoformat()))["rows"] if str(r["party_id"]) == str(me))

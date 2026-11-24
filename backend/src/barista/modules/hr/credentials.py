@@ -97,11 +97,8 @@ WHERE c.revoked_at IS NULL AND c.expires_on IS NOT NULL
 
 
 async def _team_of(ctx: Ctx, party_id: UUID, user_id: UUID | None) -> UUID | None:
-    """Đội của người có chứng chỉ (cho phạm vi "đội tôi quản"): phân công hồ sơ làm việc hiện tại, không có thì đội chính của tài khoản."""
-    d = today()
-    team = await ctx.val("""SELECT team_id FROM hr.assignments WHERE party_id = %s AND team_id IS NOT NULL AND valid_from <= %s
-                            AND (valid_to IS NULL OR valid_to >= %s) ORDER BY valid_from DESC LIMIT 1""", (party_id, d, d))
-    return team or await ctx.home_team(user_id)
+    """Đội của người có chứng chỉ (cho phạm vi "đội tôi quản"): đội chính của tài khoản — một nguồn ở lõi (0256). Người không tài khoản: không đội."""
+    return await ctx.home_team(user_id)
 
 
 async def resync(ctx: Ctx, party_ids: list[UUID], *, logins: bool = False) -> int:

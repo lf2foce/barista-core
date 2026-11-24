@@ -1,1 +1,1 @@
-{"maintenance": ["025_team_home.sql", "037_vocabulary_and_shared_capabilities.sql", "041_file_store.sql", "042_kb_files_required.sql", "045_ledger_posted_on_period_locks.sql", "057_session_claims.sql"]}
+{"maintenance": ["025_team_home.sql", "037_vocabulary_and_shared_capabilities.sql", "041_file_store.sql", "042_kb_files_required.sql", "045_ledger_posted_on_period_locks.sql", "057_session_claims.sql", "112_team_terms.sql"]}

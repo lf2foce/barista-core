@@ -3,7 +3,8 @@
 Bổ sung bởi 0150: ĐIỀU KIỆN TRẢ theo hợp đồng (``hr.terms``) là tài nguyên RIÊNG — người được xem hồ sơ làm việc không mặc nhiên thấy; có LOẠI hợp đồng (cộng tác / có thời hạn bao nhiêu tháng…), gói Lương đọc qua ``hr.terms_on``. Mức trả ở ``pay.rates``; mã định danh mã hoá: lát 2.
 Lát 3 thêm vào điều kiện trả: lương đóng bảo hiểm, vùng lương tối thiểu nơi làm việc, đoàn viên; và NGƯỜI PHỤ THUỘC đăng ký giảm trừ gia cảnh
 (``hr.dependants``) — cùng tài nguyên riêng ``hr.terms``; gói Lương chỉ nhận SỐ người phụ thuộc, không tên.
-0160: TRƯỞNG ĐỘI theo ngày (``hr.team_heads``) + ``hr.structure_on`` cho Hoa hồng đề xuất người hưởng theo cơ cấu tại ngày ký.
+0160 / 0256: ``hr.structure_on`` cho Hoa hồng đề xuất người hưởng theo cơ cấu tại ngày ký. ĐỘI và TRƯỞNG ĐỘI theo ngày nằm ở LÕI (``core.team_terms`` —
+Quản trị ghi, quyền và hoa hồng cùng đọc); module này chỉ giữ cây QUẢN LÝ TRỰC TIẾP theo người (``hr.assignments``).
 KHÔNG có bảng nghĩa vụ ở đây — tiền đi qua Tài chính. Hoa hồng chỉ đọc cơ cấu MỘT LẦN khi đề xuất người hưởng (0160); khoản hưởng chụp người và đội
 ngay trên giao dịch (0104), nên đổi đội về sau không đổi tiền cũ.
 """
@@ -194,23 +195,15 @@ async def end_employment(ctx: Ctx, inp: EndEmployment) -> dict[str, Any]:
 
 class SetAssignment(Input):
     party_id: UUID = field("Người", kind="select", options_query="parties.options")
-    team_code: str = field("Đội", "", options_query="admin.team_options")
-    manager_party_id: UUID | None = field("Người quản lý trực tiếp", None, kind="select", options_query="parties.options")
+    manager_party_id: UUID | None = field("Người quản lý trực tiếp", None, kind="select", options_query="parties.options", placeholder="Không có quản lý trực tiếp")
     valid_from: Day | None = field("Từ ngày", None, example="01/11/2026", placeholder="Hôm nay", help="Phân công trước đó tự đóng vào ngày liền trước")
     reason: str = field("Lý do lùi ngày", "", max_length=300, help=f"Bắt buộc khi lùi quá {BACKDATE_DAYS} ngày so với hôm nay (ghi vào nhật ký)", group="Thêm chi tiết")
 
 
-@m.command("set_assignment", resource="hr", action="manage", title="Ghi phân công đội / quản lý", agent="propose")
+@m.command("set_assignment", resource="hr", action="manage", title="Ghi người quản lý trực tiếp", agent="propose")
 async def set_assignment(ctx: Ctx, inp: SetAssignment) -> dict[str, Any]:
-    """Cây quản lý theo NGƯỜI và cây đội là hai thứ: không suy cái này từ cái kia."""
+    """Cây quản lý theo NGƯỜI và cây đội là hai thứ: không suy cái này từ cái kia. Đội của một người ghi ở Quản trị (lõi — 0256), không ở đây."""
     await _need_party(ctx, inp.party_id)
-    team = None
-    if inp.team_code:
-        team = await ctx.val("SELECT id FROM core.teams WHERE code=%s", (inp.team_code,))
-        if team is None:
-            raise NotFound(f"Không có đội {inp.team_code}")
-    if team is None and inp.manager_party_id is None:
-        raise Invalid("Cần đội hoặc người quản lý")
     if inp.manager_party_id == inp.party_id:
         raise Invalid("Người quản lý không thể là chính người này")
     if inp.manager_party_id and str(inp.manager_party_id) not in await _seen(ctx, [inp.manager_party_id]):
@@ -218,18 +211,42 @@ async def set_assignment(ctx: Ctx, inp: SetAssignment) -> dict[str, Any]:
     valid_from = inp.valid_from or today()
     why = _backdate(valid_from, inp.reason)
     await _lock(ctx, inp.party_id)
-    current = await ctx.one("SELECT id,valid_from FROM hr.assignments WHERE party_id=%s AND valid_to IS NULL", (inp.party_id,))
+    current = await ctx.one("SELECT id,valid_from,manager_party_id FROM hr.assignments WHERE party_id=%s AND valid_to IS NULL", (inp.party_id,))
     if current:
         if valid_from <= current["valid_from"]:
             raise Invalid(f"Đang có phân công từ {current['valid_from']:%d/%m/%Y}: ngày mới phải sau ngày đó")
         await ctx.exec("UPDATE hr.assignments SET valid_to=%s, edited_by=core.me(), edited_at=now() WHERE id=%s", (valid_from - timedelta(days=1), current["id"]))
-    row = await ctx.val(
-        """INSERT INTO hr.assignments(party_id,team_id,manager_party_id,valid_from,created_by,edited_by,backdate_reason)
-           VALUES(%s,%s,%s,%s,core.me(),core.me(),%s) RETURNING id""",
-        (inp.party_id, team, inp.manager_party_id, valid_from, why),
-    )
-    await credentials.resync(ctx, [inp.party_id])   # chứng chỉ của người này theo đội mới (phạm vi "đội tôi quản" — 0202)
+    elif inp.manager_party_id is None:
+        raise Invalid("Người này đang không có quản lý trực tiếp")
+    row = None
+    if inp.manager_party_id:
+        row = await ctx.val(
+            """INSERT INTO hr.assignments(party_id,manager_party_id,valid_from,created_by,edited_by,backdate_reason)
+               VALUES(%s,%s,%s,core.me(),core.me(),%s) RETURNING id""",
+            (inp.party_id, inp.manager_party_id, valid_from, why),
+        )
     return {"assignment_id": row}
+
+
+# ── Đội / trưởng đội tại một ngày: đọc LÕI (``core.team_terms``, khoảng nửa mở [valid_from, valid_to) — 0256) ──
+
+_HOME_ON = """SELECT DISTINCT ON (tt.user_id) tt.user_id, tt.team_id, t.name AS team, tt.edited_by AS editor, tt.edited_at
+              FROM core.team_terms tt JOIN core.teams t ON t.id = tt.team_id
+              WHERE tt.user_id = ANY(%(u)s) AND tt.is_home AND tt.valid_from <= %(d)s AND (tt.valid_to IS NULL OR tt.valid_to > %(d)s)
+              ORDER BY tt.user_id, tt.valid_from DESC"""
+_LEAD_ON = """SELECT DISTINCT ON (tt.team_id) tt.team_id, tt.user_id, tt.head_role, tt.edited_by AS editor, tt.edited_at
+              FROM core.team_terms tt
+              WHERE tt.team_id = ANY(%(t)s) AND tt.is_lead AND tt.valid_from <= %(d)s AND (tt.valid_to IS NULL OR tt.valid_to > %(d)s)
+              ORDER BY tt.team_id, tt.valid_from DESC"""
+# cấp cha của đội tại ngày đó; ngày trước khi có nhật ký ⇒ dòng sớm nhất (cây lúc bắt đầu ghi — không có căn cứ nào khác)
+_PARENT_ON = """SELECT parent_id, edited_by AS editor, edited_at FROM core.team_parent_log
+                WHERE team_id = %(t)s AND (valid_to IS NULL OR valid_to > %(d)s) ORDER BY valid_from LIMIT 1"""
+
+
+async def _logins(ctx: Ctx, parties: list[UUID]) -> dict[str, UUID]:
+    """party_id → tài khoản (người không có tài khoản không thuộc đội nào của lõi)."""
+    got = await ctx.call_system("parties.logins", party_ids=parties) if parties else {}
+    return {k: UUID(v) for k, v in got.items()}
 
 
 class StaffOn(Input):
@@ -241,17 +258,19 @@ async def staff(ctx: Ctx, inp: StaffOn) -> dict[str, Any]:
     day: date = inp.on or today()
     rows = await ctx.all(
         """SELECT e.id,e.party_id,e.employee_code,e.title,e.entity_id,e.started_on,e.ended_on,
-                  a.manager_party_id,t.name AS team,(e.ended_on IS NULL) AS is_open
+                  a.manager_party_id,(e.ended_on IS NULL) AS is_open
            FROM hr.employments e
            LEFT JOIN hr.assignments a ON a.tenant_id=e.tenant_id AND a.party_id=e.party_id
                 AND a.valid_from<=%(d)s AND (a.valid_to IS NULL OR a.valid_to>=%(d)s)
-           LEFT JOIN core.teams t ON t.id=a.team_id
            WHERE e.started_on<=%(d)s AND (e.ended_on IS NULL OR e.ended_on>=%(d)s) ORDER BY e.employee_code LIMIT 2000""",
         {"d": day},
     )
     names = await _names(ctx, list({r["party_id"] for r in rows} | {r["manager_party_id"] for r in rows if r["manager_party_id"]}))
     ents = await entities.names(ctx)
+    users = await _logins(ctx, [r["party_id"] for r in rows])
+    homes = {r["user_id"]: r["team"] for r in await ctx.all(_HOME_ON, {"u": list(users.values()), "d": day})} if users else {}
     for r in rows:
+        r["team"] = homes.get(users.get(str(r["party_id"])), "")
         r["name"] = names.get(str(r["party_id"]), {}).get("name", "")
         r["manager"] = names.get(str(r["manager_party_id"]), {}).get("name", "") if r["manager_party_id"] else ""
         r["entity"] = ents.get(str(r["entity_id"]), {}).get("name", "") if r["entity_id"] else ""
@@ -271,7 +290,8 @@ async def staff(ctx: Ctx, inp: StaffOn) -> dict[str, Any]:
         title=f"Hồ sơ làm việc tại {day:%d/%m/%Y}",
         limit=2000,
         empty="Chưa có hồ sơ",
-        kpis=[ui.kpi("Đang làm tại ngày này", len(rows)), ui.kpi("Chưa có quản lý / đội", sum(1 for r in rows if not r["manager"] and not r["team"]))],
+        kpis=[ui.kpi("Đang làm tại ngày này", len(rows)), ui.kpi("Chưa có quản lý hoặc đội", sum(1 for r in rows if not r["manager"] or not r["team"]),
+                                                                  hint="Thiếu người quản lý trực tiếp (ghi ở đây) hoặc thiếu đội (ghi ở Quản trị › Người dùng)")],
     )
 
 
@@ -282,11 +302,14 @@ class PartyRef(Input):
 @m.query("history", resource="hr", min_scope="all", title="Lịch sử làm việc của một người")
 async def history(ctx: Ctx, inp: PartyRef) -> dict[str, Any]:
     jobs = await ctx.all("SELECT id,employee_code,title,started_on,ended_on FROM hr.employments WHERE party_id=%s ORDER BY started_on DESC", (inp.party_id,))
-    moves = await ctx.all(
-        """SELECT a.id,t.name AS team,a.manager_party_id,a.valid_from,a.valid_to FROM hr.assignments a LEFT JOIN core.teams t ON t.id=a.team_id
-           WHERE a.party_id=%s ORDER BY a.valid_from DESC""",
-        (inp.party_id,),
-    )
+    moves = await ctx.all("SELECT id,manager_party_id,valid_from,valid_to FROM hr.assignments WHERE party_id=%s ORDER BY valid_from DESC", (inp.party_id,))
+    user = (await _logins(ctx, [inp.party_id])).get(str(inp.party_id))
+    teams = await ctx.all(
+        """SELECT t.name AS team, tt.is_lead, tt.is_home, tt.valid_from, tt.valid_to - 1 AS valid_to, tt.since_unknown
+           FROM core.team_terms tt JOIN core.teams t ON t.id = tt.team_id WHERE tt.user_id = %s ORDER BY tt.valid_from DESC, t.name""", (user,)) if user else []
+    for r in teams:
+        r["as"] = ("Trưởng đội" if r["is_lead"] else "Thành viên") + ("" if r["is_home"] else " (đội tham gia thêm)")
+        r["from_note"] = "Trước ngày này: chưa ghi" if r.pop("since_unknown") else ""
     names = await _names(ctx, list({inp.party_id} | {r["manager_party_id"] for r in moves if r["manager_party_id"]}))
     for r in moves:
         r["manager"] = names.get(str(r["manager_party_id"]), {}).get("name", "") if r["manager_party_id"] else ""
@@ -295,57 +318,19 @@ async def history(ctx: Ctx, inp: PartyRef) -> dict[str, Any]:
         [
             ui.b_table(ui.table(jobs, [ui.col("employee_code", "Mã NV"), ui.col("title", "Chức danh"), ui.col("started_on", "Từ ngày", "date"),
                                        ui.col("ended_on", "Đến ngày", "date")], title="Hồ sơ", empty="Chưa có hồ sơ")),
-            ui.b_table(ui.table(moves, [ui.col("team", "Đội"), ui.col("manager", "Quản lý trực tiếp"), ui.col("valid_from", "Từ ngày", "date"),
-                                        ui.col("valid_to", "Đến ngày", "date")], title="Phân công", empty="Chưa có phân công")),
+            ui.b_table(ui.table(teams, [ui.col("team", "Đội"), ui.col("as", "Vai trò trong đội"), ui.col("valid_from", "Từ ngày", "date"),
+                                        ui.col("valid_to", "Đến ngày", "date"), ui.col("from_note", "Ghi chú")], title="Đội",
+                                empty="Chưa thuộc đội nào — ghi ở Quản trị › Người dùng")),
+            ui.b_table(ui.table(moves, [ui.col("manager", "Quản lý trực tiếp"), ui.col("valid_from", "Từ ngày", "date"),
+                                        ui.col("valid_to", "Đến ngày", "date")], title="Quản lý trực tiếp", empty="Chưa ghi người quản lý")),
         ],
         icon="person.text.rectangle",
     )
 
 
-# ── Trưởng đội theo ngày + cơ cấu tại một ngày (0160) ──
+# ── Cơ cấu tại một ngày (0160; đội + trưởng đội ở lõi — 0256) ──
 
-class SetTeamHead(Input):
-    team_code: str = field("Đội", options_query="admin.team_options")
-    party_id: UUID | None = field("Trưởng đội", None, kind="select", options_query="parties.options", placeholder="Bỏ trống chức trưởng đội", help="Đội khuyết trưởng từ ngày này")
-    valid_from: Day | None = field("Từ ngày", None, example="01/11/2026", placeholder="Hôm nay", help="Trưởng trước đó tự đóng vào ngày liền trước")
-    reason: str = field("Lý do lùi ngày", "", max_length=300, help=f"Bắt buộc khi lùi quá {BACKDATE_DAYS} ngày so với hôm nay (ghi vào nhật ký)", group="Thêm chi tiết")
-
-
-@m.command("set_team_head", resource="hr", action="manage", title="Ghi trưởng đội từ ngày", agent="propose")
-async def set_team_head(ctx: Ctx, inp: SetTeamHead) -> dict[str, Any]:
-    """Lịch sử người đứng đầu đội (chỉ thêm và đóng). Không cấp quyền xem cây đội — quyền vẫn ở thành viên đội của tài khoản (kernel/teams.py)."""
-    if not ctx.p.has_scope("hr", "all"):
-        raise Denied("Cần phạm vi cả công ty")
-    team = await ctx.val("SELECT id FROM core.teams WHERE code=%s", (inp.team_code,))
-    if team is None:
-        raise NotFound(f"Không có đội {inp.team_code}")
-    if inp.party_id and str(inp.party_id) not in await _seen(ctx, [inp.party_id]):
-        raise NotFound("Không thấy cá nhân")
-    valid_from = inp.valid_from or today()
-    why = _backdate(valid_from, inp.reason)
-    await ctx.exec("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (f"hr:head:{ctx.p.tenant_id}:{team}",))
-    current = await ctx.one("SELECT id,party_id,valid_from FROM hr.team_heads WHERE team_id=%s AND valid_to IS NULL", (team,))
-    if current:
-        if valid_from <= current["valid_from"]:
-            raise Invalid(f"Đội đang có trưởng từ {current['valid_from']:%d/%m/%Y}: ngày mới phải sau ngày đó")
-        if current["party_id"] == inp.party_id:
-            raise Invalid("Người này đang là trưởng đội")
-        await ctx.exec("UPDATE hr.team_heads SET valid_to=%s, edited_by=core.me(), edited_at=now() WHERE id=%s", (valid_from - timedelta(days=1), current["id"]))
-    elif inp.party_id is None:
-        raise Invalid("Đội đang không có trưởng")
-    row = None
-    if inp.party_id:
-        # vai công ty của trưởng LÚC BỔ NHIỆM (memberships không có lịch sử vai): chụp theo nhiệm kỳ, mẫu chia "trưởng giữ vai X" đọc bản chụp này
-        head = await ctx.call_system("parties.resolve_for_payment", party_id=inp.party_id)
-        head_role = (await ctx.val("SELECT role FROM core.memberships WHERE user_id=%s AND active", (head["user_id"],))) if head["user_id"] else None
-        row = await ctx.val("""INSERT INTO hr.team_heads(team_id,party_id,valid_from,created_by,edited_by,backdate_reason,head_role)
-                               VALUES(%s,%s,%s,core.me(),core.me(),%s,%s) RETURNING id""", (team, inp.party_id, valid_from, why, head_role))
-    return {"team_head_id": row, "summary": f"{inp.team_code}: {'khuyết trưởng' if row is None else 'trưởng mới'} từ {valid_from:%d/%m/%Y}"}
-
-
-_HEAD_ON = """SELECT DISTINCT ON (team_id) team_id,party_id,head_role,coalesce(edited_by,created_by) AS editor,edited_at FROM hr.team_heads
-              WHERE team_id=ANY(%s) AND valid_from<=%s AND (valid_to IS NULL OR valid_to>=%s) ORDER BY team_id,valid_from DESC"""
-_ASSIGNMENT_ON = """SELECT team_id,manager_party_id,coalesce(edited_by,created_by) AS editor,edited_at FROM hr.assignments
+_ASSIGNMENT_ON = """SELECT manager_party_id,coalesce(edited_by,created_by) AS editor,edited_at FROM hr.assignments
                     WHERE party_id=%s AND valid_from<=%s AND (valid_to IS NULL OR valid_to>=%s) ORDER BY valid_from DESC LIMIT 1"""
 
 
@@ -355,11 +340,11 @@ async def org(ctx: Ctx, inp: StaffOn) -> dict[str, Any]:
     day: date = inp.on or today()
     rows = await ctx.all("""SELECT t.id,t.code,t.name,t.kind,p.code AS parent FROM core.teams t LEFT JOIN core.teams p ON p.id=t.parent_id
                             ORDER BY t.code LIMIT 2000""")
-    heads = {str(r["team_id"]): r["party_id"] for r in await ctx.all(_HEAD_ON, ([r["id"] for r in rows], day, day))} if rows else {}
-    names = await _names(ctx, list(set(heads.values())))
+    heads = {str(r["team_id"]): r["user_id"] for r in await ctx.all(_LEAD_ON, {"t": [r["id"] for r in rows], "d": day})} if rows else {}
+    names = {r["id"]: r["name"] for r in await ctx.all("SELECT id, name FROM core.users WHERE id = ANY(%s)", (list(set(heads.values())),))} if heads else {}
     for r in rows:
         h = heads.get(str(r["id"]))
-        r["head"] = names.get(str(h), {}).get("name", "") if h else ""
+        r["head"] = names.get(h, "") if h else ""
         r["vacant"] = "no" if h else "yes"
     return ui.table(rows, [ui.col("code", "Mã đội"), ui.col("name", "Đội"), ui.col("kind", "Loại"), ui.col("parent", "Thuộc"),
                            ui.col("head", "Trưởng đội"), ui.col("vacant", "Khuyết", "badge", labels={"yes": "Khuyết", "no": "—"}, tones={"yes": "orange"})],
@@ -391,9 +376,13 @@ class StructureOn(Input):
              "không do người dùng nêu]")
 async def structure_on(ctx: Ctx, inp: StructureOn) -> dict[str, Any]:
     first = await ctx.one(_ASSIGNMENT_ON, (inp.party_id, inp.on, inp.on))
-    team, source = (first["team_id"], "assignment") if first and first["team_id"] else (inp.team_id, "deal" if inp.team_id else "")
-    managers: list[str] = []
     facts: list[dict[str, Any]] = [first] if first else []   # mọi dòng cơ cấu đã dùng — người sửa chúng không tự xác nhận (review 11/11/2026)
+    user = (await _logins(ctx, [inp.party_id])).get(str(inp.party_id))
+    home = (await ctx.all(_HOME_ON, {"u": [user], "d": inp.on}) if user else [])
+    if home:
+        facts.append(home[0])
+    team, source = (home[0]["team_id"], "assignment") if home else (inp.team_id, "deal" if inp.team_id else "")
+    managers: list[str] = []
     seen, cur, row = {inp.party_id}, inp.party_id, first
     while row and row["manager_party_id"] and row["manager_party_id"] not in seen and len(managers) < inp.depth:
         cur = row["manager_party_id"]
@@ -404,20 +393,23 @@ async def structure_on(ctx: Ctx, inp: StructureOn) -> dict[str, Any]:
             facts.append(row)
     chain: list[dict[str, Any]] = []
     walked: set[UUID] = set()
-    while team and team not in walked and len(chain) < 20:   # cây đội HIỆN TẠI (core.teams chưa có lịch sử cấp cha — 0160 "còn mở")
+    while team and team not in walked and len(chain) < 20:   # cây đội TẠI NGÀY ĐÓ (nhật ký cấp cha — 0256)
         walked.add(team)
-        t = await ctx.one("SELECT id,code,name,kind,parent_id FROM core.teams WHERE id=%s", (team,))
+        t = await ctx.one("SELECT id,code,name,kind FROM core.teams WHERE id=%s", (team,))
         if t is None:
             break
         chain.append({"team_id": str(t["id"]), "code": t["code"], "name": t["name"], "kind": t["kind"], "head_party_id": None, "head_role": None})
-        team = t["parent_id"]
+        up = await ctx.one(_PARENT_ON, {"t": team, "d": inp.on})
+        if up:
+            facts.append(up)
+        team = up["parent_id"] if up else None
     if chain:
-        heads = {str(r["team_id"]): r for r in await ctx.all(_HEAD_ON, ([UUID(c["team_id"]) for c in chain], inp.on, inp.on))}
+        heads = {str(r["team_id"]): r for r in await ctx.all(_LEAD_ON, {"t": [UUID(c["team_id"]) for c in chain], "d": inp.on})}
         for c in chain:
             h = heads.get(c["team_id"])
-            c["head_party_id"] = str(h["party_id"]) if h else None
-            c["head_role"] = h["head_role"] if h else None   # vai công ty của trưởng lúc bổ nhiệm (chụp theo nhiệm kỳ); None = chưa ghi
-            if h:
+            if h:   # trưởng đội là tài khoản; bên gọi cần mã cá nhân trong danh mục (người hưởng)
+                c["head_party_id"] = str((await ctx.call_system("parties.ensure_member", user_id=h["user_id"]))["party_id"])
+                c["head_role"] = h["head_role"]   # vai công ty của trưởng lúc nhận chức (chụp trên dòng); None = chưa ghi
                 facts.append(h)
     stamped = [f for f in facts if f["editor"]]
     return {"team_id": chain[0]["team_id"] if chain else None, "team_source": source if chain else "", "managers": managers, "teams": chain,
@@ -604,12 +596,12 @@ m.screens(
             tint="blue",
             group="Nhân sự",
             min_scope="all",
-            actions=(A("hr.set_employment", style="primary"), A("hr.set_assignment"), A("hr.set_team_head")),
+            actions=(A("hr.set_employment", style="primary"), A("hr.set_assignment")),
             row_actions=(A("hr.end_employment", "Ghi ngày nghỉ", bind={"employment_id": "id"}, when={"open": ["yes"]}),),
             row_click="open", open=Open("hr.history", {"party_id": "party_id"}, "Lịch sử"),
         ),
         Screen("hr_org", "Cơ cấu đội theo ngày", "point.3.connected.trianglepath.dotted", "hr.org", group="Nhân sự", min_scope="all",
-               actions=(A("hr.set_team_head", style="primary"),)),
+               actions=(A("admin.set_team_lead", style="primary"),)),
     ),
     rank=25,
 )

@@ -257,7 +257,11 @@ async def create_tenant(name: str, domain: str, people: list[tuple[str, str, str
             r = await cur.fetchone()
             assert r is not None
             team_ids[code] = r["id"]
+        led: set[str] = set()   # một đội một trưởng tại một thời điểm (0256): danh sách mẫu khai hai trưởng cùng đội ⇒ người khai TRƯỚC giữ, người sau là thành viên
         for local, pname, role, team, lead in people:
+            lead = lead and team not in led
+            if lead:
+                led.add(team)
             cur = await c.execute(
                 "INSERT INTO core.users (email, name) VALUES (%s, %s) ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name RETURNING id",
                 (f"{local}@{domain}", pname))

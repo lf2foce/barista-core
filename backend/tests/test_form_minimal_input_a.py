@@ -42,7 +42,7 @@ def test_machine_made_codes_are_folded_and_optional() -> None:
 
 def test_dates_the_machine_can_guess_are_not_required() -> None:
     for name, key in (("acct.lock_period", "locked_through"), ("hr.set_employment", "started_on"), ("hr.set_assignment", "valid_from"),
-                      ("hr.set_team_head", "valid_from"), ("hr.end_employment", "ended_on")):
+                      ("admin.set_team_lead", "valid_from"), ("hr.end_employment", "ended_on")):
         spec = {f["key"]: f for f in forms.form_spec(registry.OPS[name])["fields"]}[key]
         assert not spec["required"] and spec["placeholder"], (name, key)
 
@@ -145,7 +145,8 @@ async def test_hr_defaults_code_and_dates(who: Who) -> None:
     again = await ok(admin, "hr.set_employment", party_id=party, title="Trưởng nhóm")        # không mã, không ngày: giữ mã cũ, bắt đầu hôm nay
     assert await owner_val("SELECT employee_code FROM hr.employments WHERE id = %s", (again["employment_id"],)) == code
     assert await owner_val("SELECT started_on FROM hr.employments WHERE id = %s", (again["employment_id"],)) == today()
-    await ok(admin, "hr.set_assignment", party_id=party, team_code="KD-A")                   # không ngày: hôm nay
+    boss = (await ok(admin, "parties.create", display_name=f"Quản lý thử {str(party)[:6]}", kind="person"))["party_id"]
+    await ok(admin, "hr.set_assignment", party_id=party, manager_party_id=boss)             # không ngày: hôm nay
     await ok(admin, "hr.end_employment", employment_id=again["employment_id"])               # không ngày nghỉ: hôm nay
     assert await owner_val("SELECT ended_on FROM hr.employments WHERE id = %s", (again["employment_id"],)) == today()
 

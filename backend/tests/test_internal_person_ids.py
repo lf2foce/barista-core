@@ -72,7 +72,6 @@ RESOLVED_FIRST = {
     ("acct", "recognize_recovery", "parties.resolve_for_payment"): "thao tác nội bộ họ settlement (gói ngành gọi): party_id lấy từ dòng quyền hưởng của gói gọi, gói đã kiểm bằng call_as trước khi ghi dòng đó",
     ("acct", "recognize_payable", "parties.resolve_for_payment"): "thao tác nội bộ họ settlement (gói ngành gọi): party_id do gói gọi dựng từ bộ phân bổ của nó, đã kiểm bằng call_as lúc đặt",
     ("acct", "prepare_payout", "parties.resolve_for_payment"): "thao tác nội bộ họ settlement (gói ngành gọi): party_id từ phiếu đã duyệt / bộ phân bổ của gói gọi",
-    ("hr", "set_team_head", "parties.resolve_for_payment"): "party_id đã qua call_as parties.names bằng quyền người ghi ngay trên (_seen); ở đây chỉ đọc user_id để chụp vai công ty lúc bổ nhiệm",
     ("leadflow", "assign", "crm.lead_cards"): "lead_id đã đọc trong hàng chờ bằng RLS của người gọi ở dòng trước",
     ("leadflow", "assign", "leadflow.give"): "như trên, người nhận đã lọc qua _lead_capable",
     ("pay", "set_rate", "parties.resolve_for_payment"): "party_id đã có trong ctx.call parties.options (quyền người đặt mức) ngay dòng trước; chỉ để chặn tự đặt mức cho mình",
@@ -157,7 +156,7 @@ async def _party(admin: Principal) -> uuid.UUID:
 async def test_work_assignment_only_names_people_the_caller_can_see(who: Who, blind: Principal) -> None:
     admin = await who("admin")
     pid = await _party(admin)
-    body = {"party_id": str(pid), "team_code": "KD-A", "valid_from": "2026-11-01", "reason": "Dữ liệu thử"}
+    body = {"party_id": str(pid), "manager_party_id": str(await _party(admin)), "valid_from": "2026-11-01", "reason": "Dữ liệu thử"}
     r = await executor.run(blind, "hr.set_assignment", body)
     assert r.status == "denied", (r.status, r.error)
     assert await owner_val("SELECT count(*) FROM hr.assignments WHERE party_id = %s", (pid,)) == 0

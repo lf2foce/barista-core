@@ -69,6 +69,9 @@ NEW_MAINTENANCE = NEW_MAINTENANCE | {"schedule/070_calendar.sql", "crm/069_appoi
 NEW_MAINTENANCE = NEW_MAINTENANCE | {"crm/083_customer_phone_e164.sql", "directory/082_phone_e164.sql"}
 # 084 (0204): chia lead theo kế hoạch chiến dịch — đổi khoá duy nhất của leadflow.rules / members ⇒ ON CONFLICT của bản cũ không khớp ⇒ DỪNG dịch vụ
 NEW_MAINTENANCE = NEW_MAINTENANCE | {"crm/084_campaign_plan_routing.sql"}
+# 112 / 068 (0256): một nguồn cho cơ cấu đội — ràng buộc "một đội một trưởng" trên core.team_members (bản cũ đặt trưởng thứ hai sẽ lỗi); hr bỏ bảng trưởng
+# đội + cột đội của phân công mà bản cũ còn đọc ⇒ DỪNG dịch vụ
+NEW_MAINTENANCE = NEW_MAINTENANCE | {"base/112_team_terms.sql", "hr/068_structure_to_core.sql"}
 NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | {"word/001_documents.sql", "word/002_chat.sql",   # 0251 lát 2: cột chat của văn bản (chỉ thêm, mặc định hằng) ⇒ không bảo trì
                # 0227: văn bản Word sửa trong app (schema mới, chỉ thêm) ⇒ không bảo trì
                                               "mgmt/001_snapshots.sql",   # 0213: bản chốt tháng của Báo cáo quản trị (bảng mới, chỉ thêm) ⇒ không bảo trì
@@ -1204,7 +1207,8 @@ async def test_0104_reclassifies_wallets_per_entity_without_replaying_cash_or_ex
                                "talk/041_attachment_file_ref.sql", "talk/042_attachments_file_required.sql",
                                "base/045_ledger_posted_on_period_locks.sql", "base/057_session_claims.sql",
                                "crm/083_customer_phone_e164.sql", "directory/082_phone_e164.sql", "crm/084_campaign_plan_routing.sql",
-                               "schedule/070_calendar.sql", "crm/069_appointments_on_calendar.sql"}   # 0158
+                               "schedule/070_calendar.sql", "crm/069_appointments_on_calendar.sql",   # 0158
+                                   "base/112_team_terms.sql", "hr/068_structure_to_core.sql"}   # 0256
         await migrate(URL)
         assert await migrate(URL) == []
         async with await AsyncConnection[dict[str, Any]].connect(URL, row_factory=dict_row) as c:
@@ -1494,5 +1498,79 @@ async def test_finance_077_stops_when_the_sources_disagree() -> None:
             await _077_company(c, uuid.uuid4(), {"lech": ("revenue", 90, 90, 0, "open", 100, 0)})
         with pytest.raises(Exception, match="TTCU0000"):
             await migrate(URL)
+    finally:
+        await reset_schemas(URL)
+
+
+async def test_0256_hr_structure_history_becomes_joined_spans_in_core_with_who_edited() -> None:
+    """0256 — hr/068 trên dữ liệu đã có: lịch sử "thành viên" (phân công đội) và "trưởng đội" của Hồ sơ làm việc BỔ SUNG cho nhau ⇒ ghép thành các đoạn nối
+    nhau ở ``core.team_terms`` (thành viên → trưởng → thành viên), mang theo người sửa / lúc sửa của dòng nguồn; dòng đang mở của lõi lấy ngày bắt đầu thật
+    khi hai bên khớp; lệch ⇒ giữ bên lõi + ghi chú; người không tài khoản ⇒ ghi chú. Lõi chạy hết trước gói Nhân sự nên base/112 đã có khi dựng dữ liệu cũ:
+    dòng đang mở do trigger tạo được đánh dấu "không rõ từ khi nào" đúng như phần điền lần đầu của base/112 trên bản cài thật."""
+    from datetime import UTC, date, datetime, timedelta
+
+    await _db()
+    try:
+        await migrate(URL, until="hr/067_credentials.sql")
+        tid, t1, t2, editor = (uuid.uuid4() for _ in range(4))
+        ua, ub, uc = (uuid.uuid4() for _ in range(3))
+        pa, pb, pc, pd, boss = (uuid.uuid4() for _ in range(5))
+        today = date.today()
+
+        def d(n: int) -> date:
+            return today - timedelta(days=n)
+        closed_at = datetime(2026, 5, 2, 3, 0, tzinfo=UTC)
+        async with await AsyncConnection.connect(URL, autocommit=True) as c:
+            await c.execute("INSERT INTO core.tenants (id, name) VALUES (%s, 'Công ty cơ cấu cũ')", (tid,))
+            for u, n in ((ua, "a"), (ub, "b"), (uc, "c"), (editor, "e")):
+                await c.execute("INSERT INTO core.users (id, email, name) VALUES (%s, %s, 'Người giả')", (u, f"cocau0256{n}@example.test"))
+            await c.execute("INSERT INTO core.teams (id, tenant_id, code, name, kind) VALUES (%s, %s, 'T1', 'Đội 1', 'sales'), (%s, %s, 'T2', 'Đội 2', 'sales')",
+                            (t1, tid, t2, tid))
+            await c.execute("""INSERT INTO core.team_members (tenant_id, user_id, team_id, is_lead, is_home) VALUES
+                               (%s, %s, %s, false, true), (%s, %s, %s, true, true), (%s, %s, %s, false, true)""",
+                            (tid, ua, t1, tid, ub, t1, tid, uc, t1))
+            await c.execute("UPDATE core.team_terms SET since_unknown = true WHERE tenant_id = %s", (tid,))   # như phần điền lần đầu của base/112
+            for p, u in ((pa, ua), (pb, ub), (pc, uc), (pd, None), (boss, None)):
+                await c.execute("INSERT INTO parties.parties (id, tenant_id, kind, display_name, user_id) VALUES (%s, %s, 'person', 'Người giả', %s)", (p, tid, u))
+            add_m = """INSERT INTO hr.assignments (tenant_id, party_id, team_id, manager_party_id, valid_from, valid_to, created_by, edited_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, '2026-01-05T03:00:00Z')"""
+            add_l = """INSERT INTO hr.team_heads (tenant_id, team_id, party_id, valid_from, valid_to, created_by, edited_by, edited_at, head_role)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+            # A: thành viên đội 1 từ 300 ngày trước tới nay; làm trưởng đội 1 từ ngày -200 tới hết ngày -150 (người đóng: editor)
+            await c.execute(add_m, (tid, pa, t1, boss, d(300), None, ua))
+            await c.execute(add_l, (tid, t1, pa, d(200), d(150), ua, editor, closed_at, "sales_lead"))
+            # B: thành viên từ -400, trưởng đương nhiệm từ -100
+            await c.execute(add_m, (tid, pb, t1, None, d(400), None, editor))
+            await c.execute(add_l, (tid, t1, pb, d(100), None, editor, None, closed_at, "sales_lead"))
+            # C: từng ở đội 1 (-500…-450), Hồ sơ làm việc ghi đang ở đội 2 nhưng Quản trị ghi đội 1 ⇒ lệch
+            await c.execute(add_m, (tid, pc, t1, None, d(500), d(450), editor))
+            await c.execute(add_m, (tid, pc, t2, boss, d(449), None, editor))
+            # D: không có tài khoản
+            await c.execute(add_m, (tid, pd, t1, boss, d(50), None, editor))
+        ran = await migrate(URL)
+        assert "hr/068_structure_to_core.sql" in ran
+        async with await AsyncConnection.connect(URL, autocommit=True) as c:
+            async def rows(sql: Any, *p: Any) -> list[Any]:
+                return await (await c.execute(sql, p)).fetchall()
+            spans = "SELECT is_lead, is_home, valid_from, valid_to, since_unknown FROM core.team_terms WHERE tenant_id = %s AND user_id = %s ORDER BY valid_from"
+            assert await rows(spans, tid, ua) == [(False, True, d(300), d(200), False), (True, True, d(200), d(149), False), (False, True, d(149), None, False)]
+            assert await rows(spans, tid, ub) == [(False, True, d(400), d(100), False), (True, True, d(100), None, False)]
+            # dấu người sửa đi theo (hai nguồn cùng phủ một đoạn ⇒ lần sửa SAU CÙNG): nhiệm kỳ trưởng của A do editor đóng lúc closed_at; đoạn thành viên giữ người tạo phân công
+            assert await rows("SELECT edited_by, edited_at, head_role FROM core.team_terms WHERE tenant_id = %s AND user_id = %s AND is_lead", tid, ua) == [
+                (editor, closed_at, "sales_lead")]
+            assert {r[0] for r in await rows("SELECT edited_by FROM core.team_terms WHERE tenant_id = %s AND user_id = %s AND NOT is_lead", tid, ua)} == {ua}
+            assert await rows("SELECT edited_by, head_role FROM core.team_terms WHERE tenant_id = %s AND user_id = %s AND is_lead", tid, ub) == [(editor, "sales_lead")]
+            # C: lịch sử đã đóng ở đội 1 vào lõi; hiện tại giữ theo Quản trị (đội 1, không rõ từ khi nào), không có dòng đội 2; có ghi chú
+            got = await rows("SELECT team_id, valid_from, valid_to, since_unknown FROM core.team_terms WHERE tenant_id = %s AND user_id = %s ORDER BY valid_from", tid, uc)
+            assert [(r[0], r[1], r[2] is None, r[3]) for r in got] == [(t1, d(500), False, False), (t1, got[1][1], True, True)]
+            assert got[0][2] == d(449)
+            notes = [r[0] for r in await rows("SELECT note FROM core.team_terms_migration_notes WHERE tenant_id = %s", tid)]
+            assert len(notes) == 2 and any("ghi khác nhau" in n for n in notes) and any("không có tài khoản" in n for n in notes)
+            # bên Nhân sự: chỉ còn dòng có người quản lý trực tiếp; bảng trưởng đội và cột đội đã bỏ
+            assert sorted(r[0] for r in await rows("SELECT party_id FROM hr.assignments WHERE tenant_id = %s", tid)) == sorted([pa, pc, pd])
+            assert await rows("SELECT to_regclass('hr.team_heads')") == [(None,)]
+            # quyền hiện tại không đổi
+            assert sorted(await rows("SELECT user_id, is_lead FROM core.team_members WHERE tenant_id = %s", tid)) == sorted([(ua, False), (ub, True), (uc, False)])
+        assert await pending_plan(URL) == {"pending": [], "maintenance": []}
     finally:
         await reset_schemas(URL)
