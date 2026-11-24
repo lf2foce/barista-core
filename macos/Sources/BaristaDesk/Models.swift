@@ -77,13 +77,17 @@ struct Manifest: Decodable {
     var pins: [Pin]?  // màn ghim: của chính người đó trước, rồi theo vai (server quyết)
     /// Màn VIỆC chỉ ở bàn việc (0094) — vẫn mở được (lời chào trợ lý, thông báo, ⌘K), không lặp ở menu.
     var desk: [ScreenSpec]? = nil
+    /// Thanh bên theo vai (ADR 0255): khoá phân hệ hiện sẵn theo vai + phân hệ người xem ghim. Không có ⇒ vẽ hết phân hệ như trước (``RailLayout``).
+    struct Rail: Decodable { var role: [String]; var pinned: [String] }
+    var rail: Rail? = nil
 
-    /// Bản cho iPhone: bỏ phân hệ server khai không hợp màn nhỏ (``phone: false`` — vd App của tôi, 0098) và màn ghim thuộc chúng.
+    /// Bản cho iPhone: bỏ phân hệ server khai không hợp màn nhỏ (``phone: false`` — vd App của tôi, 0098) và màn ghim / mục thanh bên thuộc chúng.
     func forPhone() -> Manifest {
         var m = self
         let off = Set(workspaces.filter { $0.phone == false }.map(\.key))
         m.workspaces = workspaces.filter { !off.contains($0.key) }
         m.pins = pins?.filter { !off.contains($0.workspace) }
+        m.rail = rail.map { Rail(role: $0.role.filter { !off.contains($0) }, pinned: $0.pinned.filter { !off.contains($0) }) }
         return m
     }
 }
@@ -123,6 +127,8 @@ struct Workspace: Decodable, Identifiable {
     let screens: [ScreenSpec]
     /// false ⇒ không hiện trên iPhone (server quyết theo phân hệ — màn quá rộng cho màn nhỏ).
     var phone: Bool? = nil
+    /// Người xem tự ghim CẢ phân hệ này lên thanh bên (ADR 0255) — kể cả khi nó đã ở nhóm "Theo vai".
+    var pinned: Bool? = nil
     var id: String { key }
 }
 

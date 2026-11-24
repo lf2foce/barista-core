@@ -103,10 +103,7 @@ final class Desk {
     @ObservationIgnored var lastNoticeId = 0
     @ObservationIgnored var pushToken: String?
 
-    /// Mọi màn ghim theo phân hệ (menu "Tất cả màn") và vài màn mở nhanh trên đầu khung làm việc.
-    var allScreens: [(title: String, icon: String, screens: [ScreenSpec])] {
-        (manifest?.workspaces ?? []).map { ($0.title, $0.icon, $0.screens) }
-    }
+    /// Vài màn mở nhanh trên đầu khung làm việc (menu "Tất cả màn" của iPhone xếp theo ``rail``).
     var quickScreens: [ScreenSpec] {
         let spaces = manifest?.workspaces ?? []
         if let pins = manifest?.pins, !pins.isEmpty {
@@ -138,13 +135,32 @@ final class Desk {
         (manifest?.workspaces.flatMap(\.screens) ?? []).first { $0.query == query } ?? manifest?.desk?.first { $0.query == query }
     }
 
+    /// Thanh bên theo vai (ADR 0255) ráp từ manifest — Mac vẽ thanh bên trái, iPhone xếp menu "Tất cả màn" theo nó.
+    var rail: RailLayout { RailLayout(manifest) }
+
+    /// Ghim / bỏ ghim CẢ phân hệ lên thanh bên của chính mình (``core.pin`` / ``core.unpin`` với khoá phân hệ), rồi đọc lại manifest để thanh bên đổi theo.
+    func togglePin(_ item: RailLayout.Item) async {
+        do {
+            let r = try await api.command(item.pinned ? "core.unpin" : "core.pin", ["workspace": .string(item.ws.key)], key: UUID().uuidString)
+            guard r.status == "ok" else { show(r.error.isEmpty ? "Không ghim được" : r.error, isError: true); return }
+            try await reloadManifest()
+            show(item.pinned ? "Đã bỏ ghim \(item.ws.title)" : "Đã ghim \(item.ws.title) lên thanh bên")
+        } catch {
+            show(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func reloadManifest() async throws {
+        #if os(iOS)
+        manifest = try await api.manifest().forPhone()
+        #else
+        manifest = try await api.manifest()
+        #endif
+    }
+
     func load() async {
         do {
-            #if os(iOS)
-            manifest = try await api.manifest().forPhone()
-            #else
-            manifest = try await api.manifest()
-            #endif
+            try await reloadManifest()
             loadError = nil
         } catch let e as APIError where e.status == 403 && api.token == nil {
             switchPersona()   // dev: vai đã lưu không còn là thành viên công ty (vừa nạp lại DB) ⇒ về màn chọn vai, không kẹt ở màn lỗi

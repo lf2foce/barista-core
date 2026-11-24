@@ -32,7 +32,8 @@ private struct RailSymbol: View {
 
 extension Desk {
     /// Mục trên thanh theo thứ tự hiện (⌘1 … ⌘9).
-    var railSections: [RailSection] { [.assistant, .desk, .messages] + (manifest?.workspaces ?? []).map { .workspace($0.key) } }
+    /// Có thanh bên theo vai (ADR 0255) ⇒ chỉ phân hệ "Theo vai" + "Đã ghim" có phím tắt; phần còn lại mở từ "Tất cả mục" / ⌘K.
+    var railSections: [RailSection] { [.assistant, .desk, .messages] + rail.onRail.map { .workspace($0.key) } }
 
     func select(_ s: RailSection) {
         withAnimation(.snappy(duration: 0.2)) {
@@ -140,17 +141,36 @@ struct Rail: View {
                 RailSymbol(name: "bubble.left.and.bubble.right", selected: desk.railSelected == .messages)
             } action: { desk.select(.messages) }
             Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 36, height: 1).padding(.vertical, 4)
-            ScrollView(.vertical, showsIndicators: false) {
+            let layout = desk.rail
+            let shortcut = layout.onRail.map(\.key)
+            ScrollViewReader { proxy in ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 6) {
-                    ForEach(Array((desk.manifest?.workspaces ?? []).enumerated()), id: \.element.key) { i, w in
-                        RailButton(title: w.title, selected: desk.railSelected == .workspace(w.key),
-                                   help: "\(w.title) — \(w.screens.count) màn" + (i < 6 ? " (⌘\(i + 4))" : "")) {
-                            RailSymbol(name: w.icon, selected: desk.railSelected == .workspace(w.key))
-                        } action: { desk.select(.workspace(w.key)) }
+                    if layout.grouped {
+                        // ADR 0255: không vẽ hết — "Theo vai" (gói / công ty khai) + "Đã ghim" (người xem ghim) + phân hệ đang mở nếu nó không ở nhóm nào
+                        RailGroupLabel(text: "Theo vai")
+                        ForEach(layout.role) { w in workspaceButton(w, shortcut: shortcut) }
+                        if !layout.pinned.isEmpty {
+                            RailGroupLabel(text: "Đã ghim")
+                            ForEach(layout.pinned) { w in workspaceButton(w, shortcut: shortcut) }
+                        }
+                        if case .workspace(let key) = desk.railSelected, let here = layout.current(key) {
+                            RailGroupLabel(text: "Đang mở")
+                            workspaceButton(here, shortcut: shortcut)
+                        }
+                    } else {
+                        ForEach(layout.all) { i in workspaceButton(i.ws, shortcut: shortcut) }
                     }
                 }
             }
+            // mục đang chọn luôn trong tầm mắt (nhiều phân hệ / cửa sổ thấp ⇒ thanh cuộn) — như web
+            .onChange(of: desk.railSelected, initial: true) { _, s in
+                if case .workspace(let key) = s { withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(key) } }
+            } }
             Spacer(minLength: 8)
+            if layout.grouped {
+                Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 36, height: 1).padding(.vertical, 2)
+                AllItemsButton(layout: layout)   // ngoài vùng cuộn: luôn thấy, ngay trên người dùng
+            }
             PersonaMenu()
         }
         .padding(.top, titlebarInset + 6)
@@ -158,6 +178,111 @@ struct Rail: View {
         .frame(width: 80)
         .frame(maxHeight: .infinity)
         .background(SidebarMaterial())
+    }
+
+    private func workspaceButton(_ w: Workspace, shortcut: [String]) -> some View {
+        let on = desk.railSelected == .workspace(w.key)
+        let i = shortcut.firstIndex(of: w.key)
+        return RailButton(title: w.title, selected: on, help: "\(w.title) — \(w.screens.count) màn" + (i.map { $0 < 6 ? " (⌘\($0 + 4))" : "" } ?? "")) {
+            RailSymbol(name: w.icon, selected: on)
+        } action: { desk.select(.workspace(w.key)) }
+        .id(w.key)
+    }
+}
+
+/// Tên nhóm trên thanh bên (vạch ngăn + chữ nhỏ) — "Theo vai", "Đã ghim", "Đang mở".
+private struct RailGroupLabel: View {
+    let text: String
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 36, height: 1)
+            Text(text).font(.t12).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .padding(.top, 2)
+    }
+}
+
+/// Nút "Tất cả mục": khung nổi liệt kê MỌI phân hệ người này thấy — bấm tên ⇒ mở, bấm ghim ⇒ ghim / bỏ ghim cả phân hệ lên thanh bên của chính mình.
+/// Ô tìm là ⌘K sẵn có. Cùng nội dung với panel của web (`web/src/components/desk/rail.tsx`).
+private struct AllItemsButton: View {
+    @Environment(Desk.self) private var desk
+    let layout: RailLayout
+    @State private var open = false
+
+    var body: some View {
+        RailButton(title: "Tất cả mục", selected: open, help: "Mọi phân hệ bạn được dùng — ghim cái hay dùng lên thanh bên") {
+            RailSymbol(name: "square.grid.2x2", selected: open)
+        } action: { open.toggle() }
+        .popover(isPresented: $open, arrowEdge: .trailing) {
+            AllItemsList(layout: layout, close: { open = false })
+        }
+    }
+}
+
+private struct AllItemsList: View {
+    @Environment(Desk.self) private var desk
+    let layout: RailLayout
+    let close: () -> Void
+    @State private var busy: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button { close(); withAnimation(.snappy(duration: 0.2)) { desk.showSearch = true } } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                    Text("Tìm màn, khách, giao dịch…").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("⌘K").font(.t12)
+                }
+                .font(.t14).foregroundStyle(.secondary)
+                .padding(.horizontal, 10).frame(height: 32)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Text("Tất cả mục · \(layout.all.count)").font(.t12m).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.top, 8)
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(layout.all) { i in row(i) }
+                }
+            }
+            .frame(maxHeight: 460)
+        }
+        .padding(8)
+        .frame(width: 320)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func row(_ i: RailLayout.Item) -> some View {
+        HStack(spacing: 2) {
+            Button { close(); desk.select(.workspace(i.ws.key)) } label: {
+                HStack(spacing: 10) {
+                    IconTile(symbol: i.ws.icon, tint: .secondary, size: 28)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(i.ws.title).font(.t14).lineLimit(1)
+                        Text(RailLayout.subtitle(i)).font(.t12).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button {
+                busy = i.ws.key
+                Task { await desk.togglePin(i); busy = nil }
+            } label: {
+                Image(systemName: i.pinned ? "pin.fill" : "pin")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(i.pinned ? Color.accent : Color.secondary)
+                    .frame(width: 30, height: 30).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(busy == i.ws.key)
+            .help(i.pinned ? "Bỏ ghim khỏi thanh bên" : "Ghim lên thanh bên")
+            .accessibilityLabel("\(i.pinned ? "Bỏ ghim" : "Ghim") \(i.ws.title)")
+        }
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(desk.railSelected == .workspace(i.ws.key) ? Color.accent.opacity(0.12) : .clear))
     }
 }
 

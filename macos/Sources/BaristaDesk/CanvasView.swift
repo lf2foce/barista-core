@@ -138,11 +138,23 @@ private struct CanvasHeader: View {
                 if let inbox = desk.manifest?.inbox {
                     Button { desk.open(.screen(inbox), show: true) } label: { Label("Phiếu duyệt", systemImage: "checkmark.seal") }
                 }
-                ForEach(desk.allScreens, id: \.title) { w in
-                    Section(w.title) {
-                        ForEach(w.screens) { s in
-                            Button { withAnimation(.snappy) { desk.open(.screen(s), show: true) } } label: {
-                                Label(s.group.isEmpty ? s.title : "\(s.title) (\(s.group.lowercased()))", systemImage: s.icon)
+                // ADR 0255 (iPhone không có thanh bên): phân hệ "Theo vai" + "Đã ghim" mở sẵn từng màn; mọi phân hệ khác gấp trong "Tất cả mục",
+                // mỗi phân hệ một menu con có nút ghim / bỏ ghim. Vai không có mặc định ⇒ liệt kê hết như trước.
+                let layout = desk.rail
+                ForEach(layout.onRail) { w in
+                    Section(w.title) { screenButtons(w.screens) }
+                }
+                if layout.grouped {
+                    Section("Tất cả mục") {
+                        ForEach(layout.all) { i in
+                            Menu {
+                                screenButtons(i.ws.screens)
+                                Divider()
+                                Button { Task { await desk.togglePin(i) } } label: {
+                                    Label(i.pinned ? "Bỏ ghim phân hệ" : "Ghim lên đầu menu", systemImage: i.pinned ? "pin.slash" : "pin")
+                                }
+                            } label: {
+                                Label(i.ws.title, systemImage: i.pinned ? "pin.fill" : SymbolMap.name(i.ws.icon))
                             }
                         }
                     }
@@ -159,6 +171,16 @@ private struct CanvasHeader: View {
         }
         .fixedSize()
     }
+
+    #if os(iOS)
+    @ViewBuilder private func screenButtons(_ screens: [ScreenSpec]) -> some View {
+        ForEach(screens) { s in
+            Button { withAnimation(.snappy) { desk.open(.screen(s), show: true) } } label: {
+                Label(s.group.isEmpty ? s.title : "\(s.title) (\(s.group.lowercased()))", systemImage: s.icon)
+            }
+        }
+    }
+    #endif
 }
 
 /// Thẻ lớn: mặt trắng bo 20, viền mảnh, không đổ bóng; đầu thẻ = ô biểu tượng tô màu + tên + nút đóng (như Barista Desk).
