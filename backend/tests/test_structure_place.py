@@ -78,3 +78,18 @@ async def test_two_tops_are_listed_for_a_person_to_choose_never_picked(who: Who)
     row = await _row(admin, unit)
     assert row["suggest_email"] == "" and row["suggest"].startswith("Cần chọn: ") and "(2)" in row["suggest"] and "(1)" in row["suggest"]
     assert row["people"] == 5 and row["vacant"] == "yes"
+
+
+async def test_a_row_that_names_the_unit_head_sets_the_lead_through_the_lead_command(who: Who) -> None:
+    """Nguồn đã ghi rõ ai đứng đầu đơn vị (danh sách nhân sự, sơ đồ) ⇒ dòng mang cờ trưởng; đặt trưởng vẫn là đổi quyền: đi đúng đường duyệt của lệnh ghi trưởng."""
+    admin, t = await who("admin"), _tag()
+    head, member = await fresh_sale(who), await fresh_sale(who)
+    unit = f"Chi nhánh Huế {t} / Phòng KD 1 {t}"
+    await approved(admin, "hr.place", email=head.email, unit=unit, lead=True)
+    await ok(admin, "hr.place", email=member.email, unit=unit, manager=head.email)
+    row = await _row(admin, f"Phòng KD 1 {t}")
+    assert row["vacant"] == "no" and row["people"] == 2 and row["level"] == 2
+    assert await owner_val("""SELECT tm.user_id FROM core.team_members tm JOIN core.teams tt ON tt.id = tm.team_id WHERE tt.name = %s AND tm.is_lead""",
+                           (f"Phòng KD 1 {t}",)) == head.user_id
+    again = await ok(admin, "hr.place", email=head.email, unit=unit, lead=True)        # đã là trưởng: chạy lại không xin duyệt lần nữa, không đổi gì
+    assert again["lead_set"] is False and again["moved"] is False

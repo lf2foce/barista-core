@@ -233,6 +233,7 @@ class Place(Input):
     unit: str = field("Đơn vị", "", max_length=300, example="Miền Bắc / Khối 1 / Team A", placeholder="Không đổi",
                       help="Tên đơn vị, hoặc đường dẫn từ trên xuống cách nhau bằng dấu / — công ty chỉ có đội thì ghi mỗi tên đội. Đơn vị chưa có sẽ được tạo")
     manager: str = field("Quản lý trực tiếp", "", max_length=200, example="dung@congty.vn", placeholder="Không đổi", help="Email hoặc họ tên")
+    lead: bool = field("Trưởng đơn vị", False, help="Đánh dấu khi nguồn đã ghi rõ người này đứng đầu đơn vị ở trên — trưởng trước đó (nếu có) thôi từ hôm nay")
 
 
 def _fold(text: str) -> str:
@@ -280,18 +281,27 @@ async def _unit_by_path(ctx: Ctx, path: str) -> tuple[str, list[str]]:
            reversible="Chạy lại lệnh với đơn vị và người quản lý cũ")
 async def place(ctx: Ctx, inp: Place) -> dict[str, Any]:
     """MỘT dòng = một người: đơn vị (tên hoặc đường dẫn, tạo nếu chưa có) + người quản lý trực tiếp. Chỉ gọi các lệnh đang có (thêm đội, đổi đội chính, ghi
-    quản lý) ⇒ quyền, lịch sử theo ngày, phiếu duyệt giữ nguyên một cửa. KHÔNG đặt trưởng: trưởng là quyền, ghi ở "Ghi trưởng đội" (0256, 0257)."""
+    quản lý, ghi trưởng đội) ⇒ quyền, lịch sử theo ngày, phiếu duyệt giữ nguyên một cửa. Trưởng CHỈ đặt khi dòng nói rõ (``lead``) — máy không suy ra trưởng
+    (0256, 0257); đặt trưởng là đổi quyền nên đi đúng đường duyệt của "Ghi trưởng đội"."""
     who = await ctx.one("""SELECT u.id, u.email, u.name FROM core.users u JOIN core.memberships mb ON mb.user_id = u.id
                            WHERE lower(u.email) = %s""", (inp.email.strip().lower(),))
     if who is None:
         raise NotFound(f"Không có thành viên {inp.email}")
-    out: dict[str, Any] = {"email": who["email"], "unit": "", "units_created": [], "moved": False, "manager_set": False}
+    out: dict[str, Any] = {"email": who["email"], "unit": "", "units_created": [], "moved": False, "manager_set": False, "lead_set": False}
     if inp.unit.strip():
         code, made = await _unit_by_path(ctx, inp.unit)
         home = await ctx.val("""SELECT t.code FROM core.team_members tm JOIN core.teams t ON t.id = tm.team_id WHERE tm.user_id = %s AND tm.is_home""", (who["id"],))
         if home != code:
             await ctx.call("admin.update_member", email=who["email"], team_code=code)
         out.update(unit=code, units_created=made, moved=home != code)
+    if inp.lead:
+        home = await ctx.one("""SELECT t.code, tm.is_lead FROM core.team_members tm JOIN core.teams t ON t.id = tm.team_id
+                                WHERE tm.user_id = %s AND tm.is_home""", (who["id"],))
+        if home is None:
+            raise Invalid("Cần đơn vị trước khi đặt trưởng đơn vị")
+        if not home["is_lead"]:
+            await ctx.call("admin.set_team_lead", team_code=home["code"], email=who["email"])
+            out["lead_set"] = True
     if inp.manager.strip():
         key = inp.manager.strip()
         hits = await ctx.all("""SELECT u.id FROM core.users u JOIN core.memberships mb ON mb.user_id = u.id
