@@ -17,12 +17,12 @@ async def test_manifest_is_filtered_by_role(who: Who) -> None:
             m = (await c.get("/v1/manifest", headers=_h(await who(local)))).json()
             spaces[local] = {w["key"]: [s["key"] for s in w["screens"]] for w in m["workspaces"]}
             orders[local] = next((s for w in m["workspaces"] for s in w["screens"] if s["key"] == "orders"), None)
-    # việc của chính mình ở BÀN VIỆC (0094), không thành phân hệ riêng; "App của tôi" (0098) ai cũng có; vai bán hàng có sẵn quyền Lịch (0158)
-    assert set(spaces["sale1"]) == {"sales", "kpi", "docs", "work", "apps", "schedule", "hr"}   # KPI có phân hệ riêng (0124)
+    # việc của chính mình ở BÀN VIỆC (0094), không thành phân hệ riêng; "App của tôi" (0098) và "Kết nối & kỹ năng" (0261) ai cũng có; vai bán hàng có sẵn quyền Lịch (0158)
+    assert set(spaces["sale1"]) == {"sales", "kpi", "docs", "work", "apps", "schedule", "hr", "plugins"}   # KPI có phân hệ riêng (0124)
     assert spaces["sale1"]["hr"] == ["hr_my_credentials"]   # chứng chỉ của chính mình (0202) — không màn của đội / cả công ty
     assert set(spaces["sale1"]["schedule"]) == {"schedule_week"}   # không có công cụ tìm / thiết lập (cần quyền đặt lịch / quản lý)
     assert spaces["sale1"]["sales"] == ["leads", "orders"]                                # màn của gói góp vào phân hệ Kinh doanh
-    assert set(spaces["mkt"]) == {"marketing", "docs", "work", "apps", "schedule"}   # không quyền với tài nguyên của gói ⇒ không có màn của gói; Lịch của mình (0240)
+    assert set(spaces["mkt"]) == {"marketing", "docs", "work", "apps", "schedule", "plugins"}   # không quyền với tài nguyên của gói ⇒ không có màn của gói; Lịch của mình (0240)
     assert "accounting" in spaces["ketoan"] and spaces["ketoan"]["sales"] == ["orders"]   # kế toán đọc đơn cả công ty, không đọc khách
     assert spaces["ketoan"].get("admin") == ["hr_staff", "hr_org"]                        # không thấy màn hệ thống
     assert {"users", "permissions", "chains", "leads_entry"} <= set(spaces["admin"]["admin"]) and "orders" in spaces["admin"]["sales"]
