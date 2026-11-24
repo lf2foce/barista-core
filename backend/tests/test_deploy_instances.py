@@ -435,6 +435,16 @@ def test_every_instance_web_router_sits_behind_the_password_gate():
         assert labels[f"traefik.http.middlewares.{name}-gate.basicauth.users"].startswith("${BARISTA_BASIC_AUTH"), name
 
 
+def test_only_a_public_demo_opens_dev_login_to_apps_without_the_demo_key():
+    """``"gate": false`` của bản demo = demo CÔNG KHAI (toàn dữ liệu giả) ⇒ lõi nhận đăng nhập dev không cần X-Demo-Key — app iPhone gọi thẳng API cũng thấy
+    trang chọn vai như web. Bản có cổng (dữ liệu thật) và production KHÔNG bật; production có ``gate: false`` vẫn không (lõi còn chặn khởi động)."""
+    inst = ops.load_instance("demo", FIXTURES)
+    api = lambda i: json.loads(ops.render((REPO / "deploy/stack.json").read_text(), i, json_text=True))["services"]["api"]["environment"]  # noqa: E731
+    assert api({**inst, "env": "demo", "gate": False})["BARISTA_DEMO_OPEN"] == "true"
+    assert "BARISTA_DEMO_OPEN" not in api({**inst, "env": "demo"})
+    assert "BARISTA_DEMO_OPEN" not in api({**inst, "env": "production", "gate": False, "api_env": {"BARISTA_GOOGLE_WEB_CLIENT_ID": "x.apps"}})
+
+
 async def test_pack_samples_choose_their_profiles_finish_last_and_add_companies(monkeypatch, tmp_path, capsys):
     """Phần mẫu của gói ngoài lõi (``barista.seed_samples``, 0155 đợt ba) — lõi không biết tên gói: ``PROFILES`` chọn biến thể công ty mẫu gói tự bật
     (không khai = chỉ công ty đủ gói của bộ test; ``()`` = không ở đâu), ``finish`` chạy ở bước cuối chỉ khi công ty bật gói, ``COMPANIES`` góp công ty

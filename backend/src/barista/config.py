@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     dev_auth: bool = False
     # Bản demo trên VPS (dữ liệu giả): đăng nhập dev từ máy khác chỉ khi gửi đúng header X-Demo-Key. Trống ⇒ dev chỉ nhận từ máy chạy core.
     demo_key: str = ""
+    # DEMO CÔNG KHAI (bản cài khai ``"gate": false`` — ADR 0194 bổ sung 17/11/2026: ai có link cũng chọn vai, kể cả quản trị ⇒ chỉ bản cài TOÀN dữ liệu giả):
+    # đăng nhập dev nhận cả khi không có X-Demo-Key — app iPhone / Mac gọi thẳng API (không qua BFF giữ khoá) cũng thấy trang chọn vai như web. deploy.py
+    # đặt theo file bản cài, không đặt tay; production từ chối khởi động khi bật (barista/production.py).
+    demo_open: bool = False
     demo_company: str = ""   # tên công ty của bản cài demo (seed) — trống = "Sàn mẫu (dữ liệu giả)"; bản cài cho khách đặt tên khách
     # Gói MẶC ĐỊNH của bản cài (vd "crm,finance,marketing,talk"), cách nhau dấu phẩy — trống = mọi gói đều mặc định (máy dev). Mọi công
     # ty có quyền bật các gói này; gói khác vẫn bày ở chợ gói ("Liên hệ để mở"), nhà cung cấp cấp quyền khi khách trả tiền (python -m barista.entitle).

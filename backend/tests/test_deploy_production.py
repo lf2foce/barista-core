@@ -57,7 +57,7 @@ def test_demo_instances_render_exactly_as_before():
     """Mọi bản cài không khai production (bản cài mẫu của bộ test + bản cài thật ở barista-ops — có thì kiểm cả) + bản mẫu tổng hợp: stack.json y hệt render cũ.
     Khác biệt có chủ đích (1) 13/11/2026: bản cài có api_env nhận địa chỉ công khai theo host (BARISTA_PUBLIC_API_URL / BARISTA_WEB_URL — trước
     chỉ production có, bản demo thì lõi tưởng mình ở localhost:8300: OAuth / MCP issuer sai); api_env vẫn đè được. (2) 17/11/2026: ``"gate": false`` bỏ cổng
-    mật khẩu (so JSON đã gỡ nhãn cổng). Không api_env và còn cổng ⇒ chữ y hệt."""
+    mật khẩu (so JSON đã gỡ nhãn cổng); 25/11/2026: kèm ``BARISTA_DEMO_OPEN`` (app chọn vai không cần khoá). Không api_env và còn cổng ⇒ chữ y hệt."""
     fixtures = Path(__file__).resolve().parent / "fixtures" / "instances"
     real = ops.known_instances() if ops.instances_dir().is_dir() else []
     found = [i for i in [*ops.known_instances(fixtures), *real] if not ops.production(i)]
@@ -73,6 +73,8 @@ def test_demo_instances_render_exactly_as_before():
                     del labels[k]
                 chain = f"traefik.http.routers.{inst['name']}-web.middlewares"
                 labels[chain] = ",".join(x for x in labels[chain].split(",") if x != gate)
+                # khác biệt có chủ đích THỨ TƯ (25/11/2026): demo công khai mở trang chọn vai cho app gọi thẳng API (không cần khoá demo của BFF)
+                want["services"]["api"]["environment"]["BARISTA_DEMO_OPEN"] = "true"
             if inst.get("landing") is True:   # khác biệt có chủ đích THỨ BA (23/11/2026): trang giới thiệu ở "/" cho người chưa đăng nhập
                 want["services"]["web"]["environment"] = {**want["services"]["web"]["environment"], "BARISTA_WEB_HOME": "landing"}
             assert got == want, inst["name"]

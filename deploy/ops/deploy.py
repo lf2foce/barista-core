@@ -162,6 +162,8 @@ def render(template: str, inst: dict, *, json_text: bool) -> str:
             web.update(PRODUCTION_WEB)
         if inst.get("landing") is True:   # trang giới thiệu sản phẩm ở "/" cho người chưa đăng nhập (web/src/proxy.ts); vắng ⇒ "/" về thẳng /login
             web["BARISTA_WEB_HOME"] = "landing"
+        if inst.get("gate") is False and not production(inst):   # demo CÔNG KHAI ⇒ app gọi thẳng API cũng chọn được vai (không cần khoá demo của BFF)
+            api["BARISTA_DEMO_OPEN"] = "true"
         if inst.get("gate") is False:   # bỏ cổng mật khẩu: nhãn basicauth + mắt xích đầu của router web
             labels, gate = stack["services"]["web"]["deploy"]["labels"], f"{inst['name']}-gate"
             for k in [k for k in labels if k.startswith(f"traefik.http.middlewares.{gate}.")]:

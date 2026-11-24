@@ -42,6 +42,18 @@ async def test_without_a_demo_key_remote_dev_login_stays_closed(demo: dict[str, 
         assert r.status_code == 401
 
 
+async def test_a_public_demo_lets_apps_pick_a_role_without_the_key(demo: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bản demo công khai (``demo_open`` — bản cài ``"gate": false``, toàn dữ liệu giả): app gọi thẳng API (không qua BFF giữ khoá) vẫn thấy trang chọn vai."""
+    monkeypatch.setattr(settings, "demo_open", True)
+    async with remote() as c:
+        assert (await c.get("/v1/dev/logins")).status_code == 200
+        r = await c.get("/v1/manifest", headers={"x-dev-user": "giamdoc@sanmau.demo", "x-tenant-id": str(demo["tenant"])})
+        assert r.status_code == 200
+    monkeypatch.setattr(settings, "dev_auth", False)   # đăng nhập dev tắt hẳn thì cờ demo công khai cũng không mở gì
+    async with remote() as c:
+        assert (await c.get("/v1/dev/logins")).status_code == 404
+
+
 async def test_health_reports_release_and_drains(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "release", "abc123")
     monkeypatch.setattr(api, "DRAIN_FLAG", tmp_path / "draining")

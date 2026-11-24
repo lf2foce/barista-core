@@ -12,7 +12,7 @@ def errors(s: Settings) -> list[str]:
         return [f"BARISTA_ENV={s.env!r} — chỉ nhận demo | production (trống = máy dev)"]
     if s.env != "production":
         return []
-    found = [f"BARISTA_{name.upper()} phải tắt" for name in ("dev_auth", "allow_app_temp", "webhook_allow_private") if getattr(s, name)]
+    found = [f"BARISTA_{name.upper()} phải tắt" for name in ("dev_auth", "allow_app_temp", "webhook_allow_private", "demo_open") if getattr(s, name)]
     found += [f"BARISTA_{name.upper()} phải trống" for name in ("demo_today", "llm_replay_dir") if getattr(s, name)]
     if not s.google_web_client_id.strip():
         found.append("thiếu BARISTA_GOOGLE_WEB_CLIENT_ID — production chỉ đăng nhập Google thật (runbook 09)")

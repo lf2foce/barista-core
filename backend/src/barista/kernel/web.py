@@ -57,10 +57,11 @@ NOT_MEMBER_TEXT = "Không phải thành viên đang hoạt động của công t
 
 
 def dev_allowed(request: HTTPConnection) -> bool:
-    """Đăng nhập dev: từ chính máy chạy core; hoặc bản demo (BARISTA_DEMO_KEY) khi gửi đúng X-Demo-Key — so khớp thời gian hằng."""
+    """Đăng nhập dev: từ chính máy chạy core; bản demo CÔNG KHAI (``demo_open`` — bản cài ``"gate": false``, toàn dữ liệu giả) từ mọi nơi; hoặc bản demo
+    (BARISTA_DEMO_KEY) khi gửi đúng X-Demo-Key — so khớp thời gian hằng."""
     if not settings.dev_auth:
         return False
-    if request.client is not None and request.client.host in LOOPBACK:
+    if settings.demo_open or (request.client is not None and request.client.host in LOOPBACK):
         return True
     given = request.headers.get("x-demo-key", "")
     return bool(settings.demo_key) and hmac.compare_digest(given.encode(), settings.demo_key.encode())
