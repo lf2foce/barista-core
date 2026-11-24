@@ -67,13 +67,13 @@ async def connections(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
                       "badge": label if active else "Tạm dừng", "tone": tone if active else "gray", "module": "connectors",
                       "open": {"query": "connectors.list", "input": {}}})
     if tiles:
-        blocks.append(ui.b_tiles(tiles, "Nguồn dữ liệu của công ty", rows=True))
+        blocks.append(ui.b_tiles(tiles, "Của công ty", rows=True))
     elif sources is not None:
         blocks.append(ui.b_callout("info", "Công ty chưa nối nguồn dữ liệu nào",
                                    "Barista tự kéo dữ liệu từ sheet, CRM cũ, tổng đài… về đây theo lịch. App bên ngoài gọi VÀO Barista nằm ở Ứng dụng."))
-    blocks.append(ui.b_callout("muted", "Gmail, Lịch Google của bạn — chưa có",
-                               "Khi có, bạn tự nối tài khoản của mình để trợ lý đọc thư và lịch bằng đúng quyền của bạn."))
-    return ui.card("Kết nối", blocks, subtitle="Barista lấy dữ liệu từ đâu — của công ty và của bạn")
+    mine = [{"title": title, "subtitle": sub, "module": icon, "badge": "Sắp có", "tone": "gray"} for title, sub, icon in PERSONAL]
+    return ui.card("Kết nối", [ui.b_tiles(mine, "Của bạn", rows=True), *blocks],
+                   subtitle="Nối tài khoản của bạn để trợ lý làm việc trên đó, bằng đúng quyền của bạn")
 
 
 @m.query("ai_link", resource=None, title="Dùng Barista trong ChatGPT / Claude", category="core")
@@ -97,6 +97,10 @@ async def disconnect_ai_apps(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     return {"revoked": gone, "summary": "Đã ngắt các ứng dụng AI khỏi tài khoản" if gone else "Không có ứng dụng AI nào đang nối"}
 
 
+# tài khoản CÁ NHÂN nối được (kiểu Plugins của ChatGPT): CHƯA có cơ chế — mỗi người đăng nhập tài khoản của mình (OAuth), trợ lý dùng bằng quyền người đó.
+# Hiện để người dùng thấy chỗ; nút "+" chỉ có khi cơ chế xong (ADR riêng). (tên, mô tả, khoá biểu tượng)
+PERSONAL = (("Gmail", "Đọc, tìm và soạn thư", "mail"), ("Google Drive", "Tài liệu, bảng tính, slide", "drive"),
+            ("Lịch Google", "Xem lịch, đặt lịch hẹn", "gcal"), ("Canva", "Thiết kế, ấn phẩm", "compose"))
 ROW_BADGE = {"on": ("Đang dùng", "green"), "available": ("Thêm", "accent")}   # nhãn nút bên phải theo trạng thái; "locked" giữ nhãn của Store (vd "Cần …", "Liên hệ")
 GROUPS = (("capability", "Có sẵn trong Barista"), ("industry", "Gói ngành"), ("company", "Riêng của công ty"))
 

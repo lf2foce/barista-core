@@ -92,8 +92,7 @@ export function Rail() {
             {here?.onRail ? workspaceButton(here.ws, "sm:hidden") : null}
             {here && !here.onRail ? (
               <div role="group" aria-label="Đang mở" className="flex w-full flex-col items-center gap-1.5 max-sm:contents">
-                <span className="my-0.5 h-px w-9 bg-foreground/10 max-sm:hidden" aria-hidden />
-                <span className="t12 text-muted-foreground max-sm:hidden">Đang mở</span>
+                <span className="my-0.5 h-px w-9 bg-foreground/10 max-sm:hidden" aria-hidden />   {/* không chữ "Đang mở" — nút đang chọn tự nói (anh Anh 25/11/2026) */}
                 {workspaceButton(here.ws)}
               </div>
             ) : null}

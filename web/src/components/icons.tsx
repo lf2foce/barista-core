@@ -175,7 +175,7 @@ const MODULE_ICON: Record<string, string> = {
   accounting_service: "briefcase.fill",
   parties: "person.crop.rectangle.stack", hr: "person.text.rectangle", kpi: "target", schedule: "calendar", meet: "video", mgmt: "chart.bar.doc.horizontal",
   pay: "banknote", findings: "doc.text.magnifyingglass", compose: "paintpalette", telephony: "phone", timekeeping: "clock.badge.checkmark",
-  word: "doc.richtext", connect: "app.connected.to.app.below", connectors: "arrow.triangle.2.circlepath", agent: "sparkles",
+  word: "doc.richtext", connect: "app.connected.to.app.below", connectors: "arrow.triangle.2.circlepath", agent: "sparkles", mail: "mail", drive: "folder", gcal: "calendar.badge.clock",
 };
 export function moduleIcon(op: string): string {
   return MODULE_ICON[op.split(".")[0] ?? ""] ?? "square.grid.2x2.fill";
@@ -202,7 +202,7 @@ const TINT: Record<string, string> = {
   books: "#34c759",
   accounting_service: "#5856d6",
   parties: "#007aff", hr: "#5856d6", kpi: "#ff2d55", schedule: "#ff9500", meet: "#34c759", mgmt: "#5856d6", pay: "#34c759", findings: "#a2845e",
-  compose: "#ff2d55", telephony: "#34c759", timekeeping: "#00c7be", word: "#007aff", connect: "#30b0c7", connectors: "#30b0c7", agent: "#af52de",
+  compose: "#ff2d55", telephony: "#34c759", timekeeping: "#00c7be", word: "#007aff", connect: "#30b0c7", connectors: "#30b0c7", agent: "#af52de", mail: "#ff3b30", drive: "#34c759", gcal: "#007aff",
 };
 export function moduleTint(op: string): string {
   return TINT[op.split(".")[0] ?? ""] ?? "#007aff";
