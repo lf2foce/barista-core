@@ -51,7 +51,7 @@ def client() -> httpx.AsyncClient:
 async def _invite(who: Who, local: str) -> tuple[str, uuid.UUID]:
     admin = await who("admin")
     email = f"{local}-{uuid.uuid4().hex[:6]}@mau.test"
-    await ok(admin, "admin.invite_user", email=email, name=f"Người {local}", role="sale", team_code="KD-A")
+    await ok(admin, "admin.invite_user", email=email, name=f"Người {local}", role="sale", team_code="")   # không xếp vào đội mẫu: cơ cấu mẫu là của chung
     return email, admin.tenant_id
 
 

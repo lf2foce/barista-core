@@ -85,7 +85,7 @@ async def test_first_party_app_signs_in_with_identity_only_and_loses_it_when_loc
     cid = f"suite-test-{uuid.uuid4().hex[:6]}"
     await _first_party(cid)
     email = f"suite-{uuid.uuid4().hex[:6]}@mau.test"
-    await ok(admin, "admin.invite_user", email=email, name="Người đăng nhập Suite", role="sale", team_code="KD-A")
+    await ok(admin, "admin.invite_user", email=email, name="Người đăng nhập Suite", role="sale", team_code="")   # không xếp vào đội mẫu: cơ cấu mẫu là của chung
     base = settings.public_api_url.rstrip("/")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=base) as c:
         tok = await _login(c, cid, email, admin.tenant_id)
@@ -154,7 +154,7 @@ async def test_first_party_app_exchanges_a_google_id_token_once_for_identity(who
     cid = f"suite-test-{uuid.uuid4().hex[:6]}"
     await _first_party(cid)
     email = f"suite-g-{uuid.uuid4().hex[:6]}@mau.test"
-    await ok(admin, "admin.invite_user", email=email, name="Người đăng nhập Suite", role="sale", team_code="KD-A")
+    await ok(admin, "admin.invite_user", email=email, name="Người đăng nhập Suite", role="sale", team_code="")   # không xếp vào đội mẫu: cơ cấu mẫu là của chung
     tenant = str(admin.tenant_id)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=settings.public_api_url.rstrip("/")) as c:
         async def swap(id_token: str, *, client_id: str = cid, secret: str | None = SECRET, nonce: str = "n-1", tenant_id: str = tenant) -> httpx.Response:

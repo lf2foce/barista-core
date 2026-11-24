@@ -10,7 +10,7 @@ from barista.db import db
 from barista.kernel import executor, forms, registry
 from barista.kernel.clock import today
 from barista.workspaces import manifest
-from tests.conftest import Who, fresh_sale, ok, owner_val, q
+from tests.conftest import Who, fresh_sale, ok, own_team, owner_val, q
 
 
 async def _party(who: Who, sale: Any) -> Any:
@@ -32,17 +32,18 @@ async def test_title_change_closes_the_old_row_and_past_dates_answer_as_of(who: 
     await ok(admin, "hr.set_employment", party_id=me, employee_code=code, title="Nhân viên", started_on=d0.isoformat())
     await ok(admin, "hr.set_employment", party_id=me, employee_code=code, title="Trưởng nhóm", started_on=d1.isoformat())
     # đội của một người ghi ở Quản trị (một nguồn ở lõi — 0256); Hồ sơ làm việc đọc lại theo ngày
-    await ok(admin, "admin.update_member", email=sale.email, team_code="KD-A")
-    await ok(admin, "admin.set_team_since", email=sale.email, team_code="KD-A", valid_from=d0.isoformat(), reason="Dữ liệu thử")
-    await ok(admin, "admin.update_member", email=sale.email, team_code="KD-B")
-    await ok(admin, "admin.set_team_since", email=sale.email, team_code="KD-B", valid_from=d1.isoformat(), reason="Dữ liệu thử")
+    first, second = await own_team(who), await own_team(who)        # đội riêng của test — không xếp người vào đội mẫu
+    await ok(admin, "admin.update_member", email=sale.email, team_code=first)
+    await ok(admin, "admin.set_team_since", email=sale.email, team_code=first, valid_from=d0.isoformat(), reason="Dữ liệu thử")
+    await ok(admin, "admin.update_member", email=sale.email, team_code=second)
+    await ok(admin, "admin.set_team_since", email=sale.email, team_code=second, valid_from=d1.isoformat(), reason="Dữ liệu thử")
 
     async def on(day: Any) -> dict[str, Any]:
         return next(r for r in (await q(admin, "hr.staff", on=day.isoformat()))["rows"] if str(r["party_id"]) == str(me))
 
     before, now = await on(d1 - timedelta(days=1)), await on(today())
-    assert (before["title"], before["team"]) == ("Nhân viên", "Team Kinh doanh A")
-    assert (now["title"], now["team"]) == ("Trưởng nhóm", "Team Kinh doanh B")
+    assert (before["title"], before["team"]) == ("Nhân viên", f"Đội thử {first}")
+    assert (now["title"], now["team"]) == ("Trưởng nhóm", f"Đội thử {second}")
     assert before["ended_on"] == (d1 - timedelta(days=1)).isoformat() or str(before["ended_on"]) == str(d1 - timedelta(days=1))
     backwards = await executor.run(admin, "hr.set_employment", {"party_id": str(me), "employee_code": code, "started_on": d0.isoformat()})
     assert backwards.status == "invalid"

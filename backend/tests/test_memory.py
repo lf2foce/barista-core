@@ -195,7 +195,7 @@ async def test_departed_members_memory_is_company_work_data(who: Who) -> None:
     xem lại, chuyển thành trí nhớ chung (giữ nguồn) hoặc xoá. Quản trị hệ thống không có quyền này ⇒ vẫn không thấy."""
     admin, gd = await who("admin"), await who("giamdoc")
     local = f"nghi-{uuid.uuid4().hex[:6]}"
-    await ok(admin, "admin.invite_user", email=f"{local}@{seed.DOMAIN}", name="Người sắp nghỉ", role="sale", team_code="KD-A")
+    await ok(admin, "admin.invite_user", email=f"{local}@{seed.DOMAIN}", name="Người sắp nghỉ", role="sale", team_code="")   # không xếp vào đội mẫu: cơ cấu mẫu là của chung
     leaver = await who(local)
     text = "Chủ đầu tư mẫu chỉ ký phụ lục vào thứ Năm, gửi trước hai ngày (thử người nghỉ)"
     with executor.tracing("chat:thu-nguoi-nghi"):

@@ -19,7 +19,7 @@ from barista.kernel.forms import field_specs
 from barista.kernel.principal import Principal, system_principal
 from barista.modules.flow import automations as auto
 from barista.modules.flow import m as flow_m
-from tests.conftest import Who, approved, fresh_phone, fresh_sale, ok, owner_val, q
+from tests.conftest import Who, approved, fresh_phone, fresh_sale, ok, own_team, owner_val, q
 
 
 @pytest.fixture(autouse=True)
@@ -193,7 +193,7 @@ async def test_run_command_runs_as_the_owner_with_rights_reloaded(who: Who, demo
 
 
 async def test_propose_files_a_card_for_the_lead_owner_on_assignment(who: Who, rules: list[str]) -> None:
-    admin, sale = await who("admin"), await fresh_sale(who, "KD-A")
+    admin, sale = await who("admin"), await fresh_sale(who, await own_team(who))
     await _rule(admin, rules, trigger="crm.lead_assigned", conditions=f"Người phụ trách = {sale.name}", action="propose", command="crm.set_stage",
                 params="Chặng = interested", to_owner=True, message="Lead mới giao — gọi chưa?", trial=False)
     lead = await ok(admin, "crm.create_lead", name="Khách đề xuất", phone=fresh_phone())
@@ -209,7 +209,7 @@ async def test_propose_files_a_card_for_the_lead_owner_on_assignment(who: Who, r
 
 async def test_stage_change_notifies_the_owner_and_a_rule_loop_stops(who: Who, rules: list[str]) -> None:
     """Hai luật kích nhau (Quan tâm ⇒ Đã gặp ⇒ Quan tâm…) dừng sau ``MAX_CHAIN`` tầng, có ghi — không vòng lặp vô hạn."""
-    admin, sale = await who("admin"), await fresh_sale(who, "KD-A")
+    admin, sale = await who("admin"), await fresh_sale(who, await own_team(who))
     lead = await ok(sale, "crm.create_lead", name="Khách vòng lặp", phone=fresh_phone())
     await events.drain()
     who_ = f"Người phụ trách = {sale.name}"

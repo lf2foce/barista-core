@@ -7,7 +7,7 @@ from typing import Any
 
 from barista.kernel.clock import today
 from barista.modules import mkt
-from tests.conftest import Who, fresh_phone, ok, owner_val, q
+from tests.conftest import Who, fresh_phone, ok, own_team, owner_val, q
 
 
 async def _card(p: Any) -> dict[str, Any]:
@@ -92,7 +92,7 @@ async def test_lead_gaps_are_counted(who: Who) -> None:
     after = await _issues(gd)
     assert after[bad_text] == step[bad_text] + 1 and after[no_offering] == step[no_offering]
     # người đã nghỉ: lead của họ vẫn mở
-    leaver = await fresh_sale(who, "QT")                                                # đội không test nào đếm lead
+    leaver = await fresh_sale(who, await own_team(who))                                # đội riêng: không test nào đếm lead
     await ok(leaver, "crm.create_lead", name=f"Khách của người nghỉ {uuid.uuid4().hex[:4]}", phone=fresh_phone())
     step = await _issues(gd)
     await ok(admin, "admin.update_member", email=leaver.email, active=False)

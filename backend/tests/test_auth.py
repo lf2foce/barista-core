@@ -49,7 +49,7 @@ async def login(c: AsyncClient, id_token: str, nonce: str = "n-1") -> Any:
 
 async def _invite(admin: Any, local: str) -> str:
     email = f"{local}-{uuid.uuid4().hex[:6]}@sanmau.demo"
-    await ok(admin, "admin.invite_user", email=email, name=f"Người {local}", role="sale", team_code="KD-A")
+    await ok(admin, "admin.invite_user", email=email, name=f"Người {local}", role="sale", team_code="")   # không xếp vào đội mẫu: cơ cấu mẫu là của chung
     return email
 
 

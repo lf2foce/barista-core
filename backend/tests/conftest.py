@@ -166,9 +166,45 @@ async def demo() -> AsyncIterator[dict[str, Any]]:
         await setup(other)
     tid = await seed.create_tenant(seed.TENANT, seed.DOMAIN)
     out = await seed.seed_business(tid)
-    yield {"tenant": tid, "other": other, **out}
+    async with db.owner.connection() as c:
+        seeded_at = (await (await c.execute("SELECT clock_timestamp() AS t")).fetchone())["t"]   # type: ignore[index]
+    yield {"tenant": tid, "other": other, "seeded_at": seeded_at, **out}
     await db.close()
     shutil.rmtree(settings.files_dir, ignore_errors=True)
+
+
+# Cơ cấu MẪU (đội có từ lúc nạp mẫu: ai thuộc đội nào, ai là trưởng, ai đang làm) là thứ MỌI test trong một tiến trình dùng chung. Test nào để lại thay đổi
+# trên đó làm test KHÁC đỏ tuỳ thứ tự chạy — và người nhìn thấy đỏ là nạn nhân, không phải thủ phạm (24/11/2026: ba lần trong một ngày). Bất biến: mỗi test
+# trả cơ cấu mẫu về như lúc nhận. Cần đội để thử ⇒ tạo đội riêng (``admin.upsert_team``) + ``fresh_sale``; buộc phải đụng đội mẫu ⇒ trả lại trước khi xong.
+_SAMPLE_STRUCTURE = """SELECT coalesce(string_agg(t.code || ':' || u.email || ':' || tm.is_lead || ':' || tm.is_home || ':' || mb.active, ' ' ORDER BY t.code, u.email), '')
+                       FROM core.teams t JOIN core.team_members tm ON tm.team_id = t.id JOIN core.users u ON u.id = tm.user_id
+                       JOIN core.memberships mb ON mb.user_id = tm.user_id AND mb.tenant_id = t.tenant_id
+                       WHERE t.tenant_id = %s AND t.created_at <= %s"""
+
+
+def _note_offender(path: str, line: str) -> None:
+    with open(path, "a") as f:
+        f.write(line)
+
+
+async def _sample_structure(demo: dict[str, Any]) -> str:
+    async with db.owner.connection() as c:
+        row = await (await c.execute(_SAMPLE_STRUCTURE, (demo["tenant"], demo["seeded_at"]))).fetchone()
+    return str(next(iter(row.values())) if isinstance(row, dict) else row[0])   # type: ignore[union-attr,index]
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _sample_structure_is_left_as_found(demo: dict[str, Any], request: pytest.FixtureRequest) -> AsyncIterator[None]:
+    before = await _sample_structure(demo)
+    yield
+    after = await _sample_structure(demo)
+    if after != before:
+        diff = sorted(set(after.split()) ^ set(before.split()))
+        report = os.environ.get("BARISTA_TEST_STRUCTURE_REPORT")
+        if report:   # chế độ đo: ghi thủ phạm ra file thay vì làm đỏ (dùng một lần khi rà)
+            _note_offender(report, f"{request.node.nodeid}\t{' '.join(diff[:6])}\n")
+        else:
+            pytest.fail(f"test để lại thay đổi trên cơ cấu mẫu dùng chung: {' '.join(diff[:8])} — tạo đội riêng cho test, hoặc trả lại trước khi xong")
 
 
 type Who = Callable[..., Awaitable[Principal]]
@@ -244,6 +280,14 @@ def fresh_phone() -> str:
 
 
 __all__ = ["UUID", "approved", "fresh_phone", "ok", "owner_val", "q"]
+
+
+async def own_team(who: Who, kind: str = "sales") -> str:
+    """Đội RIÊNG của một test (đội gốc, ngoài cây đội mẫu) — mã trả về dùng cho ``team_code``. Test cần xếp người vào một đội thì dùng đội này, không dùng
+    đội mẫu (KD-A, KD-B, QT…): cơ cấu mẫu là của chung (``_sample_structure_is_left_as_found``)."""
+    code = f"T{uuid4().hex[:8].upper()}"
+    await ok(await who("admin"), "admin.upsert_team", code=code, name=f"Đội thử {code}", kind=kind, parent_code="")
+    return code
 
 
 async def fresh_sale(who: Who, team: str = "") -> Principal:

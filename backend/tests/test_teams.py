@@ -28,8 +28,10 @@ async def test_three_answers_have_separate_meanings(who: Who, demo: dict[str, An
     kda = await _team(demo["tenant"], "KD-A")
     assert (sale1.home_team, sale1.member_teams, sale1.managed_teams) == (kda, (kda,), ())   # thuộc đội ≠ quản lý đội
     assert truonga.home_team == kda and truonga.managed_teams == (kda,)
-    every = await owner_val("SELECT array_agg(id ORDER BY id) FROM core.teams WHERE tenant_id = %s", (demo["tenant"],))
-    assert list(gd.managed_teams) == every                                          # trưởng đội gốc: cả cây
+    every = await owner_val("""WITH RECURSIVE tree AS (SELECT id FROM core.teams WHERE tenant_id = %s AND code = 'HQ'
+                                                       UNION SELECT c.id FROM core.teams c JOIN tree ON c.parent_id = tree.id)
+                               SELECT array_agg(id ORDER BY id) FROM tree""", (demo["tenant"],))
+    assert list(gd.managed_teams) == every                                          # trưởng đội gốc: cả cây CỦA ĐỘI ĐÓ (đội gốc khác của công ty không tính)
     outsider = await who("sale1", other=True)
     assert outsider.home_team == await _team(demo["other"], "KD-A") != kda            # cùng tên người, công ty khác: đội của công ty đó
 
