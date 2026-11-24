@@ -1484,15 +1484,19 @@ async def query(p: Principal, name: str, inp: dict[str, Any] | None = None, *, q
     return r
 
 
+_COUNT: ContextVar[bool] = ContextVar("query_counted", default=True)   # lượt này có vào bộ đếm lượt dùng không (``query(count=False)`` — thẻ gọn tự tải)
+
+
 async def _query_with(p: Principal, name: str, inp: dict[str, Any] | None, *, quiet: bool = False, parts: ui._Parts | None = None,
                       page: ui.Paging | None = None, count: bool = True) -> Result:
     """``_query`` với chế độ phần tải sau / trang của lượt này (biến ngữ cảnh — handler đọc qua ``ui.part`` / ``ui.paging``)."""
-    t1, t2 = ui._PARTS.set(parts), ui._PAGING.set(page)
+    t1, t2, t3 = ui._PARTS.set(parts), ui._PAGING.set(page), _COUNT.set(count)
     try:
-        return await _query(p, name, inp, quiet=quiet, count=count)
+        return await _query(p, name, inp, quiet=quiet)
     finally:
         ui._PARTS.reset(t1)
         ui._PAGING.reset(t2)
+        _COUNT.reset(t3)
 
 
 LATER_DEPTH = 2   # khối tải sau trỏ tới thẻ lại có khối tải sau: mở tối đa 2 tầng (thẻ tự trỏ vào mình không lặp mãi)
@@ -1522,7 +1526,7 @@ async def _fill_later(p: Principal, r: Result, depth: int) -> Result:
     return Result(r.status, {**out, "blocks": blocks}, approval_id=r.approval_id)
 
 
-async def _query(p: Principal, name: str, inp: dict[str, Any] | None = None, *, quiet: bool = False, count: bool = True) -> Result:
+async def _query(p: Principal, name: str, inp: dict[str, Any] | None = None, *, quiet: bool = False) -> Result:
     """Chạy một TRUY VẤN (đọc) trong giao dịch READ ONLY. ``quiet``: kiểm tra lặp lại của kênh tức thì (mỗi người nghe, mỗi tín hiệu) — lỗi bất ngờ
     (DB bận, mất kết nối) trả ``error`` cho bên gọi tự thử lại, KHÔNG ghi lỗi hệ thống / báo nhà vận hành mỗi lần (một sự cố thành nghìn dòng)."""
     op = registry.get(name)
@@ -1558,7 +1562,7 @@ async def _query(p: Principal, name: str, inp: dict[str, Any] | None = None, *, 
                     out = ui.card("", parts.got or [])
             zone = clock.zone()   # múi giờ công ty của giao dịch (0169) — bộ đếm mức dùng ghi theo NGÀY của công ty
         await run_after(ctx)   # việc hẹn sau khi đọc xong (vd ghi dấu mục nhớ đã được đưa ra) — giao dịch đọc không ghi được
-        if not quiet and count:
+        if not quiet and _COUNT.get():
             try:
                 with clock.using(zone):
                     usage.note_query(p, op.module, op.name)   # mức dùng (0163): chỉ tăng bộ đếm trong bộ nhớ, không SQL; lỗi gì cũng không được làm hỏng truy vấn

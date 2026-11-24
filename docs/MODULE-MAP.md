@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-17 gói · 29 module · 1020 thao tác (287 nội bộ) · 21 bên nghe sự kiện.
+17 gói · 29 module · 1021 thao tác (287 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
@@ -38,7 +38,7 @@
 | `books` | Sổ sách & nghĩa vụ | `books` | `books` | `modules/books.py` | 9 | 14 | 6 |
 | `connect` | Ứng dụng kết nối | `base` | — | `modules/connect.py` | 9 | 3 | 4 |
 | `connectors` | Kết nối ngoài | `base` | `connectors` | `modules/connectors.py` | 10 | 6 | 6 |
-| `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/rail.py`, `kernel/record_files.py` | 36 | 37 | 10 |
+| `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/rail.py`, `kernel/record_files.py`, `kernel/screen_usage.py` | 36 | 38 | 10 |
 | `crm` | Khách hàng | `crm` | `crm` | `modules/crm/` (18 file) | 24 | 49 | 42 |
 | `findings` | Báo cáo chạy song song | `findings` | — | `modules/findings.py` | 0 | 7 | 1 |
 | `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (16 file) | 37 | 49 | 33 |
