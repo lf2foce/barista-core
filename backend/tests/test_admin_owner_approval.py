@@ -223,3 +223,32 @@ async def test_reinviting_a_lead_elsewhere_is_gated(co: dict[str, Any]) -> None:
     assert await owner_val("""SELECT tm.is_lead FROM core.team_members tm JOIN core.users u ON u.id = tm.user_id JOIN core.teams t ON t.id = tm.team_id
                               WHERE tm.tenant_id = %s AND u.email = %s AND t.code = 'KT'""", (co["tid"], f"ketoan@{co['d']}")) is True
 
+
+
+async def test_a_sole_owner_is_never_refused_when_no_step_finds_anyone_else_and_nothing_wider_runs_unapproved() -> None:
+    """Rà 24/11/2026 (Codex): chủ tài khoản DUY NHẤT xin qua chuỗi có bước "Trưởng nhóm" mà cả nhánh chưa có trưởng ⇒ bước lùi về chủ tài khoản, loại chính
+    người xin ⇒ trước đây bị từ chối "không có người duyệt". MỘT luật: không bước nào tìm được người KHÁC duyệt ⇒ ngoại lệ một chủ tài khoản (chạy, ghi nhật
+    ký, báo quản trị); còn một bước có người khác ⇒ phiếu đi người đó như thường."""
+    import json
+
+    from barista.kernel import approvals
+
+    tid, d = await _company([("chu", "Chủ thử", "admin", "QT", True), ("kt", "Kế toán thử", "accountant", "KT", False)])
+    chu = await seed.who(tid, "chu", d)
+
+    async def chain(steps: list[dict[str, Any]]) -> str:
+        key = "thu_" + "".join(chr(97 + int(c, 16) % 26) for c in uuid.uuid4().hex[:10])   # khoá chuỗi chỉ nhận chữ thường và gạch dưới
+        await owner_val("INSERT INTO core.approval_chains (tenant_id, key, label, steps) VALUES (%s, %s, 'Chuỗi thử', %s) RETURNING key",
+                        (tid, key, json.dumps(steps)))
+        return key
+
+    async def sole(steps: list[dict[str, Any]]) -> bool:
+        key = await chain(steps)
+        async with db.tenant_tx(chu, read_only=True) as conn:
+            return await approvals.sole_owner(conn, chu, key)
+
+    assert await sole([{"kind": "team_lead"}])                                       # không ai làm trưởng: chỉ còn chính người xin
+    assert await sole([{"kind": "owner"}])                                           # như trước
+    assert await sole([{"kind": "role", "role": "director"}])                        # không ai giữ vai giám đốc
+    assert not await sole([{"kind": "role", "role": "accountant"}])                  # kế toán duyệt được ⇒ phiếu đi kế toán
+    assert not await sole([{"kind": "team_lead"}, {"kind": "role", "role": "accountant"}])   # còn một bước có người khác ⇒ không tự duyệt

@@ -71,18 +71,26 @@ async def resolve_step(conn: Conn, tenant_id: UUID, step: dict[str, Any], reques
 
 
 async def sole_owner(conn: Conn, p: Principal, chain: str) -> bool:
-    """Ngoại lệ một-chủ-tài-khoản (0029): chuỗi ``chain`` CHỈ gồm bước chủ tài khoản, người xin (NGƯỜI, không phải trợ lý) là chủ tài khoản đang
-    hoạt động và không còn chủ tài khoản nào khác ⇒ True (bên gọi chạy ngay + ghi nhật ký + báo quản trị). Có chủ tài khoản thứ hai ⇒ False:
-    phiếu đi người kia như thường."""
+    """Ngoại lệ một-chủ-tài-khoản (0029) — MỘT luật: người xin (NGƯỜI, không phải trợ lý) là chủ tài khoản đang hoạt động DUY NHẤT và KHÔNG BƯỚC NÀO của chuỗi
+    tìm được ai khác để duyệt (bước chủ tài khoản; bước trưởng nhóm khi cả nhánh chưa có trưởng — lùi về chủ tài khoản; bước vai mà chỉ người xin giữ vai đó)
+    ⇒ True: không ai trên họ, bên gọi chạy ngay + ghi nhật ký + báo quản trị. Còn một bước có người khác duyệt được ⇒ False: phiếu đi người đó như thường
+    (không mở tự duyệt hàng loạt). Rà 24/11/2026 (Codex): trước chỉ nhận chuỗi toàn bước chủ tài khoản ⇒ chủ duy nhất xin qua chuỗi có bước trưởng nhóm mà đội
+    chưa có trưởng bị từ chối "không có người duyệt"."""
     if p.user_id is None or p.via != "human" or p.system:
         return False
     cur = await conn.execute("SELECT steps FROM core.approval_chains WHERE key = %s", (chain,))
     row = await cur.fetchone()
-    if row is None or not row["steps"] or any(s.get("kind") != "owner" for s in row["steps"]):
+    if row is None or not row["steps"]:
         return False
     cur = await conn.execute("SELECT array_agg(user_id) AS ids FROM core.memberships WHERE owner AND active")
     ids = (await cur.fetchone() or {}).get("ids") or []
-    return list(ids) == [p.user_id]
+    if list(ids) != [p.user_id]:
+        return False
+    for step in row["steps"]:
+        _, approvers = await resolve_step(conn, p.tenant_id, step, p.user_id, set())
+        if approvers:
+            return False
+    return True
 
 
 async def tell_admins_self_approved(conn: Conn, p: Principal, what: str) -> None:
