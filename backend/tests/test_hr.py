@@ -110,3 +110,25 @@ async def test_pay_terms_live_only_in_tables_of_the_separate_terms_resource() ->
                                                                                     'contract_kind'))""")
     assert {t for t, _ in rows} == {"terms", "dependants"}
     assert all(comment == "resource=hr.terms" for _, comment in rows), rows
+
+
+async def test_the_database_itself_refuses_a_shared_employee_code_and_overlapping_records() -> None:
+    """Rà schema 24/11/2026: hai luật của hồ sơ làm việc do DB giữ (ràng buộc loại trừ — hr/115), không do trigger tự truy vấn: ghi thẳng bằng SQL, hay hai
+    giao dịch ghi cùng lúc, đều không tạo được một mã thuộc hai người hoặc hai hồ sơ chồng ngày của một người trong cùng pháp nhân."""
+    import uuid as _uuid
+
+    import psycopg as _pg
+
+    from tests.conftest import owner_val as _val
+    tid = await _val("SELECT id FROM core.tenants ORDER BY created_at LIMIT 1")
+    a, b, code = _uuid.uuid4(), _uuid.uuid4(), f"NVT{_uuid.uuid4().hex[:8].upper()}"
+    add = "INSERT INTO hr.employments (tenant_id, party_id, employee_code, started_on, ended_on) VALUES (%s, %s, %s, %s, %s) RETURNING id"
+    assert await _val(add, (tid, a, code, "2026-01-01", "2026-06-30"))
+    assert await _val(add, (tid, a, code, "2026-07-01", None))                      # cùng người, mã cũ, kỳ kế tiếp: được
+    for params in ((tid, b, code, "2026-01-01", None),                               # mã đã thuộc người khác
+                   (tid, a, code, "2026-06-01", "2026-06-15")):                      # chồng ngày với hồ sơ đầu của chính người đó
+        try:
+            await _val(add, params)
+        except _pg.errors.ExclusionViolation:
+            continue
+        raise AssertionError(f"DB phải từ chối: {params[1:]}")

@@ -601,13 +601,15 @@ _LEDGER = ("file_copy_grants",)
 
 
 async def _references(conn: Any) -> list[tuple[str, str, str]]:
-    """(schema, bảng, cột) của mọi CHỖ DÙNG tệp: khoá ngoại MỘT cột trỏ vào ``core.files`` (bảng module + bảng lõi như ``core.record_files``; trừ sổ quyền
+    """(schema, bảng, cột) của mọi CHỖ DÙNG tệp: cột trỏ vào ``core.files.id`` của một khoá ngoại (khoá kèm ``tenant_id`` — 0258 — vẫn là một chỗ dùng) (bảng module + bảng lõi như ``core.record_files``; trừ sổ quyền
     lấy tệp của kernel) — kernel không biết tên module, hỏi catalog."""
     cur = await conn.execute(
         """SELECT n.nspname, c.relname, a.attname FROM pg_constraint k
            JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-           JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
-           WHERE k.contype = 'f' AND k.confrelid = 'core.files'::regclass AND cardinality(k.conkey) = 1
+           JOIN LATERAL unnest(k.conkey, k.confkey) AS pair(col, ref) ON true
+           JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = pair.col
+           JOIN pg_attribute fa ON fa.attrelid = k.confrelid AND fa.attnum = pair.ref AND fa.attname = 'id'
+           WHERE k.contype = 'f' AND k.confrelid = 'core.files'::regclass
              AND NOT (n.nspname = 'core' AND c.relname = ANY(%s))
            ORDER BY 1, 2, 3""", (list(_LEDGER),))
     return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in await cur.fetchall()]

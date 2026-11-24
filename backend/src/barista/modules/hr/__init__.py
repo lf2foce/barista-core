@@ -145,8 +145,11 @@ async def set_employment(ctx: Ctx, inp: SetEmployment) -> dict[str, Any]:
     code = inp.employee_code.strip()
     if not code:   # người đã có hồ sơ đang mở: giữ mã cũ (đổi chức danh không đổi mã); người mới: mã kế tiếp
         code = await ctx.val("SELECT employee_code FROM hr.employments WHERE party_id=%s AND entity_id IS NOT DISTINCT FROM %s AND ended_on IS NULL",
-                             (inp.party_id, entity)) or await _next_employee_code(ctx, entity)
-    # Mã trùng người khác: báo rõ tại đây; trigger giữ lần cuối nếu có đường ghi khác.
+                             (inp.party_id, entity))
+        if not code:   # hai người mới ghi cùng lúc không được nhận cùng "mã kế tiếp": xếp hàng theo pháp nhân trong lúc đặt mã
+            await ctx.exec("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (f"hr-code:{ctx.p.tenant_id}:{entity}",))
+            code = await _next_employee_code(ctx, entity)
+    # Mã trùng người khác: báo rõ tại đây; ràng buộc loại trừ của DB giữ lần cuối cho mọi đường ghi (hr/115).
     if await ctx.val(
         "SELECT 1 FROM hr.employments WHERE party_id<>%s AND employee_code=%s AND entity_id IS NOT DISTINCT FROM %s",
         (inp.party_id, code, entity),

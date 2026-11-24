@@ -368,6 +368,20 @@ async def test_no_table_keeps_file_bodies_in_bytea() -> None:
     assert found == "", f"cột bytea giữ thân tệp: {found} — dùng kernel/files.py (0122)"
 
 
+async def test_foreign_keys_between_company_tables_carry_the_company() -> None:
+    """ADR 0258: khoá ngoại giữa hai bảng CÙNG mang ``tenant_id`` phải mang cả ``tenant_id`` (dòng con và dòng cha luôn cùng công ty — DB tự giữ, kể cả
+    khi mã chạy bằng kết nối owner / quyền hệ thống, nơi RLS không chặn). Bảng mới khai thẳng ``FOREIGN KEY (tenant_id, x) REFERENCES đích (tenant_id, id)``;
+    hoặc migration của gói gọi ``CALL core.tenant_fks(ARRAY['<schema>'])`` sau khi tạo bảng. Quét MỌI schema đang có (cả gói ngoài đang cài)."""
+    bad = await owner_val(
+        """SELECT coalesce(string_agg(c.conrelid::regclass || '.' || c.conname || ' → ' || c.confrelid::regclass, ', ' ORDER BY c.conrelid::regclass::text, c.conname), '')
+           FROM pg_constraint c JOIN pg_class r ON r.oid = c.conrelid JOIN pg_namespace n ON n.oid = r.relnamespace
+           WHERE c.contype = 'f' AND n.nspname NOT IN ('public', 'dbos') AND n.nspname !~ '^pg_' AND c.confrelid <> 'core.tenants'::regclass
+             AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
+             AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.confrelid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
+             AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey) AND a.attname = 'tenant_id')""")
+    assert bad == "", f"khoá ngoại thiếu tenant_id (ADR 0258): {bad}"
+
+
 def test_pack_guards_list_names_every_source_scanning_test() -> None:
     """0191: test đọc mã qua ``tests/module_src.py`` cũng quét gói ngoài đang cài — phát hành chạy lại đúng các file ghi ở ``tests/pack_guards.txt`` sau
     khi cài gói của bản cài. File test mới dùng ``module_src`` mà quên ghi vào danh sách ⇒ gói ngoài lọt luật đó."""
