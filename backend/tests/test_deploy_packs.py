@@ -38,7 +38,9 @@ SAMPLE_INSTANCE = {
 
 
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+    # tên người ghi riêng cho test: máy CI không khai user.name / user.email ⇒ `git tag -a` / commit lỗi (mã 128)
+    who = ("-c", "user.name=Barista test", "-c", "user.email=test@example.invalid")
+    return subprocess.run(["git", *who, "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
 def _pack_repo(tmp_path: Path, *, version: str = "1.0.0", requires: str = ">=1.3,<2", tag: str | None = "demo_pack/v1.0.0") -> Path:
@@ -347,6 +349,7 @@ def test_build_tags_the_api_image_with_the_pack_set(tmp_path: Path, monkeypatch:
     api-packs.Dockerfile ghép gói lên ảnh lõi — gói riêng tư không lên CI công khai. Web không có gói ⇒ chỉ kéo."""
     if on_vps:
         monkeypatch.setenv("BARISTA_BUILD_ON_VPS", "1")
+        monkeypatch.setattr(ops, "_builder", lambda: [])   # máy có buildx (CI) ⇒ không tạo builder thật; builder có trần: test riêng bên dưới
     else:
         monkeypatch.delenv("BARISTA_BUILD_ON_VPS", raising=False)
         monkeypatch.setattr(ops, "_pull", lambda service, sha: f"{ops.REGISTRY}/barista-{service}:{sha}")

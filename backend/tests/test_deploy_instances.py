@@ -274,6 +274,7 @@ def _archive(tmp_path) -> Path:
 @pytest.mark.parametrize("have", [True, False])
 def test_build_reuses_the_shared_image_of_this_commit_and_renders_the_stack(tmp_path, monkeypatch, have):
     monkeypatch.setenv("BARISTA_BUILD_ON_VPS", "1")   # đường dựng trên VPS (CI hỏng); đường mặc định kéo ảnh CI: test_build_pulls_the_ci_image…
+    monkeypatch.setattr(ops, "_builder", lambda: [])   # máy có buildx (CI) ⇒ không tạo builder thật; builder có trần: test_deploy_packs
     built: list[str] = []
     state = {"barista-api": SHA if have else None, "barista-web": SHA if have else None}
     monkeypatch.setattr(ops, "_revision", lambda image: state[image.split(":")[0]])
