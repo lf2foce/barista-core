@@ -3052,7 +3052,7 @@ async def delivery_health(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
 
 # ---- Màn hình (0069): module tự khai phân hệ / góp màn vào phân hệ khác; workspaces.py chỉ ráp và lọc theo quyền
 _STORE_SCREENS = (
-    Screen("store", "Store", "square.grid.2x2.fill", "admin.pack_store"),
+    # Store (chợ gói) ẨN khỏi menu 24/11/2026 (anh Anh, ADR 0261): tầng hệ thống — nhà vận hành bật gói khi cài; người dùng thấy "Kết nối & kỹ năng".
     Screen("packs", "Gói đang dùng", "square.stack.3d.up", "admin.packs", open=Open("admin.pack_info", {"pack": "id"}, "Trang gói")),
     Screen("profile", "Hồ sơ công ty cho trợ lý", "building.columns", "admin.profile",
            row_actions=(A("admin.set_profile", "Sửa", prefill={"about": "about"}, style="primary"),)),
@@ -3144,7 +3144,7 @@ _ADMIN_SCREENS = (
 _GROUP_OF = {
     **dict.fromkeys(("profile", "brand", "settings", "legal_entities"), "Công ty"),
     **dict.fromkeys(("users", "teams", "permissions", "chains", "info_access"), "Người & quyền"),
-    **dict.fromkeys(("store", "packs"), "Gói & ứng dụng"),
+    **dict.fromkeys(("packs",), "Gói & ứng dụng"),
     **dict.fromkeys(("agent", "agent_actions", "ai_usage"), "Trợ lý AI"),
     **dict.fromkeys(("vocabulary", "timezone", "country", "field_defs", "import_retention", "import_mappings", "idempotency_retention", "agent_groups",
                      "role_hints", "role_tools", "role_rail", "config_questions"), "Nâng cao"),

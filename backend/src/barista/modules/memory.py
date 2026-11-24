@@ -380,6 +380,8 @@ def _attn_review(o: Any) -> Line | None:
 # một nghiệp vụ trên menu phân hệ. Phân hệ ``account`` không lên menu: manifest gửi riêng ở ``account`` (``workspaces.ACCOUNT``), app vẽ trong menu
 # tài khoản. Module khác góp màn cá nhân bằng ``m.screens("account", …)``.
 m.workspace(Workspace("account", "Tài khoản", "person.crop.circle", (
+    Screen("plugins", "Kết nối & kỹ năng", "puzzlepiece.extension", "core.plugins", tint="purple", pinnable=False,
+           about="Những gì đang nối với Barista: kỹ năng của trợ lý, ChatGPT / Claude của bạn, và nguồn dữ liệu, app bên ngoài của công ty."),
     Screen("memory", "Trí nhớ của trợ lý", "brain.head.profile", "memory.items", tint="pink", pinnable=False,
            actions=(A("memory.remember", style="primary"),),
            row_actions=(A("memory.forget", bind={"memory_id": "id"}, style="destructive"),)),

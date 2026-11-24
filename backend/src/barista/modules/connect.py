@@ -391,7 +391,8 @@ async def apps(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     for r in rows:
         r["grants"] = remote_apps.format_grants(await remote_apps.app_grants(ctx.conn, r["id"]))
         r["claim"] = "me" if r.pop("secret_claim_by") == ctx.p.user_id and r["status"] == "active" else ""
-        r["secret"] = (f"Chờ {r['claimer']} nhận" if r.pop("claimer") else "Đã nhận" if r["secret_set_at"] else "Chưa có")
+        claimer = r.pop("claimer")   # rà 24/11/2026: trước đọc tên SAU khi đã xoá khỏi dòng ⇒ app vừa cài (khoá chờ người nhận) làm cả màn lỗi
+        r["secret"] = f"Chờ {claimer} nhận" if claimer else "Đã nhận" if r["secret_set_at"] else "Chưa có"
     return ui.table(rows, [
         ui.col("name", "Ứng dụng"), ui.col("status", "Trạng thái", "badge", labels=STATUS, tones={"active": "green", "revoked": "gray"}),
         ui.col("client_id", "client_id", width=220), ui.col("grants", "Quyền", width=260), ui.col("events", "Sự kiện", width=200),
