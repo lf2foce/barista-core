@@ -341,10 +341,13 @@ async def board(ctx: Ctx, inp: BoardIn) -> dict[str, Any]:
             ui.col("mismatch", "", "badge", tones={"Lệch tổng người": "orange"})]
     if closed:
         cols.append(ui.col("closed", "Số đã chốt"))
+    # Ô số đếm theo DÒNG NGƯỜI và DÒNG ĐỘI riêng (rà 23/11/2026): một đội đã gồm số của người trong đội — cộng / lấy trung bình chung hai loại dòng là đếm
+    # một kết quả hai lần; trung bình % của nhiều CHỈ SỐ khác nhau (lead, lịch hẹn, doanh số) cũng không mang nghĩa gì ⇒ không có ô "% đạt trung bình".
+    persons, teams = [r for r in rows if r["user_id"]], [r for r in rows if not r["user_id"]]
     return ui.table(rows, cols, title=f"KPI đội · {p:%m/%Y}", kpis=[
-        ui.kpi("Chỉ tiêu", len(rows)), ui.kpi("Đã đạt", sum(1 for r in rows if r["status"] == STATUS["met"])),
-        ui.kpi("Chậm / không đạt", len(behind), tone="orange" if behind else None),
-        ui.kpi("% đạt trung bình", f"{sum(r['pct'] for r in rows) / len(rows):.0f}%" if rows else "—", "text"),
+        ui.kpi("Người đạt", f"{sum(1 for r in persons if r['status'] == STATUS['met'])}/{len(persons)}", "text", hint="Mỗi chỉ tiêu của một người là một dòng"),
+        *([ui.kpi("Đội đạt", f"{sum(1 for r in teams if r['status'] == STATUS['met'])}/{len(teams)}", "text")] if teams else []),
+        ui.kpi("Người chậm / không đạt", sum(1 for r in behind if r["user_id"]), tone="orange" if any(r["user_id"] for r in behind) else None),
         *([ui.kpi("Đội lệch tổng người", mismatched, tone="orange",
                   hint="Chỉ tiêu đội khác tổng chỉ tiêu của người trong đội — không sai, nhưng nên thống nhất trước khi tính thưởng")] if mismatched else []),
     ], note="Chỉ hiện người / đội trong phạm vi bạn quản lý. Chỉ tiêu đội cộng cả các đội con.", empty="Kỳ này chưa có chỉ tiêu trong phạm vi của bạn.")

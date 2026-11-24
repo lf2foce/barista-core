@@ -27,7 +27,7 @@ from barista.kernel import events, executor
 from barista.kernel.clock import VN, today
 from barista.kernel.principal import Principal, system_principal
 from barista.kernel.workhours import Hours, add_working_minutes
-from tests.conftest import fresh_phone, ok, owner_val
+from tests.conftest import Who, fresh_phone, ok, owner_val
 from tests.module_src import module_files, rel
 
 _seq = itertools.count(1)
@@ -424,3 +424,22 @@ async def test_duty_team_lead_at_21h_is_due_next_morning_not_tomorrow_night(monk
     assert await _state(out["lead_id"], "first_call_due") == _vn(mon + timedelta(days=1), 9, 30)
 
 
+
+
+
+async def test_the_first_real_contact_moves_a_new_lead_on_and_nothing_else_does(who: Who) -> None:
+    """Rà 23/11/2026: lead đã được chăm sóc vẫn nằm ở "Mới" ⇒ phễu vô nghĩa. Lần đầu nói chuyện được (gọi nghe máy / gặp / dẫn xem) chuyển lead từ chặng
+    ĐẦU TIÊN sang chặng kế; gọi không nghe, ghi chú, hay lead đã ở chặng khác thì không đổi."""
+    sale = await who("sale1")
+    lead = (await ok(sale, "crm.create_lead", name="Khách lần đầu", phone=fresh_phone()))["lead_id"]
+    stage = lambda: owner_val("SELECT pipeline_stage FROM crm.leads WHERE id = %s", (lead,))   # noqa: E731
+    first = await stage()
+    await ok(sale, "crm.log_activity", lead_id=str(lead), kind="call", outcome="no_answer")
+    await ok(sale, "crm.log_activity", lead_id=str(lead), kind="note", note="ghi chú nội bộ")
+    assert await stage() == first
+    out = await ok(sale, "crm.log_activity", lead_id=str(lead), kind="call", outcome="connected", note="khách nghe, hẹn gửi thông tin")
+    moved = await stage()
+    assert moved != first and out["stage_moved_to"]
+    assert await owner_val("SELECT count(*) FROM crm.stage_events WHERE lead_id = %s AND kind = 'pipeline'", (lead,)) >= 1   # đi qua lệnh chuyển chặng
+    await ok(sale, "crm.log_activity", lead_id=str(lead), kind="meet")
+    assert await stage() == moved                                                    # chỉ lần đầu, chỉ từ chặng đầu

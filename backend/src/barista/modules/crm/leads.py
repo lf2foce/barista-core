@@ -291,7 +291,24 @@ async def log_activity(ctx: Ctx, inp: LogActivity) -> dict[str, Any]:
     was = await ctx.val("UPDATE crm.leads SET last_activity_at = CASE WHEN %s THEN last_activity_at ELSE now() END, next_follow_up = %s,"
                         " updated_at = now() WHERE id = %s RETURNING old.next_follow_up", (inp.kind == "note", follow, inp.lead_id))
     await ctx.track("crm.lead", inp.lead_id, "next_follow_up", was, follow)   # lịch sử thay đổi (ADR 0246)
-    return {"lead_id": inp.lead_id}
+    moved = await _first_contact_moves_on(ctx, inp) if inp.kind != "note" else None
+    return {"lead_id": inp.lead_id, **({"stage_moved_to": moved} if moved else {})}
+
+
+async def _first_contact_moves_on(ctx: Ctx, inp: LogActivity) -> str | None:
+    """Rà 23/11/2026: 342 / 437 lead ở chặng "Mới" đã được chăm sóc mà chặng không đổi ⇒ phễu vô nghĩa. Lần ĐẦU nói chuyện được với khách (gọi nghe máy, gặp,
+    dẫn đi xem) là SỰ THẬT ghi được, không phải phán đoán ⇒ lead đang ở chặng ĐẦU TIÊN của công ty thì sang chặng kế (theo thứ tự công ty đặt) qua đúng lệnh
+    chuyển chặng (lịch sử chặng, sự kiện). Chặng khác, chặng do người đặt sau đó: không đụng. Trả tên chặng mới (hiện cho người ghi) hoặc None."""
+    if not ((inp.kind == "call" and inp.outcome == "connected") or inp.kind in ("meet", "visit")):
+        return None
+    stages = await ctx.all("SELECT key, label, phase, sort FROM crm.stages WHERE active AND phase IN ('lead', 'prospect') ORDER BY sort, key")
+    if len(stages) < 2:
+        return None
+    current = await ctx.val("SELECT pipeline_stage FROM crm.leads WHERE id = %s", (inp.lead_id,))
+    if current != stages[0]["key"]:
+        return None
+    await ctx.call("crm.set_stage", lead_id=str(inp.lead_id), stage=stages[1]["key"])
+    return str(stages[1]["label"])
 
 
 class LeadRef(Input):

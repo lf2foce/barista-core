@@ -74,7 +74,8 @@ NEW_MAINTENANCE = NEW_MAINTENANCE | {"crm/084_campaign_plan_routing.sql"}
 NEW_MAINTENANCE = NEW_MAINTENANCE | {"base/112_team_terms.sql", "hr/068_structure_to_core.sql"}
 # 0258: khoá ngoại theo công ty — mỗi gói một file gọi core.tenant_fks (chỉ siết ràng buộc) ⇒ không bảo trì
 TENANT_FKS = {f"{p}/114_tenant_fks.sql" for p in ("base", "books", "crm", "directory", "finance", "hr", "kpi", "marketing", "meet", "mgmt", "pay", "schedule", "talk", "timekeeping", "training", "word")}
-NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | TENANT_FKS | {"hr/115_employment_guards.sql",   # mã nhân viên / chồng ngày do ràng buộc loại trừ giữ (chỉ siết) ⇒ không bảo trì
+NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | TENANT_FKS | {"schedule/115_kind_usage.sql",   # đếm "Đã dùng" của loại lịch (hàm mới) ⇒ không bảo trì
+                                                           "hr/115_employment_guards.sql",   # mã nhân viên / chồng ngày do ràng buộc loại trừ giữ (chỉ siết) ⇒ không bảo trì
                                                            "base/113_team_term_editors.sql",   # 0256: người sửa theo từng căn cứ (thêm cột + thân hàm trigger) ⇒ không bảo trì riêng
                                               "word/001_documents.sql", "word/002_chat.sql",   # 0251 lát 2: cột chat của văn bản (chỉ thêm, mặc định hằng) ⇒ không bảo trì
                # 0227: văn bản Word sửa trong app (schema mới, chỉ thêm) ⇒ không bảo trì

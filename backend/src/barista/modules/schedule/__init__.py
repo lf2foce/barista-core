@@ -1180,6 +1180,25 @@ def _default_span(inp: FindFree) -> tuple[datetime, datetime]:
     return s, e
 
 
+async def _members_as_people(ctx: Ctx, team: Any, have: set[Any], s: datetime, e: datetime, skip: UUID | None, busy: set[Any]) -> list[dict[str, Any]]:
+    """Thành viên đang làm chưa có dòng nguồn lực "người" ⇒ ứng viên của Tìm người rảnh, trong phạm vi người hỏi: cả công ty, hoặc đội mình thuộc / quản lý
+    (cùng phạm vi như nguồn lực theo đội). Người đang ở một lịch trùng giờ (giữ cứng hoặc đã nhận lời) ⇒ thêm vào ``busy``."""
+    rows = await ctx.all(
+        """SELECT u.id AS user_id, u.name, t.name AS team, tm.team_id FROM core.memberships mb JOIN core.users u ON u.id = mb.user_id
+           LEFT JOIN core.team_members tm ON tm.user_id = u.id AND tm.is_home LEFT JOIN core.teams t ON t.id = tm.team_id
+           WHERE mb.active AND (%s::uuid IS NULL OR tm.team_id = %s) ORDER BY u.name LIMIT 500""", (team, team))
+    if not ctx.p.has_scope("schedule", "all"):
+        mine = set(ctx.p.member_teams) | set(ctx.p.managed_teams)
+        rows = [r for r in rows if r["user_id"] == ctx.p.user_id or r["team_id"] in mine]
+    out = [{"id": r["user_id"], "name": r["name"], "nature": "person", "kind": "", "tags": [], "capacity": 1, "user_id": r["user_id"], "team": r["team"] or ""}
+           for r in rows if r["user_id"] not in have]
+    if out:
+        taken = {r["user_id"] for r in await ctx.all("""SELECT DISTINCT user_id FROM schedule.blocks(%s::uuid[], %s::uuid[], tstzrange(%s, %s), %s)
+                                                        WHERE hard OR rsvp = 'accepted'""", ([], [c["user_id"] for c in out], s, e, skip))}
+        busy |= {c["id"] for c in out if c["user_id"] in taken}
+    return out
+
+
 @m.query("find_free", resource="schedule", title="Tìm người / phòng rảnh")
 async def find_free(ctx: Ctx, inp: FindFree) -> dict[str, Any]:
     """Người / phòng RẢNH trong khoảng giờ: đang dùng, đúng loại / thẻ / đội / sức chứa, khoảng giờ nằm trong giờ rảnh theo tuần, và không có lịch đang
@@ -1197,6 +1216,11 @@ async def find_free(ctx: Ctx, inp: FindFree) -> dict[str, Any]:
          "skip": inp.except_event_id})
     ids = [c["id"] for c in cands]
     win, busy = (await _windows(ctx, ids), await _busy(ctx, ids, s, e, inp.except_event_id)) if ids else ({}, set())
+    # Thành viên đang làm LÀ người của công ty (rà 23/11/2026: 25 thành viên mà "Tìm người rảnh" báo "chưa có ai" vì chưa ai thêm tay vào Người & phòng).
+    # Người chưa có dòng nguồn lực riêng vẫn là ứng viên — giờ rảnh không giới hạn (chưa khai), bận theo lịch họ đang ở; dòng Người & phòng chỉ còn để
+    # khai giờ rảnh / kỹ năng riêng. Không áp được điều kiện loại / kỹ năng / sức chứa (chưa khai) ⇒ lúc lọc theo các điều kiện đó thì không thêm.
+    if inp.nature in ("", "person") and not inp.kind.strip() and not tags_of(inp.tags) and inp.min_capacity <= 1:
+        cands += await _members_as_people(ctx, team, {c["user_id"] for c in cands if c["user_id"]}, s, e, inp.except_event_id, busy)
     # người có tài khoản đang được mời / đã nhận một lịch khác (họp, hẹn khách, nghỉ — 0158) cũng là bận, dù lịch đó không giữ cứng họ
     if users := [c["user_id"] for c in cands if c["user_id"]]:
         soft = {r["user_id"] for r in await ctx.all("""SELECT DISTINCT user_id FROM schedule.blocks(%s::uuid[], %s::uuid[], tstzrange(%s, %s), %s)

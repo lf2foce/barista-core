@@ -96,17 +96,17 @@ async def save_kind(ctx: Ctx, inp: KindIn) -> dict[str, Any]:
 
 @m.query("kinds", resource="schedule", title="Loại lịch")
 async def kinds(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
-    rows = await ctx.all("""SELECT k.key, k.label, k.active, k.sort, k.tone, (SELECT count(*) FROM schedule.events e WHERE e.kind = k.key) AS used
-                            FROM schedule.kinds k ORDER BY k.active DESC, k.sort, k.label""")
+    rows = await ctx.all("""SELECT k.key, k.label, k.active, k.sort, k.tone, coalesce(u.used, 0) AS used
+                            FROM schedule.kinds k LEFT JOIN schedule.kind_usage() u ON u.kind = k.key ORDER BY k.active DESC, k.sort, k.label""")
     for r in rows:
         r["id"] = r["key"]
         r["state"] = "active" if r["active"] else "inactive"
         r["color"] = r["tone"] or "auto"
-    return ui.table(rows, [ui.col("label", "Tên", width=220), ui.col("key", "Mã"),
+    return ui.table(rows, [ui.col("label", "Tên", width=220),
                            ui.col("color", "Màu trên lịch", "badge", labels={"auto": "Tự chọn", **TONES}, tones={k: k for k in TONES}), ui.col("used", "Đã dùng", "number"), ui.col("sort", "Thứ tự", "number"),
                            ui.col("state", "Trạng thái", "badge", labels={"active": "Đang dùng", "inactive": "Đã tắt"}, tones={"active": "green", "inactive": "gray"})],
                     title="Loại lịch", limit=500, empty="Chưa có loại lịch nào — bật gói sẽ có bộ mặc định, hoặc bấm “Thêm / sửa loại lịch”.",
-                    note="Gói góp loại của mình khi cài (họp, lịch của gói ngành…); công ty đổi tên / tắt tuỳ ý. “Đã dùng” đếm lịch bạn xem được.")
+                    note="Gói góp loại của mình khi cài (họp, lịch của gói ngành…); công ty đổi tên / tắt tuỳ ý. “Đã dùng” đếm mọi lịch của công ty mang loại đó (kể cả lịch riêng của từng người — chỉ đếm, không hiện nội dung).")
 
 
 @m.query("event_kind_options", resource="schedule", title="Chọn loại lịch")

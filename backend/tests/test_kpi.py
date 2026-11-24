@@ -91,3 +91,16 @@ async def test_team_lead_sees_who_needs_coaching_first(who: Who) -> None:
     people_behind = {r["user_id"] for r in board["rows"] if r["user_id"] and r["status"] in ("Chậm", "Không đạt")}
     assert said == ([f"{len(people_behind)} người trong đội đang chậm chỉ tiêu tháng"] if people_behind else [])
     assert not [i for i in await desk.attention(sale1) if i.get("query") == "kpi.board"]
+
+
+async def test_board_tiles_count_people_and_teams_separately_and_never_average_across_metrics(who: Who) -> None:
+    """Rà 23/11/2026: ô "% đạt trung bình" lấy trung bình % của MỌI dòng — trộn dòng đội (đã gồm số của người) với dòng người, và trộn các chỉ số khác nhau.
+    Ô số đếm riêng dòng người và dòng đội; không còn ô trung bình."""
+    page = await q(await who("giamdoc"), "kpi.board", period=THIS)
+    tiles = {k["label"]: k["value"] for k in page["kpis"]}
+    persons = [r for r in page["rows"] if r["user_id"]]
+    teams = [r for r in page["rows"] if not r["user_id"]]
+    assert "% đạt trung bình" not in tiles
+    assert tiles["Người đạt"] == f"{sum(1 for r in persons if r['status'] == 'Đạt')}/{len(persons)}"
+    if teams:
+        assert tiles["Đội đạt"].endswith(f"/{len(teams)}")

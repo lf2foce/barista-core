@@ -144,7 +144,7 @@ async def test_a_lead_sitting_idle_past_its_stage_threshold_is_flagged_for_owner
     sale = pp["a"]
     idle = await _lead(sale, "Khách nằm im")
     fresh = await _lead(sale, "Khách mới về")
-    await ok(sale, "crm.log_activity", lead_id=str(idle), kind="call", outcome="connected")
+    await ok(sale, "crm.log_activity", lead_id=str(idle), kind="zalo", note="Gửi thông tin")   # chăm sóc nhưng chưa nói chuyện được ⇒ vẫn ở chặng Mới
     await _age(idle, 12, activity_days=9)                       # vào chặng 12 ngày trước, chăm sóc lần cuối 9 ngày trước ⇒ nằm im 9 ngày > 7
 
     mine = await q(sale, "crm.leads")

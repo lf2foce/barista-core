@@ -397,9 +397,11 @@ async def test_empty_company_explains_itself_and_offers_the_next_step() -> None:
     domain = f"l{uuid.uuid4().hex[:6]}.demo"
     tid = await seed.create_tenant(f"Công ty trống {domain}", domain, people=PEOPLE, packs=("schedule",), about="chưa có người hay phòng")
     admin, nv1 = await seed.who(tid, "admin", domain), await seed.who(tid, "nv1", domain)
+    # chưa ai thêm nguồn lực nào: thành viên đang làm vẫn LÀ người rảnh để tìm (rà 23/11/2026) — chỉ phòng / thiết bị phải khai
     free = await q(admin, "schedule.find_free")
-    assert free["empty"] == "Chưa có người hay phòng nào. Thêm ở Người & phòng." and free["kpis"] == []
-    assert [a["command"] for a in free["empty_actions"]] == ["schedule.add_resource"]
+    assert {r["name"] for r in free["rows"]} >= {admin.name, nv1.name} and all(r["nature"] == "person" for r in free["rows"])
+    rooms = await q(admin, "schedule.find_free", nature="thing")
+    assert rooms["empty"] == "Chưa có người hay phòng nào. Thêm ở Người & phòng." and [a["command"] for a in rooms["empty_actions"]] == ["schedule.add_resource"]
     week = await q(admin, "schedule.week")
     assert "chưa có người hay phòng nào" in week["empty"] and [a["command"] for a in week["empty_actions"]] == ["schedule.add_resource"]
     assert (await q(admin, "schedule.resources"))["empty"].startswith("Chưa có người hay phòng nào.")
@@ -413,3 +415,23 @@ async def test_an_empty_week_gives_a_short_hint(co: dict[str, Any]) -> None:
     week = await q(co["who"]["admin"], "schedule.week", week_of=far)
     assert week["rows"] == [] and week["empty"].startswith("Tuần này chưa có lịch nào.") and "Đặt lịch" in week["empty"] and "tên bạn" not in week["empty"]
     assert "tên bạn" in (await q(co["who"]["nv1"], "schedule.week", week_of=far))["empty"]
+
+
+async def test_members_are_people_for_find_free_and_kind_usage_counts_private_entries(who: Any) -> None:
+    """Rà 23/11/2026: (1) công ty nhiều thành viên mà "Tìm người rảnh" báo "chưa có ai" — thành viên đang làm LÀ người, không cần thêm tay vào Người & phòng;
+    người đang ở một lịch trùng giờ thì bận. (2) "Đã dùng" của loại lịch đếm cả lịch riêng tư của người khác (chỉ đếm), không chỉ lịch người xem đọc được."""
+    from tests.conftest import fresh_sale
+
+    admin = await who("admin")
+    a, b = await fresh_sale(who), await fresh_sale(who)
+    day = today() + timedelta(days=9)
+    await ok(b, "schedule.plan", title="Việc riêng", day=day.isoformat(), start="14:00", end="15:00", kind="meeting", visibility="private")
+    free = await q(admin, "schedule.find_free", day=day.isoformat(), start="14:00", end="15:00")
+    names = {r["name"] for r in free["rows"]}
+    assert a.name in names and b.name not in names                                   # a rảnh (chưa khai gì), b đang có lịch
+    assert {r["nature"] for r in free["rows"]} <= {"person", "thing"}
+    used = {r["key"]: r["used"] for r in (await q(admin, "schedule.kinds"))["rows"]}
+    async with db.owner.connection() as c:
+        total = (await (await c.execute("SELECT count(*) AS n FROM schedule.events WHERE tenant_id = %s AND kind = 'meeting' AND status <> 'cancelled'",
+                                        (admin.tenant_id,))).fetchone())["n"]   # type: ignore[index]
+    assert used["meeting"] == total and total >= 1

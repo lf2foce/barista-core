@@ -168,3 +168,22 @@ async def test_who_placed_the_member_and_who_made_them_lead_are_both_kept(who: W
     await as_user(boss, "UPDATE core.team_members SET is_lead = false WHERE user_id = %s AND team_id = %s", sale.user_id, team_id)
     assert await owner_val("SELECT home_by FROM core.team_terms WHERE user_id = %s AND team_id = %s AND valid_to IS NULL AND lead_by IS NULL",
                            (sale.user_id, team_id)) == admin.user_id
+
+
+async def test_every_approval_that_sets_a_lead_names_the_lead_it_replaces(who: Who) -> None:
+    """Một đội một trưởng (0256) ⇒ đặt trưởng mới là thay người đang giữ. Ba đường đặt trưởng (ghi trưởng đội, sửa người dùng, thêm vào đội) cùng nói rõ
+    trên phiếu duyệt ai bị thay — người duyệt quyết cả hai việc. (Đọc đúng câu mà phiếu dùng: hàm ``sensitive`` của từng lệnh.)"""
+    from barista.modules import admin as admin_mod
+
+    admin = await who("admin")
+    code = await _team(admin)
+    old, a, b, c = [await fresh_sale(who, code) for _ in range(4)]
+    await approved(admin, "admin.set_team_lead", team_code=code, email=old.email)
+    async with db.tenant_tx(admin, read_only=True) as conn:
+        ctx = core_ctx(conn, admin, module="admin")
+        texts = [await admin_mod._team_lead_access(ctx, admin_mod.TeamLead(team_code=code, email=a.email)),
+                 await admin_mod._member_access(ctx, admin_mod.UpdateMember(email=b.email, is_lead=True)),
+                 await admin_mod._add_team_access(ctx, admin_mod.AddTeam(email=c.email, team_code=code, is_lead=True))]
+        same = await admin_mod._team_lead_access(ctx, admin_mod.TeamLead(team_code=code, email=old.email))
+    assert all(t and f"thay {old.name}" in t for t in texts), texts
+    assert same is not None and "thay" not in same                                  # đặt lại chính người đang giữ: không "thay" ai

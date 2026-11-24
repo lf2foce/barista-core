@@ -289,13 +289,24 @@ async def _lead_row(ctx: Ctx, email: str, code: str) -> dict[str, Any] | None:
                             JOIN core.teams t ON t.id = tm.team_id WHERE u.email = %s AND t.code = %s""", (email.lower(), code))
 
 
+async def _replaces(ctx: Ctx, code: str, newcomer: str) -> str:
+    """MỘT đội MỘT trưởng (0256): đặt trưởng mới là thay người đang giữ — phiếu duyệt nói rõ ai bị thay (người duyệt quyết cả hai việc, không chỉ một).
+    Dùng chung cho mọi đường đặt trưởng (ghi trưởng đội, sửa người dùng, thêm vào đội)."""
+    row = await ctx.one("""SELECT u.name, u.email FROM core.team_members tm JOIN core.teams t ON t.id = tm.team_id JOIN core.users u ON u.id = tm.user_id
+                           WHERE t.code = %s AND tm.is_lead""", (code,))
+    if row is None or row["email"].lower() == newcomer.strip().lower():
+        return ""
+    return f" (thay {row['name'] or row['email']}, người này thành thành viên thường)"
+
+
 async def _add_team_access(ctx: Ctx, inp: AddTeam) -> str | None:
     """Trưởng đội có phạm vi "đội mình quản" trên cả cây con và là người duyệt bước "trưởng nhóm" ⇒ đặt / bỏ trưởng là đổi quyền (0029);
     thêm thành viên thường thì không."""
     row = await _lead_row(ctx, inp.email, inp.team_code)
     if inp.is_lead == bool(row and row["is_lead"]):
         return None
-    return f"{(row or {}).get('name') or inp.email}: {'làm' if inp.is_lead else 'thôi'} trưởng đội {inp.team_code}"
+    return f"{(row or {}).get('name') or inp.email}: {'làm' if inp.is_lead else 'thôi'} trưởng đội {inp.team_code}" + (
+        await _replaces(ctx, inp.team_code, inp.email) if inp.is_lead else "")
 
 
 async def _remove_team_access(ctx: Ctx, inp: TeamMemberRef) -> str | None:
@@ -352,7 +363,7 @@ class TeamLead(Input):
 async def _team_lead_access(ctx: Ctx, inp: TeamLead) -> str | None:
     """Đặt / bỏ trưởng đội là đổi quyền (phạm vi "đội mình quản", người duyệt bước trưởng nhóm — 0029) và đổi người hưởng theo cơ cấu (0160)."""
     return f"đội {inp.team_code}: {'trưởng mới ' + inp.email.lower() if inp.email.strip() else 'bỏ trống chức trưởng'}" + (
-        f" từ {inp.valid_from:%d/%m/%Y}" if inp.valid_from else "")
+        f" từ {inp.valid_from:%d/%m/%Y}" if inp.valid_from else "") + (await _replaces(ctx, inp.team_code, inp.email) if inp.email.strip() else "")
 
 
 @m.command("set_team_lead",
@@ -440,7 +451,8 @@ async def _member_access(ctx: Ctx, inp: UpdateMember) -> str | None:
     lead_changed = inp.is_lead is not None and inp.is_lead != m["home_lead"]
     team_changed = inp.team_code is not None and inp.team_code != m["home_code"]
     if lead_changed:
-        out.append(f"{'làm' if inp.is_lead else 'thôi'} trưởng đội {inp.team_code or m['home_code'] or ''}".rstrip())
+        code = inp.team_code or m["home_code"] or ""
+        out.append(f"{'làm' if inp.is_lead else 'thôi'} trưởng đội {code}".rstrip() + (await _replaces(ctx, code, inp.email) if inp.is_lead and code else ""))
     elif team_changed and m["home_lead"]:
         out.append(f"trưởng đội chuyển đội chính {m['home_code'] or '—'} → {inp.team_code}")
     return _who(m, inp.email) + "; ".join(out) if out else None

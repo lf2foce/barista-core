@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any
 
 from barista.modules.acct.reconcile import match_lines
+from tests.conftest import Who, ok, q
 
 D = date(2026, 11, 5)
 
@@ -57,3 +58,19 @@ def test_same_payer_and_unit_across_contracts_never_autoselects_one() -> None:
     a["party"] = b["party"] = "Chủ đầu tư chung"
     out = match_lines([_ln("Thanh toan phi can 12A01", 80_000_000)], [a, b])
     assert out[0]["match"] == "unmatched" and not out[0]["code"]
+
+
+async def test_a_line_already_in_the_books_shows_as_waiting_for_allocation_not_unrecorded(who: Who) -> None:
+    """Rà 23/11/2026: một dòng tiền đã ghi vào sổ (Tiền về chưa phân bổ) hiện ở Đối soát sao kê là "Chưa khớp — Số tiền chưa ghi" trong khi màn Tiền về
+    chưa phân bổ nói nó đã ở sổ cái. Một dòng một trạng thái: "Đã vào sổ — chờ phân bổ"."""
+    import uuid as _uuid
+
+    from barista.kernel.clock import today as _today
+    ketoan = await who("ketoan")
+    ref = f"PARK{_uuid.uuid4().hex[:8].upper()}"
+    out = await ok(ketoan, "acct.record_unapplied", amount_vnd=12_345_678, received_on=_today().isoformat(), memo=f"tien chua ro {ref}", bank_ref=ref)
+    page = await q(ketoan, "acct.reconcile")
+    row = next(r for r in page["rows"] if r["id"] == str(out["line_id"]) or r.get("bank_ref") == ref)
+    assert row["state"] == "parked"
+    tiles = {k["label"]: k for k in page["kpis"]}
+    assert "Đã vào sổ, chờ phân bổ" in tiles and "Số tiền chưa ghi" not in str(page["columns"])

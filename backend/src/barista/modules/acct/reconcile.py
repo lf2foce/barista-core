@@ -31,8 +31,8 @@ from barista.modules.acct.receivables import _rest, _target
 
 LINE_STATUS = {"open": "Chưa đối soát", "applied": "Đã phân bổ", "ignored": "Bỏ qua"}
 MATCH = {"full": "Khớp đủ", "short": "Trả thiếu", "over": "Trả thừa", "amount_only": "Khớp theo số tiền", "unmatched": "Chưa khớp",
-         "settled": "Khoản đã thu đủ"}
-MATCH_TONE = {"full": "green", "short": "orange", "over": "orange", "amount_only": "blue", "unmatched": "red", "settled": "gray"}
+         "settled": "Khoản đã thu đủ", "parked": "Đã vào sổ — chờ phân bổ"}
+MATCH_TONE = {"full": "green", "short": "orange", "over": "orange", "amount_only": "blue", "unmatched": "red", "settled": "gray", "parked": "purple"}
 FEE_TOLERANCE = 50_000   # chênh ≤ mức này ⇒ nhiều khả năng phí chuyển khoản ngân hàng
 DUE_SOON_DAYS = 10       # khoản phải thu chung tới hạn trong ngần này ngày mới được khớp theo mã căn / số tiền
 
@@ -217,7 +217,7 @@ def match_lines(lines: list[dict[str, Any]], receivables: list[dict[str, Any]], 
 async def _matched(ctx: Ctx, line_ids: list[UUID] | None = None) -> list[dict[str, Any]]:
     # dòng đã ghi một phần (tiền thừa sau lần phân bổ trước) chỉ khớp tiếp phần CHƯA phân bổ
     lines = await ctx.all("""SELECT id, received_on, amount_vnd + deducted_vnd - allocated_vnd AS amount_vnd, amount_vnd AS line_total, allocated_vnd, memo, payer,
-                                    bank_ref, source, entity_id FROM acct.statement_lines
+                                    bank_ref, source, entity_id, accepted_at FROM acct.statement_lines
                              WHERE status = 'open' AND (%s::uuid[] IS NULL OR id = ANY(%s)) ORDER BY received_on, id""", (line_ids, line_ids))
     receivables = await ctx.all("""SELECT id, code, source, party, amount_vnd, paid_vnd, due_on, status, match_hints, match_keys, entity_id, invoice_no
                                    FROM acct.receivables WHERE status <> 'void'""")
@@ -253,9 +253,9 @@ async def _other_entity_hints(ctx: Ctx, unmatched: list[dict[str, Any]], receiva
 
 
 RECONCILE_VIEW = {"": "Tất cả", "full": "Khớp đủ — ghi được ngay", "diff": "Lệch số tiền", "review": "Cần người xem"}
-_VIEW_MATCH = {"full": ("full",), "diff": ("short", "over"), "review": ("amount_only", "unmatched", "settled")}
+_VIEW_MATCH = {"full": ("full",), "diff": ("short", "over"), "review": ("amount_only", "unmatched", "settled", "parked")}
 # thứ tự việc của kế toán: ghi dòng khớp đủ → xử lý lệch → xem dòng chưa rõ (rà vai kế toán 18/11/2026: "trả thiếu" từng chìm giữa dòng lẻ)
-_MATCH_ORDER = {"full": 0, "short": 1, "over": 2, "amount_only": 3, "unmatched": 4, "settled": 5}
+_MATCH_ORDER = {"full": 0, "short": 1, "over": 2, "amount_only": 3, "unmatched": 4, "parked": 5, "settled": 6}
 
 
 class ReconcileIn(Input):
@@ -271,14 +271,16 @@ async def reconcile(ctx: Ctx, inp: ReconcileIn) -> dict[str, Any]:
     total = lambda k: sum(r["amount_vnd"] for r in rows if r["match"] == k)  # noqa: E731
     full = [r for r in rows if r["match"] == "full"]
     for r in rows:
-        r["state"] = r["match"]
+        # MỘT dòng một trạng thái trên mọi màn (rà 23/11/2026): dòng đã ghi vào sổ (tiền về chưa phân bổ — ``accepted_at``) mà chưa khớp khoản nào không
+        # phải "chưa ghi" — nó ĐÃ ở sổ cái, chỉ chờ phân bổ vào khoản; màn "Tiền về chưa phân bổ" nói đúng điều này.
+        r["state"] = "parked" if r.get("accepted_at") is not None and r["match"] in ("unmatched", "amount_only") else r["match"]
     kpi_rows = rows   # ô số luôn tính trên mọi dòng chờ đối soát, không theo bộ lọc xem
     if inp.view in _VIEW_MATCH:
         rows = [r for r in rows if r["match"] in _VIEW_MATCH[inp.view]]
     rows.sort(key=lambda r: (_MATCH_ORDER.get(r["match"], 9), str(r.get("received_on") or "")))
     return ui.table(rows, [
         # cột quyết định (khớp đâu, chênh bao nhiêu, vì sao) đứng trước — màn hẹp vẫn thấy không phải cuộn ngang
-        ui.col("state", "Kết quả", "badge", labels=MATCH, tones=MATCH_TONE), ui.col("amount_vnd", "Số tiền chưa ghi", "money"),
+        ui.col("state", "Kết quả", "badge", labels=MATCH, tones=MATCH_TONE), ui.col("amount_vnd", "Số tiền chưa phân bổ", "money"),
         ui.col("code", "Khoản phải thu"), ui.col("diff", "Chênh lệch", "money"), ui.col("hint", "Gợi ý", width=260),
         ui.col("memo", "Nội dung chuyển khoản", width=280), ui.col("received_on", "Ngày", "date"), ui.col("how", "Khớp theo"),
         ui.col("remaining", "Còn phải thu", "money"), ui.col("payer", "Bên chuyển"), ui.col("bank_ref", "Số tham chiếu NH"),
@@ -294,9 +296,12 @@ async def reconcile(ctx: Ctx, inp: ReconcileIn) -> dict[str, Any]:
                              actions=[ui.act("acct.apply_statement", f"Ghi {len(full)} dòng khớp đủ", style="primary")])] if full else None,
         kpis=[ui.kpi("Khớp đủ", len(full), tone="green" if full else None, hint=_vnd(total("full")) if full else ""),
               ui.kpi("Lệch số tiền", sum(1 for r in kpi_rows if r["match"] in ("short", "over")), tone="orange"),
-              ui.kpi("Cần người xem", sum(1 for r in kpi_rows if r["match"] in ("amount_only", "unmatched", "settled")), tone="red",
+              ui.kpi("Cần người xem", sum(1 for r in kpi_rows if r["state"] in ("amount_only", "unmatched", "settled")), tone="red",
                      hint="Chưa khớp mã / chỉ khớp số tiền / khoản đã thu đủ (có thể trả trùng)"),
-              ui.kpi("Tổng tiền chờ đối soát", sum(r["amount_vnd"] for r in kpi_rows), "money")],
+              *([ui.kpi("Đã vào sổ, chờ phân bổ", sum(1 for r in kpi_rows if r["state"] == "parked"), tone="purple",
+                        hint=_vnd(sum(r["amount_vnd"] for r in kpi_rows if r["state"] == "parked")) + " — đã ghi vào Tiền về chưa phân bổ")]
+                if any(r["state"] == "parked" for r in kpi_rows) else []),
+              ui.kpi("Tổng tiền chưa phân bổ", sum(r["amount_vnd"] for r in kpi_rows), "money", hint="Gồm cả tiền đã vào sổ, chờ phân bổ")],
         note="Khớp bằng mã trong nội dung chuyển khoản + số tiền (code tính, không phải AI đoán). Chênh lệch không tự xoá nợ: ghi phần đã nhận + "
              "giao việc cho kế toán.")
 
