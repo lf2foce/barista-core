@@ -79,6 +79,7 @@ with tarfile.open(out, "w") as t:
 PY
 stage_tree "$SHIP/core.tar" "$INSTANCE_FILE" "$SHIP" "$WORK" "$PACKS_REF"
 CORE_DIGEST="$(tree_digest "$WORK" core)"   # dấu lõi riêng: release.sh bản cài KHÁC cùng lõi chỉ còn test gói của nó
+PACKS_DIGEST="$(tree_digest "$WORK" packs)"   # dấu riêng cho test gói (web / app / vận hành không tính) — cũng tính TRƯỚC khi test
 DIGEST="$(tree_digest "$WORK")"   # trước khi test (test tạo tệp tạm) — dấu cho release.sh khỏi chạy lại khi cùng nội dung
 echo "Kiểm cây làm việc $(git rev-parse --short HEAD)$([ -z "$(git status --porcelain)" ] || echo ' + thay đổi chưa commit') trong $WORK"
 lap
@@ -148,7 +149,7 @@ fi
 
 PHASE="gói ${PACKS_REF:-ghim} của $INSTANCE: pack_guards + test từng gói"; T_PHASE=$SECONDS
 PACK_DIGEST=""
-if [ "$QUICK" = 0 ] && [ -z "$PACKS_REF" ]; then PACK_DIGEST="$DIGEST"; fi
+if [ -z "$PACKS_REF" ]; then PACK_DIGEST="$PACKS_DIGEST"; fi   # cả --quick: dấu gói chỉ nói "gói đạt trên đúng nội dung này"
 check_packs "$WORK" "$PACKS" "$PACK_DIGEST" "$LABEL"
 lap
 # dấu tổng "đã kiểm đủ" chỉ khi kiểm ĐỦ cả nhóm upgrade (không --quick, không --packs-main) — release.sh khi thấy dấu này sẽ bỏ qua toàn bộ Python

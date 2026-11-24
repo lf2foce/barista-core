@@ -12,9 +12,10 @@
 #       cài mọi gói vào môi trường của WORK, test cấu trúc của lõi (tests/pack_guards.txt), rồi từng gói. Có <DIGEST>: ghi và dùng lại dấu
 #       guards-<DIGEST> cùng dấu từng gói pack-<khoá>-<DIGEST> ⇒ lỗi tạm thời ở 1 gói không mất công chạy lại lõi và các gói đã đạt trên cùng nội dung.
 #   drop_test_dbs                         xoá DB test mang mã lần chạy BARISTA_TEST_RUN_ID (gọi trong bẫy EXIT)
-#   tree_digest <WORK> [core|web]         dấu nội dung (sha256) vừa dựng — gọi NGAY sau stage_tree, trước khi test. Mặc định: backend/ + deploy/ (gồm gói)
+#   tree_digest <WORK> [core|web|packs]   dấu nội dung (sha256) vừa dựng — gọi NGAY sau stage_tree, trước khi test. Mặc định: backend/ + deploy/ (gồm gói)
 #       + mọi thứ khác test lõi đọc (scripts/packkit/, .agents/, web/src, macos/Sources, ios, 3 file docs/) + mọi file bản cài ở $BARISTA_OPS_DIR/instances;
 #       ``core``: như mặc định nhưng BỎ deploy/packs/ (bộ test lõi là hợp đồng của lõi, chạy khi CHƯA cài gói nào ⇒ không phụ thuộc gói); ``web``: web/
+#       ``packs``: chỉ thứ test gói dùng (backend/, gói, packkit, 3 file docs) ⇒ dấu guards-/pack-<khoá>- không đổi khi commit chỉ sửa web / app / vận hành
 #   stamp_ok <dấu> [<nhãn>] / stamp_write <dấu> <nhãn>   dấu "đã kiểm đủ": <dấu đủ> = lõi TOÀN BỘ + gói ở tag ghim; core-<dấu lõi> = check_core TOÀN BỘ;
 #       core-main-<dấu lõi> / core-upgrade-<dấu lõi> = từng tầng của lõi; guards-<dấu> / pack-<khoá>-<dấu> = cấu trúc + từng gói;
 #       web-<dấu web> = typecheck + lint + test của web. premerge.sh và release.sh đều bỏ chạy lại pha đã có dấu.
@@ -52,10 +53,21 @@ h = hashlib.sha256(part.encode() + b"\0")
 # bỏ test Python oan): scripts/packkit/ (test_packkit nạp), .agents/ (test_packkit đọc SKILL.md của barista-pack), web/src + macos/Sources + ios
 # (test_client_neutrality quét mã client; test_web_icons đọc icons.tsx; test_deploy_production đọc session.ts) và 3 file hợp đồng trong docs/.
 # Lấy cả THƯ MỤC, không liệt kê từng file ⇒ test mới đọc thêm file trong đó không lọt. Thêm test đọc file ngoài các thư mục này ⇒ thêm vào đây.
-tops = ("web",) if part == "web" else ("backend", "deploy", os.path.join("scripts", "packkit"), ".agents",
-                                       os.path.join("web", "src"), os.path.join("macos", "Sources"), "ios")
+# ``packs``: chỉ thứ test GÓI dùng tới — backend/ TOÀN BỘ (test gói import cả conftest lẫn test lõi), gói đi kèm + deploy/packs.py, scripts/packkit,
+# 3 file docs (test_guards đọc runbook 12). KHÔNG web / app / .agents / deploy/ops / Dockerfile / file bản cài ⇒ commit chỉ đổi những thứ đó dùng lại dấu gói.
+if part == "web":
+    tops = ("web",)
+elif part == "packs":
+    tops = ("backend", os.path.join("deploy", "packs"), os.path.join("deploy", "packs.py"), os.path.join("scripts", "packkit"))
+else:
+    tops = ("backend", "deploy", os.path.join("scripts", "packkit"), ".agents", os.path.join("web", "src"), os.path.join("macos", "Sources"), "ios")
 for top in tops:
     top_path = os.path.join(root, top)
+    if os.path.isfile(top_path):
+        h.update(top.encode() + b"\0")
+        with open(top_path, "rb") as fh:
+            h.update(hashlib.sha256(fh.read()).digest())
+        continue
     if not os.path.isdir(top_path):
         continue
     for d, dirs, files in os.walk(top_path):
@@ -75,7 +87,7 @@ if part != "web":
 # file bản cài (barista-ops/instances/*.json) cũng là đầu vào của bộ test (test_deploy_* so render của MỌI bản cài) ⇒ đổi một file bản cài (vd "gate")
 # là nội dung khác, không dùng lại dấu cũ (rà 20/11). Web không đọc file bản cài.
 ops = os.environ.get("BARISTA_OPS_DIR", "")
-if part != "web" and ops and os.path.isdir(os.path.join(ops, "instances")):
+if part not in ("web", "packs") and ops and os.path.isdir(os.path.join(ops, "instances")):
     for f in sorted(os.listdir(os.path.join(ops, "instances"))):
         if f.endswith(".json"):
             with open(os.path.join(ops, "instances", f), "rb") as fh:

@@ -5,6 +5,7 @@ barista-packs, kiểm ``requires-core`` với bề mặt ``barista.api`` của l
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import tarfile
 from pathlib import Path
@@ -569,3 +570,33 @@ def test_the_thin_pack_layer_installs_packs_exactly_like_the_full_api_image() ->
         return [x for x in lines if x.startswith(("COPY deploy/packs", "RUN for d in ./packs"))]
     full, thin = pack_steps("api.Dockerfile"), pack_steps("api-packs.Dockerfile")
     assert len(full) == 2 and thin == full
+
+
+def test_pack_stamp_ignores_web_app_and_ops_but_not_backend(tmp_path: Path) -> None:
+    """``tree_digest packs`` (dấu guards- / pack-<khoá>-): commit chỉ đổi web / app / .agents / script vận hành / Dockerfile / file bản cài không làm test
+    gói chạy lại; đổi backend/ (cả test lõi — test gói import chúng), gói đi kèm, deploy/packs.py, packkit hay runbook 12 (test_guards đọc) thì chạy lại."""
+    checks = Path(__file__).resolve().parents[2] / "deploy" / "checks.sh"
+    ops = tmp_path / "ops"
+
+    def put(f: str, text: str) -> None:
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text(text)
+
+    def packs() -> str:
+        return subprocess.run(["bash", "-c", f'. "{checks}"; tree_digest "$1" packs', "_", str(tmp_path)], capture_output=True, text=True, check=True,
+                              env={**os.environ, "BARISTA_OPS_DIR": str(ops)}).stdout.strip()
+
+    put("backend/src/a.py", "x = 1\n")
+    put("deploy/packs/edu/p.py", "y = 1\n")
+    put("ops/instances/x.json", "{}\n")
+    base = packs()
+    for f in ("web/src/app.ts", "macos/Sources/BaristaDesk/A.swift", "ios/project.yml", ".agents/skills/s.md", "deploy/ops/deploy.py",
+              "deploy/api.Dockerfile", "docs/OVERVIEW.md", "ops/instances/x.json"):
+        put(f, f"{f} đổi\n")
+        assert packs() == base, f
+    for f in ("backend/tests/test_assistant.py", "backend/src/a.py", "deploy/packs/edu/p.py", "deploy/packs.py", "scripts/packkit/packkit.py",
+              "docs/runbooks/12-them-mot-goi.md"):
+        put(f, f"{f} đổi\n")
+        now = packs()
+        assert now != base, f
+        base = now

@@ -57,6 +57,7 @@ echo "Kiểm commit $SHA trong $WORK (chỉ gồm file đã commit + gói ở đ
 DIGEST="$(tree_digest "$WORK")"
 CORE_DIGEST="$(tree_digest "$WORK" core)"
 WEB_DIGEST="$(tree_digest "$WORK" web)"
+PACKS_DIGEST="$(tree_digest "$WORK" packs)"   # dấu riêng cho test gói: commit chỉ đổi web / app / vận hành không chạy lại test gói
 T0=$SECONDS
 WEB_PID=""
 if ! stamp_ok "web-$WEB_DIGEST" "web"; then
@@ -68,7 +69,7 @@ if ! stamp_ok "$DIGEST" "lõi + gói đủ"; then
   check_core_tiered "$WORK" "$CORE_DIGEST" "release.sh $INSTANCE ${SHA:0:8}" 1
   echo "  lõi: $((SECONDS - T))s"
   T=$SECONDS
-  check_packs "$WORK" "$PACKS" "$DIGEST" "release.sh $INSTANCE ${SHA:0:8}"
+  check_packs "$WORK" "$PACKS" "$PACKS_DIGEST" "release.sh $INSTANCE ${SHA:0:8}"
   echo "  gói của $INSTANCE: $((SECONDS - T))s"
   stamp_write "$DIGEST" "release.sh $INSTANCE ${SHA:0:8}"
 fi
