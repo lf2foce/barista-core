@@ -109,11 +109,13 @@ def table(rows: list[dict[str, Any]], columns: list[dict[str, Any]], *, title: s
           kpis: list[dict[str, Any]] | None = None, empty: str = "Chưa có dữ liệu", row_key: str = "id",
           note: str = "", limit: int | None = None, views: dict[str, Any] | None = None,
           empty_actions: list[dict[str, Any]] | None = None, header: list[dict[str, Any]] | None = None,
-          paged_total: int | None = None) -> dict[str, Any]:
+          paged_total: int | None = None, unavailable: dict[str, str] | None = None) -> dict[str, Any]:
     """``empty_actions`` (``act(...)``): nút hiện dưới câu ``empty`` khi bảng không có dòng — việc nên làm tiếp (vd "Thêm người / phòng"); chỉ THÊM
     trường, app cũ chỉ hiện câu. Module chỉ khai nút người xem chạy được. ``limit``: giới hạn LIMIT của truy vấn — chạm trần thì ghi rõ để không ai tưởng đó là toàn bộ (số KPI cũng chỉ
     tính trên các dòng đang hiện). ``views``: góc nhìn khác của CÙNG các dòng (``views(...)``). ``header``: khối thẻ (``b_picker``, ``b_callout``…) vẽ
-    TRÊN bảng — vd chọn mức đặt sẵn trước bảng chi tiết; chỉ THÊM trường, app chưa biết thì bỏ qua."""
+    TRÊN bảng — vd chọn mức đặt sẵn trước bảng chi tiết; chỉ THÊM trường, app chưa biết thì bỏ qua.
+    ``unavailable`` (cơ chế lõi G2, rà 23/11/2026): ``{lệnh: lý do}`` — nút THANH CÔNG CỤ của màn cho lệnh đó hiện MỜ kèm lý do (vd chốt kỳ khi kỳ chưa
+    hết), thay vì để người bấm rồi mới báo lỗi. Truy vấn biết trạng thái nên truy vấn nói; lệnh vẫn tự kiểm (cửa chặn thật ở lệnh). App cũ bỏ qua."""
     if limit is not None and len(rows) >= limit:
         cut = f"Đang hiện {limit:,} dòng đầu — lọc hẹp hơn để xem đủ.".replace(",", ".")
         note = f"{note} {cut}".strip()
@@ -121,6 +123,8 @@ def table(rows: list[dict[str, Any]], columns: list[dict[str, Any]], *, title: s
            "empty": empty, "note": note}
     if empty_actions and not rows:
         out["empty_actions"] = empty_actions
+    if why := {k: v for k, v in (unavailable or {}).items() if v}:
+        out["unavailable"] = why
     if header:
         out["header"] = header
     if limit is not None and len(rows) < limit:   # truy vấn chưa chạm trần ⇒ số dòng là TỔNG THẬT (thẻ gọn ghi "3/28"); không khai trần ⇒ không biết

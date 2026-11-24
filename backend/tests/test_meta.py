@@ -391,3 +391,21 @@ def test_pack_guards_list_names_every_source_scanning_test() -> None:
                 if re.search(r"from tests\.module_src import [^\n]*\b(py_files|sql_files|module_files|module_of|declared)\b", p.read_text())
                 or re.search(r"from tests\.module_src import \(", p.read_text())}
     assert scanning == listed, scanning ^ listed
+
+
+# Màn chưa có câu "để làm gì" (cơ chế lõi G1 — ``Screen.about``) của các gói TRONG repo này, đo 24/11/2026. Chỉ được GIẢM: màn mới phải có ``about``; viết
+# thêm cho màn cũ thì hạ số này xuống đúng số mới. Gói ngoài repo (barista-packs) tự giữ con số của mình.
+SCREENS_WITHOUT_ABOUT = 160
+
+
+def test_new_screens_say_what_they_are_for() -> None:
+    from barista.kernel import loader
+    from barista.workspaces import INBOX, workspaces
+
+    ours = {e.key for e in loader.LOADED if e.dist == "barista"}
+    screens = {(s.query, s.key): s for w in workspaces() for s in w.screens} | {(INBOX.query, INBOX.key): INBOX}
+    mine = [s for s in screens.values() if registry.MODULE_PACK.get(s.query.split(".")[0]) in ours]
+    missing = sorted(s.key for s in mine if not s.about.strip())
+    assert len(missing) <= SCREENS_WITHOUT_ABOUT, f"màn mới thiếu câu about (G1): {len(missing)} > {SCREENS_WITHOUT_ABOUT}"
+    assert len(missing) == SCREENS_WITHOUT_ABOUT, f"đã viết thêm about ⇒ hạ SCREENS_WITHOUT_ABOUT xuống {len(missing)}"   # con số chỉ đi xuống, luôn đúng
+    assert all(len(s.about) <= 200 and "\n" not in s.about for s in mine if s.about), "about là MỘT câu ngắn"

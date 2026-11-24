@@ -104,3 +104,19 @@ async def test_board_tiles_count_people_and_teams_separately_and_never_average_a
     assert tiles["Người đạt"] == f"{sum(1 for r in persons if r['status'] == 'Đạt')}/{len(persons)}"
     if teams:
         assert tiles["Đội đạt"].endswith(f"/{len(teams)}")
+
+
+async def test_a_month_still_running_cannot_be_closed_and_the_board_says_why_before_anyone_clicks(who: Who) -> None:
+    """Rà 23/11/2026 (cơ chế lõi G2): nút "Chốt KPI tháng" chạy được giữa tháng. Lệnh từ chối kỳ chưa hết; màn KPI đội nói trước lý do (nút mờ kèm câu),
+    cùng MỘT câu với lời từ chối của lệnh. Màn tự nói mình để làm gì (G1)."""
+    from barista.workspaces import workspaces
+
+    gd = await who("giamdoc")
+    page = await q(gd, "kpi.board", period=THIS)
+    why = page["unavailable"]["kpi.close_period"]
+    refused = await run(gd, "kpi.close_period", {"period": THIS})
+    assert refused.status == "invalid" and refused.error == why
+    last = (today().replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    assert "unavailable" not in await q(gd, "kpi.board", period=last)                # tháng đã hết: nút bình thường
+    board = next(s for w in workspaces() for s in w.screens if s.key == "kpi_board")
+    assert board.about.startswith("Theo dõi chỉ tiêu tháng")

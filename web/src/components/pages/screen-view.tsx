@@ -175,7 +175,8 @@ export function ScreenView({
   const head = useFrameHead();
   const tools = head?.tools ?? null;
   // tiêu đề server gửi mang kỳ / phạm vi ("Sổ giao dịch · năm 2026") ⇒ phần riêng thành phụ đề đầu thẻ (trước đây bị bỏ, chỉ hiện tên menu)
-  useFrameSub(tools ? head : null, table ? titleTail(table.title, spec.title) : null);
+  // phụ đề: phần riêng của tiêu đề server (kỳ / phạm vi); không có ⇒ câu "màn này để làm gì" (G1) — người mở màn lần đầu biết mình đang ở đâu
+  useFrameSub(tools ? head : null, (table ? titleTail(table.title, spec.title) : null) ?? spec.about ?? null);
   const renderFilter = (f: FieldSpec, stacked = false) => (
     <Filter key={f.key} f={f} value={filters[f.key]} options={f.options ?? options[f.key]} onApply={applyFilter(f.key)} stacked={stacked} />
   );
@@ -241,6 +242,12 @@ export function ScreenView({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+    ) : table?.unavailable?.[a.command] ? (
+      // G2: lệnh chưa chạy được lúc này ⇒ nút mờ KÈM lý do (không để bấm rồi mới báo lỗi); lý do do truy vấn của màn nói
+      <span key={a.command + a.title} className="inline-flex items-center gap-2">
+        <button type="button" className={cn(actionClass(a.style), "cursor-not-allowed opacity-50")} disabled aria-disabled title={table.unavailable[a.command]}>{a.title}</button>
+        <span className="t12 text-muted-foreground">{table.unavailable[a.command]}</span>
+      </span>
     ) : (
       <button key={a.command + a.title} type="button" className={actionClass(a.style)} onClick={() => desk.openForm(a, { onDone: changed })}>{a.title}</button>
     ),
@@ -310,7 +317,7 @@ export function ScreenView({
             {exportButton}
           </div>
           {table.rows.length === 0 ? (
-            <Empty text={table.empty}>
+            <Empty text={table.empty === "Chưa có dữ liệu" && spec.about ? spec.about : table.empty}>
               {(table.empty_actions?.length ? table.empty_actions : spec.actions.filter((a) => a.style === "primary").slice(0, 2)).map((a) => (
                 <button key={a.command + a.title} type="button" className={actionClass(a.style)} onClick={() => desk.openForm(a, { onDone: changed })}>{a.title}</button>
               ))}

@@ -344,7 +344,7 @@ async def board(ctx: Ctx, inp: BoardIn) -> dict[str, Any]:
     # Ô số đếm theo DÒNG NGƯỜI và DÒNG ĐỘI riêng (rà 23/11/2026): một đội đã gồm số của người trong đội — cộng / lấy trung bình chung hai loại dòng là đếm
     # một kết quả hai lần; trung bình % của nhiều CHỈ SỐ khác nhau (lead, lịch hẹn, doanh số) cũng không mang nghĩa gì ⇒ không có ô "% đạt trung bình".
     persons, teams = [r for r in rows if r["user_id"]], [r for r in rows if not r["user_id"]]
-    return ui.table(rows, cols, title=f"KPI đội · {p:%m/%Y}", kpis=[
+    return ui.table(rows, cols, title=f"KPI đội · {p:%m/%Y}", unavailable={"kpi.close_period": _not_closable(p) or ""}, kpis=[
         ui.kpi("Người đạt", f"{sum(1 for r in persons if r['status'] == STATUS['met'])}/{len(persons)}", "text", hint="Mỗi chỉ tiêu của một người là một dòng"),
         *([ui.kpi("Đội đạt", f"{sum(1 for r in teams if r['status'] == STATUS['met'])}/{len(teams)}", "text")] if teams else []),
         ui.kpi("Người chậm / không đạt", sum(1 for r in behind if r["user_id"]), tone="orange" if any(r["user_id"] for r in behind) else None),
@@ -465,12 +465,23 @@ def _need_all(ctx: Ctx, why: str) -> None:
         raise Denied(f"{why} — cần quyền quản lý KPI phạm vi cả công ty")
 
 
+def _not_closable(p: date) -> str | None:
+    """Kỳ chưa hết thì chưa chốt được (rà 23/11/2026: nút chốt chạy được giữa tháng — số "chốt để trả thưởng" của một tháng còn đang chạy). MỘT câu dùng cho
+    cả cửa chặn của lệnh lẫn lý do nút mờ trên màn KPI đội."""
+    nxt = (p.replace(day=28) + timedelta(days=4)).replace(day=1)
+    if today() < nxt:
+        return f"Tháng {p:%m/%Y} chưa hết — chốt được từ {nxt:%d/%m/%Y}. Muốn chốt tháng trước: chọn kỳ đó trong form."
+    return None
+
+
 @m.command("close_period", resource="kpi", action="manage", title="Chốt KPI tháng", agent="propose")
 async def close_period(ctx: Ctx, inp: PeriodIn) -> dict[str, Any]:
     """Chụp chỉ tiêu + thực tế của MỌI chỉ tiêu trong kỳ (chỉ thêm) — số dùng để trả thưởng, không đổi khi dữ liệu cũ được sửa sau. Chốt lại
     được (thêm ảnh chụp mới; màn KPI đội hiện số chốt mới nhất)."""
     _need_all(ctx, "Chốt KPI là việc của cả công ty")
     p = _period(inp.period)
+    if (why := _not_closable(p)) is not None:
+        raise Invalid(why)
     rows = await _rows(ctx, p)
     for r in rows:
         await ctx.exec("""INSERT INTO kpi.closings (period, metric, user_id, team_id, target, actual, closed_by)
@@ -499,6 +510,7 @@ m.workspace(Workspace("kpi", "KPI & xếp hạng", "target", (
     Screen("kpi_mine", "KPI của tôi", "target", "kpi.mine", tint="indigo",
            desk=Desk("watch", say=_attn_mine, menu=True, rank=40)),
     Screen("kpi_board", "KPI đội", "chart.bar.xaxis", "kpi.board", tint="indigo", min_scope="team",
+           about="Theo dõi chỉ tiêu tháng của người và đội bạn quản lý: ai đạt, ai đang chậm; hết tháng thì chốt số để tính thưởng.",
            desk=Desk("watch", say=_attn_board, menu=True, team_only=True, rank=41),
            actions=(A("kpi.set_target", style="primary"), A("kpi.copy_targets"), A("kpi.close_period"), A("kpi.set_policy"))),
     Screen("kpi_ranking", "Xếp hạng KPI", "trophy.fill", "kpi.ranking", tint="yellow"),

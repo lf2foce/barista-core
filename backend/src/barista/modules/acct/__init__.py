@@ -109,6 +109,7 @@ from barista.modules.acct.reports import _say_cashflow  # noqa: E402
 # ---- Màn hình (0069): module tự khai phân hệ / góp màn vào phân hệ khác; workspaces.py chỉ ráp và lọc theo quyền
 m.workspace(Workspace("accounting", "Kế toán", "banknote.fill", (
     Screen("reconcile", "Đối soát sao kê", "arrow.left.arrow.right.square.fill", "acct.reconcile", tint="purple", min_scope="all", group=G_IN,
+           about="Ghép từng khoản tiền về trong sao kê ngân hàng với khoản phải thu: dòng khớp đủ ghi một lần, dòng lệch có gợi ý để bạn quyết.",
            # "Ghi các dòng khớp đủ" không còn trên thanh công cụ: màn tự đưa nút vào khối đầu bảng khi có dòng khớp đủ (reconcile.py)
            actions=(A("acct.add_statement_line", "Nạp sao kê", style="primary"), A("acct.record_unapplied", "Tiền về chưa có khoản")),
            row_actions=(A("acct.apply_line", "Ghi phiếu thu", bind={"line_id": "id"}, prefill={"code": "code"},

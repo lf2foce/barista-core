@@ -118,6 +118,9 @@ class Screen:
     # bất kỳ vai nào. Khác quyền (vai này được làm gì) — đây là "công ty có làm việc này không" (vd thu hộ – chi trả, hàng ký gửi): một ô tick ở
     # Quản trị › Cài đặt công ty thay cho thu hồi quyền từng vai. Tắt ⇒ ẩn MÀN và người / trợ lý không chạy được thao tác chỉ thuộc màn đó (``feature_ops``, ``executor.feature_off``).
     feature: str = ""
+    # MÀN TỰ NÓI MÌNH ĐỂ LÀM GÌ (cơ chế lõi G1, rà 23/11/2026): MỘT câu "để làm gì / dùng khi nào", viết cho người dùng nghiệp vụ, không thuật ngữ kỹ thuật.
+    # Web hiện dưới tên màn; cũng là câu của màn trống khi truy vấn không tự nói gì hơn. Chỉ THÊM trường vào manifest — app cũ bỏ qua.
+    about: str = ""
 
     @property
     def in_menu(self) -> bool:

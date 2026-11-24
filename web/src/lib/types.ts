@@ -82,6 +82,8 @@ export type ScreenSpec = {
   ask?: AskSpec | null;
   /** Nhãn nhỏ cạnh tên màn trên menu (vd "Thử nghiệm"). */
   badge?: string;
+  /** Một câu "màn này để làm gì" (cơ chế lõi G1) — hiện dưới tên màn, và là câu của màn trống khi bảng không nói gì hơn. */
+  about?: string;
   /** Bộ lọc xếp thành cột bên trái (báo cáo quản trị — 0166); không có ⇒ hàng trên đầu như cũ. */
   filters_side?: boolean;
   /** Màn TỰ VẼ TRỌN khung làm việc (không thẻ bọc, không đầu khung) — như phân hệ một màn; vd "Soạn" (agent + văn bản). */
@@ -259,6 +261,8 @@ export type TablePage = {
   empty: string;
   /** Nút dưới câu `empty` khi bảng không có dòng — việc nên làm tiếp (vd "Thêm người / phòng"). */
   empty_actions?: ActionSpec[];
+  /** Nút thanh công cụ chưa chạy được lúc này: lệnh → lý do (cơ chế lõi G2). Nút hiện mờ, lý do hiện ngay cạnh / khi rê chuột. */
+  unavailable?: Record<string, string>;
   note: string;
   views: TableViews | null;
   /** Thẻ gọn (0094): bản server đã cắt — `total` chỉ có khi biết tổng thật. */

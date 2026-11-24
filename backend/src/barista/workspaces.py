@@ -29,7 +29,8 @@ A = Action
 INBOX = Screen("inbox", "Phiếu duyệt", "checkmark.seal", "core.approvals", row_actions=(
     A("core.decide", "Duyệt", bind={"approval_id": "id"}, preset={"approve": True}, when={"mine": ["Chờ bạn"]}, style="primary"),
     A("core.decide", "Từ chối", bind={"approval_id": "id"}, preset={"approve": False}, when={"mine": ["Chờ bạn"]}, style="destructive"),
-), row_click="open", open=Open("core.approval", {"approval_id": "id"}, "Phiếu"))
+), row_click="open", open=Open("core.approval", {"approval_id": "id"}, "Phiếu"),
+   about="Việc cần người duyệt: đổi quyền, chi tiền, sửa số đã ghi… Mỗi phiếu ghi rõ đổi gì, vì sao; bấm Duyệt hoặc Từ chối ngay trên dòng.")
 
 
 ACCOUNT = "account"   # phân hệ giả của các màn CÁ NHÂN — manifest gửi ở ``account``, không nằm trong ``workspaces``
@@ -113,6 +114,7 @@ def _screen(p: Principal, s: Screen) -> dict[str, Any] | None:
         "key": s.key, "title": s.title, "icon": s.icon, "tint": s.tint or None, "query": s.query, "group": s.group,
         **({} if s.pinnable else {"pinnable": False}),
         **({"badge": s.badge} if s.badge else {}),
+        **({"about": s.about} if s.about else {}),
         **({"filters_side": True} if s.filters_side else {}),
         **({"full_frame": True} if s.full_frame else {}),
         "filters": primary_filters([f for f in field_specs(op, p.vocab) if not f["hidden"] and f["key"] not in s.input] + list(s.fields)),
