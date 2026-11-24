@@ -64,18 +64,22 @@ async def connections(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
         "subtitle": "Dùng trợ lý AI quen thuộc của bạn để hỏi số liệu và soạn đề xuất trong Barista, bằng đúng quyền của bạn",
         "open": {"query": "core.ai_link", "input": {}}}], "Của tôi"))
     company: list[dict[str, Any]] = []
-    for r in await _rows(ctx, "connectors.list") or []:
+    sources, apps = await _rows(ctx, "connectors.list"), await _rows(ctx, "connect.apps")
+    for r in sources or []:
         label, tone = HEALTH.get(str(r.get("health") or "new"), HEALTH["new"])
         company.append({"title": r.get("label") or r.get("kind") or "", "subtitle": f"Nguồn dữ liệu · {r.get('kind') or ''}".rstrip(" ·"),
                         "badge": label if r.get("status") == "active" else "Tạm dừng", "tone": tone if r.get("status") == "active" else "gray",
                         "open": {"query": "connectors.list", "input": {}}})
-    for r in await _rows(ctx, "connect.apps") or []:
+    for r in apps or []:
         active = r.get("status") == "active"
         company.append({"title": r.get("name") or "", "subtitle": "App bên ngoài gửi / nhận dữ liệu với Barista",
                         "badge": "Đang dùng" if active else "Đã thu hồi", "tone": "green" if active else "gray",
                         "open": {"query": "connect.apps", "input": {}}})
     if company:
         blocks.append(ui.b_tiles(company, "Của công ty"))
+    elif sources is not None or apps is not None:   # xem được mà chưa có gì ⇒ vẫn hiện mục, chỉ chỗ thêm
+        blocks.append(ui.b_callout("info", "Công ty chưa nối gì",
+                                   "Nguồn dữ liệu (sheet, CRM cũ…) và app bên ngoài (CRM, tổng đài, phần mềm kế toán…) nối ở đây — bấm \"Thêm app bên ngoài\"."))
     return ui.card("Kết nối", blocks, subtitle="Những gì đang nối với Barista — của bạn và của công ty",
                    actions=[ui.act("connect.install", "Thêm app bên ngoài")])
 
