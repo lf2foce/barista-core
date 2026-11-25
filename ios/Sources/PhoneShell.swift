@@ -77,23 +77,33 @@ private struct PhoneToast: View {
     }
 }
 
-/// Tab dưới đáy: ba mục đầu của thanh bên trái trên Mac + phân hệ GHIM gần nhất + "Tất cả" (thay chính thanh bên — iPhone không có chỗ, ADR 0255).
-/// iPhone chỉ hiện 5 mục ở thanh dưới (thừa ⇒ iOS gom vào "More") ⇒ còn MỘT chỗ cho phân hệ ghim; ghim thêm thì các phân hệ khác đứng đầu "Tất cả".
+/// Tab dưới đáy: Trợ lý · Việc · [hai chỗ ghim] · Tất cả (thay chính thanh bên — iPhone không có chỗ, ADR 0255).
+/// iPhone chỉ hiện 5 mục ở thanh dưới (thừa ⇒ iOS gom vào "More", thanh không cuộn được như web) ⇒ HAI chỗ ghim (anh Anh 25/11): "Tin nhắn" là một
+/// mục ghim sẵn, bỏ ghim được; còn lại là các phân hệ ghim GẦN NHẤT — ghim thêm thì phân hệ cũ hơn đứng đầu "Tất cả".
 private enum PhoneTab: Hashable {
     case rail(RailSection)
     case pinned(String)
     case all
 }
 
+/// Tin nhắn có nằm ở thanh dưới không — tuỳ chọn của người dùng trên máy này (chỉ là cách bày tab của iPhone; Mac luôn có cột Tin nhắn).
+let phoneMessagesPinnedKey = "phone.messagesPinned"
+private let phonePinSlots = 2
+
 private struct PhoneTabs: View {
     @Environment(Desk.self) private var desk
+    @AppStorage(phoneMessagesPinnedKey) private var messagesPinned = true
     @State private var local: PhoneTab?   // tab không phải ``RailSection`` (Mac không có): phân hệ ghim / "Tất cả"
 
-    /// Phân hệ ghim gần nhất (server trả theo thứ tự ghim) — không có thì phân hệ cuối cùng mang cờ ghim (vd phân hệ theo vai mà người dùng ghim).
-    private var pinnedSpace: Workspace? {
+    /// Tin nhắn hiện ở thanh dưới khi được ghim, hoặc khi đang mở nó (từ "Tất cả" / thông báo đẩy) — lúc đó nó tạm lấy một chỗ ghim.
+    private var showsMessages: Bool { messagesPinned || desk.section == .messages }
+
+    /// Các phân hệ ghim gần nhất vừa chỗ còn lại (server trả theo thứ tự ghim) — không có thì phân hệ mang cờ ghim (vd phân hệ theo vai).
+    private var pinnedSpaces: [Workspace] {
         let spaces = desk.manifest?.workspaces ?? []
-        if let k = desk.manifest?.rail?.pinned.last, let w = spaces.first(where: { $0.key == k }) { return w }
-        return spaces.last { $0.pinned == true }
+        let byPin = (desk.manifest?.rail?.pinned ?? []).compactMap { k in spaces.first { $0.key == k } }
+        let all = byPin.isEmpty ? spaces.filter { $0.pinned == true } : byPin
+        return Array(all.suffix(phonePinSlots - (showsMessages ? 1 : 0)))
     }
 
     /// Phân hệ (``.workspace``) chỉ có trên thanh bên trái của Mac; trên iPhone mở qua khung làm việc ⇒ coi như đang ở trợ lý.
@@ -101,7 +111,7 @@ private struct PhoneTabs: View {
     private var selection: Binding<PhoneTab> {
         Binding(get: {
             if let local {
-                if case .pinned(let k) = local, pinnedSpace?.key != k { return .all }   // vừa bỏ ghim phân hệ đang mở ⇒ về "Tất cả"
+                if case .pinned(let k) = local, !pinnedSpaces.contains(where: { $0.key == k }) { return .all }   // vừa bỏ ghim phân hệ đang mở ⇒ về "Tất cả"
                 return local
             }
             if case .workspace = desk.section { return .rail(.assistant) }
@@ -116,12 +126,15 @@ private struct PhoneTabs: View {
             Tab("Trợ lý", systemImage: "sparkles", value: PhoneTab.rail(.assistant)) { ChatColumn() }
             Tab("Việc", systemImage: "checklist", value: PhoneTab.rail(.desk)) { DeskColumn() }
                 .badge(desk.deskPage?.count ?? 0)
-            Tab("Tin nhắn", systemImage: "bubble.left.and.bubble.right", value: PhoneTab.rail(.messages)) { PhoneMessages() }
-                .badge(desk.unread + (desk.talk?.unread ?? 0))
-            if let w = pinnedSpace {
+            if showsMessages {
+                Tab("Tin nhắn", systemImage: "bubble.left.and.bubble.right", value: PhoneTab.rail(.messages)) { PhoneMessages() }
+                    .badge(desk.unread + (desk.talk?.unread ?? 0))
+            }
+            ForEach(pinnedSpaces, id: \.key) { w in
                 Tab(w.title, systemImage: SymbolMap.name(w.icon), value: PhoneTab.pinned(w.key)) { PhoneWorkspaceTab(ws: w) }
             }
             Tab("Tất cả", systemImage: "square.grid.2x2", value: PhoneTab.all) { PhoneAllItems() }
+                .badge(showsMessages ? 0 : desk.unread + (desk.talk?.unread ?? 0))   // Tin nhắn đã bỏ ghim ⇒ số chưa đọc dồn về "Tất cả"
         }
         .onChange(of: desk.section) { local = nil }
         .task { if ProcessInfo.processInfo.environment["BARISTA_SECTION"] == "all" { local = .all } }   // dev: chụp trình giả lập
@@ -206,7 +219,10 @@ struct PhoneAllItems: View {
                     if hits.isEmpty { Text("Không có màn nào khớp").foregroundStyle(.secondary) }
                     ForEach(hits, id: \.screen.key) { h in PhoneScreenRow(screen: h.screen, workspace: h.ws.key, caption: h.ws.title) }
                 } else {
-                    if let inbox = desk.manifest?.inbox { Section { PhoneScreenRow(screen: inbox) } }
+                    Section {
+                        PhoneMessagesRow()
+                        if let inbox = desk.manifest?.inbox { PhoneScreenRow(screen: inbox) }
+                    }
                     ForEach(layout.onRail) { w in
                         Section(w.title) { ForEach(w.screens) { PhoneScreenRow(screen: $0, workspace: w.key) } }
                     }
@@ -238,6 +254,39 @@ struct PhoneAllItems: View {
             .navigationTitle("Tất cả")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $q, placement: .navigationBarDrawer(displayMode: .always), prompt: "Tìm màn…")
+        }
+    }
+}
+
+/// Dòng "Tin nhắn" đầu "Tất cả": bấm ⇒ mở Tin nhắn (tạm lên thanh dưới nếu đã bỏ ghim); nút ghim ⇒ giữ / bỏ Tin nhắn ở thanh dưới.
+private struct PhoneMessagesRow: View {
+    @Environment(Desk.self) private var desk
+    @AppStorage(phoneMessagesPinnedKey) private var pinned = true
+
+    var body: some View {
+        let unread = desk.unread + (desk.talk?.unread ?? 0)
+        HStack(spacing: 12) {
+            Button { desk.section = .messages } label: {
+                HStack(spacing: 12) {
+                    IconTile(symbol: "bubble.left.and.bubble.right", tint: .accent, size: 30)
+                    Text("Tin nhắn").font(.t16).foregroundStyle(Color.primary).lineLimit(1)
+                    Spacer(minLength: 8)
+                    if unread > 0 {
+                        Text("\(unread)").font(.t12m).monospacedDigit().foregroundStyle(.white)
+                            .padding(.horizontal, 7).frame(minWidth: 22, minHeight: 22).background(Capsule().fill(Color.bad))
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button { withAnimation(.snappy) { pinned.toggle() } } label: {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(pinned ? Color.accent : Color.secondary)
+                    .frame(width: 40, height: 36)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(pinned ? "Bỏ ghim Tin nhắn khỏi thanh dưới" : "Ghim Tin nhắn xuống thanh dưới")
         }
     }
 }

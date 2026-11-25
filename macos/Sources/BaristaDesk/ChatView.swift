@@ -65,16 +65,22 @@ private struct ChatHeader: View {
             Spacer(minLength: 8)
             // không chuông ở đây (cả iPhone): thông báo là dòng đầu tab "Tin nhắn" — số chưa đọc đã cộng vào huy hiệu của tab đó (Mac: cột Tin nhắn)
             #if os(iOS)
-            // iPhone (rà 25/11): đầu màn rộng ⇒ mỗi nút một viên tròn riêng, cùng kiểu nút "Tải lại" của tab Việc — dễ thấy, dễ chạm
-            Button { desk.newThread() } label: { Image(systemName: "square.and.pencil") }
-                .buttonStyle(ToolChipStyle()).accessibilityLabel("Cuộc trò chuyện mới")
-            Menu {
-                if desk.threads.isEmpty { Text("Chưa có cuộc trò chuyện nào") }
-                ForEach(desk.threads.prefix(20)) { t in
-                    Button(t.title.isEmpty ? "(không tên)" : t.title) { Task { await desk.openThread(t.id) } }
-                }
-            } label: { Image(systemName: "clock.arrow.circlepath") }
-            .buttonStyle(ToolChipStyle()).accessibilityLabel("Cuộc trò chuyện trước")
+            // iPhone (rà 25/11): hai nút cùng việc chung MỘT viên như Mac, nhưng giữ cỡ to của nút "Tải lại" tab Việc (chữ theo cỡ máy)
+            HStack(spacing: 0) {
+                Button { desk.newThread() } label: { PhoneHeaderGlyph(symbol: "square.and.pencil") }
+                    .buttonStyle(.plain).accessibilityLabel("Cuộc trò chuyện mới")
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 20)
+                Menu {
+                    if desk.threads.isEmpty { Text("Chưa có cuộc trò chuyện nào") }
+                    ForEach(desk.threads.prefix(20)) { t in
+                        Button(t.title.isEmpty ? "(không tên)" : t.title) { Task { await desk.openThread(t.id) } }
+                    }
+                } label: { PhoneHeaderGlyph(symbol: "clock.arrow.circlepath") }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+                .accessibilityLabel("Cuộc trò chuyện trước")
+            }
+            .background(Capsule().fill(Color.surface))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
             #else
             HeaderPill {
                 HeaderIcon(symbol: "square.and.pencil", help: "Cuộc trò chuyện mới") { desk.newThread() }
@@ -166,6 +172,20 @@ struct HeaderGlyph: View {
             .onHover { hover = $0 }
     }
 }
+
+#if os(iOS)
+/// Biểu tượng trong viên nút đầu khung chat của iPhone: cỡ chữ thân (theo cỡ chữ máy), vùng chạm như ``ToolChipStyle``.
+struct PhoneHeaderGlyph: View {
+    let symbol: String
+    var body: some View {
+        Image(systemName: symbol)
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal, 12)
+            .frame(minWidth: 40, minHeight: 34)
+            .contentShape(Rectangle())
+    }
+}
+#endif
 
 struct HeaderIcon: View {
     let symbol: String
@@ -503,6 +523,13 @@ private struct Bubble: View {
                           when: [:], importable: false)
     }
 
+    /// Chữ câu hỏi: cùng cỡ chữ câu trả lời (``MarkdownText``) — iPhone 16, Mac 14.
+    #if os(iOS)
+    static let bubbleFont = Font.system(size: typeSize(16))
+    #else
+    static let bubbleFont = Font.t14
+    #endif
+
     /// Dưới câu trả lời chỉ hiện KẾT QUẢ: mọi thẻ đề xuất (cần người bấm) + thẻ kết quả cuối (bỏ bảng rỗng). Thẻ của các bước trung gian
     /// vẫn mở được trong "Đã làm N bước" (bấm vào bước).
     private var resultCards: [ChatCard] {
@@ -524,7 +551,7 @@ private struct Bubble: View {
                     } else if message.imagesGone > 0 {
                         Label("\(message.imagesGone) ảnh (không lưu lại)", systemImage: "photo").font(.t12).foregroundStyle(.white.opacity(0.85))
                     }
-                    Text(message.text.replacingOccurrences(of: #" \(mã tài liệu [0-9a-f-]{36}\)"#, with: "", options: .regularExpression)).font(.t14).foregroundStyle(.white).textSelection(.enabled)   // mã tài liệu chỉ dành cho trợ lý
+                    Text(message.text.replacingOccurrences(of: #" \(mã tài liệu [0-9a-f-]{36}\)"#, with: "", options: .regularExpression)).font(Self.bubbleFont).foregroundStyle(.white).textSelection(.enabled)   // mã tài liệu chỉ dành cho trợ lý
                     HStack(spacing: 3) {
                         Text(Fmt.time(message.at))
                         Image(systemName: "checkmark").fontWeight(.bold)
@@ -717,6 +744,16 @@ private struct LiveBubble: View {
     }
 }
 
+/// Một chiều cao cho cả hàng nhập: ô chat một dòng, nút gửi / dừng / giọng nói bằng nhau ⇒ thẳng hàng (rà 25/11: nút giọng lệch ô nhập
+/// khi cỡ chữ máy lớn — ô cao theo chữ, nút cố định 36). iPhone 44 = cỡ chạm tối thiểu của Apple.
+enum ComposerMetrics {
+    #if os(iOS)
+    static let control: CGFloat = 44
+    #else
+    static let control: CGFloat = 36
+    #endif
+}
+
 private struct ComposerBar: View {
     @Environment(Desk.self) private var desk
     @FocusState.Binding var focused: Bool
@@ -771,17 +808,18 @@ private struct ComposerBar: View {
                     .onChange(of: desk.focusChat) { focused = true }
                     .padding(.vertical, 9)
                     .padding(.leading, 14).padding(.trailing, desk.fieldRecorder.isRecording ? 84 : 36)
+                    .frame(minHeight: ComposerMetrics.control)
                     .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(WA.field))
                     .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
                     // mic ĐỌC CHÍNH TẢ trong ô nhập (kiểu ChatGPT): nói xong chữ hiện vào ô — người xem / sửa rồi tự gửi
-                    .overlay(alignment: .bottomTrailing) { DictateMic().padding(.trailing, 6).padding(.bottom, 4) }
+                    .overlay(alignment: .bottomTrailing) { DictateMic().padding(.trailing, 6).padding(.bottom, (ComposerMetrics.control - 28) / 2) }
                 if desk.live != nil, desk.turnKey != nil {   // đang trả lời ⇒ "Dừng": server huỷ lượt (phần đã làm vẫn lưu)
                     Button { desk.stopTurn() } label: {
                         ZStack {
                             Circle().fill(Color.primary)
                             RoundedRectangle(cornerRadius: 2).fill(Color.surface).frame(width: 11, height: 11)
                         }
-                        .frame(width: 36, height: 36)
+                        .frame(width: ComposerMetrics.control, height: ComposerMetrics.control)
                     }
                     .buttonStyle(.plain)
                     .help("Dừng")
@@ -791,7 +829,7 @@ private struct ComposerBar: View {
                             Circle().fill(hasText || !desk.draftImages.isEmpty ? Color.accent : Color.secondary.opacity(0.3))
                             Image(systemName: "arrow.up").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
                         }
-                        .frame(width: 36, height: 36)
+                        .frame(width: ComposerMetrics.control, height: ComposerMetrics.control)
                     }
                     .buttonStyle(.plain)
                     .disabled((!hasText && desk.draftImages.isEmpty) || desk.live != nil)

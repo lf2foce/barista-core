@@ -206,6 +206,6 @@ struct SiriButton: View {
             Circle().fill(LinearGradient(colors: [.cold, Color(red: 0.6, green: 0.4, blue: 0.95), .bad], startPoint: .topLeading, endPoint: .bottomTrailing))
             Image(systemName: "waveform").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
         }
-        .frame(width: 36, height: 36)
+        .frame(width: ComposerMetrics.control, height: ComposerMetrics.control)
     }
 }

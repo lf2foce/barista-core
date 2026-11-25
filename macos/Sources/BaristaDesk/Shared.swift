@@ -170,18 +170,25 @@ struct MarkdownText: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    // Cỡ chữ câu trả lời: iPhone to hơn Mac một bậc của thang 20/16/14/12 (rà 25/11 — đọc trên điện thoại cầm tay), theo cỡ chữ người dùng chọn.
+    #if os(iOS)
+    private static let bodySize = typeSize(16), headSize = typeSize(20), subheadSize = typeSize(16)
+    #else
+    private static let bodySize: CGFloat = 14, headSize: CGFloat = 16, subheadSize: CGFloat = 15
+    #endif
+
     private static func attributed(_ blocks: [Block]) -> NSAttributedString {
         let out = NSMutableAttributedString()
         for (i, b) in blocks.enumerated() {
             let para = NSMutableParagraphStyle()
             para.lineSpacing = 3
             para.paragraphSpacingBefore = i == 0 ? 0 : 9
-            var font = PFont.systemFont(ofSize: 14)
+            var font = PFont.systemFont(ofSize: bodySize)
             var prefix = NSAttributedString()
             var body = ""
             switch b {
             case let .heading(s, level):
-                font = .systemFont(ofSize: level <= 2 ? 16 : 15, weight: .semibold)
+                font = .systemFont(ofSize: level <= 2 ? headSize : subheadSize, weight: .semibold)
                 para.paragraphSpacingBefore = i == 0 ? 0 : 18  // tách mục rõ hơn khoảng giữa hai đoạn
                 para.paragraphSpacing = 2
                 body = s
@@ -189,13 +196,13 @@ struct MarkdownText: View {
                 let indent = CGFloat(level) * 18 + 2
                 let numbered = marker.first?.isNumber == true
                 let mark = numbered ? marker : (level == 0 ? "•" : "◦")
-                let tab = indent + (numbered ? 24 : 14)
+                let tab = indent + (numbered ? (bodySize * 1.75).rounded() : bodySize)
                 para.headIndent = tab
                 para.firstLineHeadIndent = indent
                 para.tabStops = [NSTextTab(textAlignment: .left, location: tab)]
                 para.paragraphSpacingBefore = i == 0 ? 0 : 5
                 prefix = NSAttributedString(string: mark + "\t", attributes: [
-                    .font: numbered ? PFont.monospacedDigitSystemFont(ofSize: 14, weight: .medium) : PFont.systemFont(ofSize: 14, weight: .bold),
+                    .font: numbered ? PFont.monospacedDigitSystemFont(ofSize: bodySize, weight: .medium) : PFont.systemFont(ofSize: bodySize, weight: .bold),
                     .foregroundColor: numbered ? PColor.rSecondary : PColor.rAccent])
                 body = text
             case .para(let s): body = s
