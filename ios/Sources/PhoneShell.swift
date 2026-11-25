@@ -36,10 +36,17 @@ struct PhoneShell: View {
                     }
             }
         }
-        // giọng nói = MÀN RIÊNG (rà 25/11, theo tab "Trợ lý AI" của app Phê Nâu): không chung với lịch sử chat; Desk bật ``voiceMode`` qua ``present``
-        .fullScreenCover(isPresented: Binding(get: { desk.voiceMode }, set: { if !$0 { desk.stopVoiceMode() } })) {
-            PhoneVoice().environment(desk)
+        // giọng nói = MÀN RIÊNG (rà 25/11, theo tab "Trợ lý AI" của app Phê Nâu): không chung với lịch sử chat; Desk bật ``voiceMode`` qua ``present``.
+        // Lớp phủ tự vẽ thay fullScreenCover (rà 25/11: trượt cả trang từ dưới lên thấy giật) ⇒ nền mờ dần vào, khối Siri nở từ nút sóng âm theo
+        // nhịp lò xo như khối nổi của bản Mac.
+        .overlay {
+            if desk.voiceMode {
+                PhoneVoice()
+                    .transition(.opacity)
+                    .accessibilityAddTraits(.isModal)
+            }
         }
+        .animation(PhoneVoice.spring, value: desk.voiceMode)
         // bật giọng nói khi Khung làm việc đang mở ⇒ thu sheet trước (như barista_bds), thẻ đang xem vẫn còn ở khung
         .onChange(of: desk.voiceMode) { if desk.voiceMode { desk.narrowShowsCanvas = false } }
         .task {
@@ -219,32 +226,26 @@ struct PhoneAllItems: View {
                     if hits.isEmpty { Text("Không có màn nào khớp").foregroundStyle(.secondary) }
                     ForEach(hits, id: \.screen.key) { h in PhoneScreenRow(screen: h.screen, workspace: h.ws.key, caption: h.ws.title) }
                 } else {
-                    Section {
+                    // rà 25/11: "Tất cả" chỉ còn MỘT danh sách — Tin nhắn + mọi phân hệ (gấp / mở xem màn, ghim / bỏ ghim). Màn theo vai đã ở
+                    // thanh dưới / Khung làm việc, phiếu duyệt ở ô nhanh của Khung làm việc ⇒ không lặp ở đây.
+                    Section("Tất cả mục") {
                         PhoneMessagesRow()
-                        if let inbox = desk.manifest?.inbox { PhoneScreenRow(screen: inbox) }
-                    }
-                    ForEach(layout.onRail) { w in
-                        Section(w.title) { ForEach(w.screens) { PhoneScreenRow(screen: $0, workspace: w.key) } }
-                    }
-                    if layout.grouped {
-                        Section("Tất cả mục") {
-                            ForEach(layout.all) { i in
-                                DisclosureGroup {
-                                    ForEach(i.ws.screens) { PhoneScreenRow(screen: $0, workspace: i.ws.key) }
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        IconTile(symbol: i.ws.icon, tint: i.ws.screens.first?.tintColor ?? .accent, size: 30)
-                                        Text(i.ws.title).font(.t16).lineLimit(1)
-                                        Spacer(minLength: 8)
-                                        Button { Task { await desk.togglePin(i) } } label: {
-                                            Image(systemName: i.pinned ? "pin.fill" : "pin")
-                                                .font(.system(size: 17, weight: .medium))
-                                                .foregroundStyle(i.pinned ? Color.accent : Color.secondary)
-                                                .frame(width: 40, height: 36)
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .accessibilityLabel(i.pinned ? "Bỏ ghim \(i.ws.title)" : "Ghim \(i.ws.title) lên đầu")
+                        ForEach(layout.all) { i in
+                            DisclosureGroup {
+                                ForEach(i.ws.screens) { PhoneScreenRow(screen: $0, workspace: i.ws.key) }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    IconTile(symbol: i.ws.icon, tint: i.ws.screens.first?.tintColor ?? .accent, size: 30)
+                                    Text(i.ws.title).font(.t16).lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    Button { Task { await desk.togglePin(i) } } label: {
+                                        Image(systemName: i.pinned ? "pin.fill" : "pin")
+                                            .font(.system(size: 17, weight: .medium))
+                                            .foregroundStyle(i.pinned ? Color.accent : Color.secondary)
+                                            .frame(width: 40, height: 36)
                                     }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel(i.pinned ? "Bỏ ghim \(i.ws.title)" : "Ghim \(i.ws.title) xuống thanh dưới")
                                 }
                             }
                         }
@@ -299,6 +300,9 @@ struct PhoneVoice: View {
     @Environment(Desk.self) private var desk
     @State private var picked: String?
     @State private var pillHeight: CGFloat = 0
+    @State private var grown = false   // khối Siri nở ra sau khi nền đã vào
+
+    static let spring = Animation.spring(response: 0.5, dampingFraction: 0.84)
 
     private var items: [CanvasItem] { desk.voiceOpened.compactMap { id in desk.canvas.first { $0.id == id } } }
 
@@ -306,12 +310,14 @@ struct PhoneVoice: View {
         let items = self.items
         let current = items.first { $0.id == picked } ?? items.last
         ZStack(alignment: .bottom) {
-            VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Trợ lý AI").font(.t20)
-                    Text("Nói chuyện với trợ lý của bạn — hoặc gõ / bấm một gợi ý bên dưới.").font(.t14).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                if current == nil {   // có thẻ ⇒ thẻ chiếm cả màn (như Phê Nâu), không còn dòng tên / hướng dẫn
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Trợ lý AI").font(.t20)
+                        Text("Nói chuyện với trợ lý của bạn — hoặc gõ / bấm một gợi ý bên dưới.").font(.t14).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 16).padding(.top, 12)
                 }
-                .padding(.horizontal, 16).padding(.top, 12)
                 if items.count > 1 {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
@@ -327,12 +333,16 @@ struct PhoneVoice: View {
                         }
                         .padding(.horizontal, 12)
                     }
+                    .padding(.top, 4)
                 }
                 if let current {
+                    // thẻ chiếm hết phần màn trên khối Siri (không đè: đặt lề cuộn chung cho thẻ thì cả dải chip lọc cuộn ngang cũng nhận lề ⇒ hở trắng)
                     CardFrame(item: current, onClose: { withAnimation(.snappy) { desk.voiceOpened.removeAll { $0 == current.id } } })
                         .id(current.id)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, pillHeight + 16)   // dòng cuối của thẻ cuộn được lên trên khối Siri
+                        .frame(maxHeight: .infinity)
+                        .padding(.bottom, pillHeight + 14)
+                        .padding(.horizontal, 8)
+                        .padding(.top, items.count > 1 ? 0 : 4)
                         .transition(.opacity)
                 } else {
                     Spacer()
@@ -342,10 +352,16 @@ struct PhoneVoice: View {
             SiriPill()
                 .shadow(color: .black.opacity(0.2), radius: 16, y: 4)
                 .padding(.horizontal, 10).padding(.bottom, 8)
+                .scaleEffect(grown ? 1 : 0.2, anchor: .bottomTrailing)   // nút sóng âm ở góc phải ô nhập ⇒ nở từ đó
+                .opacity(grown ? 1 : 0)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if abs($0 - pillHeight) >= 2 { pillHeight = $0 } }
         }
         .background(Color.canvas.ignoresSafeArea())
         .animation(.snappy, value: desk.voiceOpened)
+        .onAppear {
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)   // bàn phím chat không nằm dưới lớp phủ
+            withAnimation(Self.spring.delay(0.05)) { grown = true }
+        }
     }
 }
 

@@ -100,6 +100,11 @@ struct SiriPill: View {
         .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .overlay(RunningBorder(mood: mood, level: CGFloat(v.level), cornerRadius: 30))
         .environment(\.colorScheme, .dark)
+        // khối đổi cao (phụ đề xuất hiện / hết, đổi trạng thái, lỗi) theo nhịp lò xo thay vì nhảy (rà iPhone 25/11: "chưa mượt như bản Mac")
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: v.state)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: v.userCaption.isEmpty)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: v.botCaption.isEmpty)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: v.problem)
         #if os(macOS)
         .onExitCommand { desk.stopVoiceMode() }
         #endif
