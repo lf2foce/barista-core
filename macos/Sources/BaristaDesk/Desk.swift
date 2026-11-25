@@ -150,6 +150,25 @@ final class Desk {
         }
     }
 
+    /// Màn (menu con) đang nằm trong bộ ghim của người xem ⇒ hiện ở hàng ô nhanh đầu Khung làm việc (``contextPins``).
+    func isPinned(_ screen: ScreenSpec, in workspace: String) -> Bool {
+        manifest?.pins?.contains { $0.workspace == workspace && $0.key == screen.key } ?? false
+    }
+
+    /// Ghim / bỏ ghim MỘT MÀN (``core.pin`` với khoá phân hệ + màn) — màn ghim vào hàng ô nhanh của Khung làm việc; ghim CẢ phân hệ thì lên thanh bên /
+    /// thanh dưới (``togglePin(_:)``). Bỏ ghim chỉ gỡ ghim của chính người dùng; màn mặc định theo vai vẫn còn.
+    func togglePin(screen: ScreenSpec, in workspace: String) async {
+        let on = isPinned(screen, in: workspace)
+        do {
+            let r = try await api.command(on ? "core.unpin" : "core.pin", ["workspace": .string(workspace), "key": .string(screen.key)], key: UUID().uuidString)
+            guard r.status == "ok" else { show(r.error.isEmpty ? "Không ghim được" : r.error, isError: true); return }
+            try await reloadManifest()
+            show(on ? "Đã bỏ ghim \(screen.title)" : "Đã ghim \(screen.title) vào Khung làm việc")
+        } catch {
+            show(error.localizedDescription, isError: true)
+        }
+    }
+
     private func reloadManifest() async throws {
         #if os(iOS)
         manifest = try await api.manifest().forPhone()
@@ -389,7 +408,7 @@ final class Desk {
     }
 
     /// Bấm quả cầu / nút sóng âm: Mac ⇒ chế độ Siri nổi (cửa sổ chính lui, khối Siri góc màn hình + ngăn thẻ cạnh phải);
-    /// iPhone ⇒ khối Siri nổi ở đáy cột chat (thay ô nhập); thẻ trợ lý mở vào Khung làm việc (sheet).
+    /// iPhone ⇒ màn giọng nói riêng nền sáng (PhoneVoice — khối Siri nổi ở đáy, thẻ trợ lý mở ở giữa).
     func startVoiceMode() {
         if let present, !voiceMode {
             voiceOpened = []

@@ -26,7 +26,8 @@ struct PhoneShell: View {
                 // màn vẫn bấm được chat phía sau (khối giọng nói, ô nhập). Rà iPhone 25/11: lớp phủ tự vẽ trước đây nặng và lạc chuẩn iOS.
                 PhoneTabs()
                     .overlay(alignment: .bottom) { if !desk.narrowShowsCanvas { PhoneToast() } }
-                    .sheet(isPresented: Binding(get: { desk.narrowShowsCanvas }, set: { desk.narrowShowsCanvas = $0 })) {
+                    // đang ở màn giọng nói ⇒ không bật sheet (hai lớp phủ tranh nhau): thẻ trợ lý mở hiện ngay trong màn giọng nói
+                    .sheet(isPresented: Binding(get: { desk.narrowShowsCanvas && !desk.voiceMode }, set: { desk.narrowShowsCanvas = $0 })) {
                         PhoneCanvas()
                             .environment(desk)
                             .presentationDetents([.medium, .large])
@@ -35,7 +36,14 @@ struct PhoneShell: View {
                     }
             }
         }
+        // giọng nói = MÀN RIÊNG (rà 25/11, theo tab "Trợ lý AI" của app Phê Nâu): không chung với lịch sử chat; Desk bật ``voiceMode`` qua ``present``
+        .fullScreenCover(isPresented: Binding(get: { desk.voiceMode }, set: { if !$0 { desk.stopVoiceMode() } })) {
+            PhoneVoice().environment(desk)
+        }
+        // bật giọng nói khi Khung làm việc đang mở ⇒ thu sheet trước (như barista_bds), thẻ đang xem vẫn còn ở khung
+        .onChange(of: desk.voiceMode) { if desk.voiceMode { desk.narrowShowsCanvas = false } }
         .task {
+            desk.present = { _ in }
             // dev / chụp trình giả lập: BARISTA_SECTION=desk | messages | notices | all ⇒ mở thẳng tab đó (không cần bấm)
             switch ProcessInfo.processInfo.environment["BARISTA_SECTION"] {
             case "desk": desk.section = .desk
@@ -69,28 +77,37 @@ private struct PhoneToast: View {
     }
 }
 
-/// Tab dưới đáy: ba mục đầu của thanh bên trái trên Mac + "Tất cả" (thay chính thanh bên — iPhone không có chỗ cho nó, ADR 0255).
+/// Tab dưới đáy: ba mục đầu của thanh bên trái trên Mac + phân hệ GHIM gần nhất + "Tất cả" (thay chính thanh bên — iPhone không có chỗ, ADR 0255).
+/// iPhone chỉ hiện 5 mục ở thanh dưới (thừa ⇒ iOS gom vào "More") ⇒ còn MỘT chỗ cho phân hệ ghim; ghim thêm thì các phân hệ khác đứng đầu "Tất cả".
 private enum PhoneTab: Hashable {
     case rail(RailSection)
+    case pinned(String)
     case all
 }
 
 private struct PhoneTabs: View {
     @Environment(Desk.self) private var desk
-    @State private var onAll = false
+    @State private var local: PhoneTab?   // tab không phải ``RailSection`` (Mac không có): phân hệ ghim / "Tất cả"
+
+    /// Phân hệ ghim gần nhất (server trả theo thứ tự ghim) — không có thì phân hệ cuối cùng mang cờ ghim (vd phân hệ theo vai mà người dùng ghim).
+    private var pinnedSpace: Workspace? {
+        let spaces = desk.manifest?.workspaces ?? []
+        if let k = desk.manifest?.rail?.pinned.last, let w = spaces.first(where: { $0.key == k }) { return w }
+        return spaces.last { $0.pinned == true }
+    }
 
     /// Phân hệ (``.workspace``) chỉ có trên thanh bên trái của Mac; trên iPhone mở qua khung làm việc ⇒ coi như đang ở trợ lý.
-    /// "Tất cả" không phải một ``RailSection`` (Mac không có) ⇒ giữ ở đây; có nơi khác đổi mục (thông báo đẩy mở Tin nhắn…) thì rời "Tất cả".
+    /// Có nơi khác đổi mục (thông báo đẩy mở Tin nhắn…) thì rời tab riêng của iPhone.
     private var selection: Binding<PhoneTab> {
         Binding(get: {
-            if onAll { return .all }
+            if let local {
+                if case .pinned(let k) = local, pinnedSpace?.key != k { return .all }   // vừa bỏ ghim phân hệ đang mở ⇒ về "Tất cả"
+                return local
+            }
             if case .workspace = desk.section { return .rail(.assistant) }
             return .rail(desk.section)
         }, set: { t in
-            switch t {
-            case .all: onAll = true
-            case .rail(let s): onAll = false; desk.section = s
-            }
+            if case .rail(let s) = t { local = nil; desk.section = s } else { local = t }
         })
     }
 
@@ -101,10 +118,69 @@ private struct PhoneTabs: View {
                 .badge(desk.deskPage?.count ?? 0)
             Tab("Tin nhắn", systemImage: "bubble.left.and.bubble.right", value: PhoneTab.rail(.messages)) { PhoneMessages() }
                 .badge(desk.unread + (desk.talk?.unread ?? 0))
+            if let w = pinnedSpace {
+                Tab(w.title, systemImage: SymbolMap.name(w.icon), value: PhoneTab.pinned(w.key)) { PhoneWorkspaceTab(ws: w) }
+            }
             Tab("Tất cả", systemImage: "square.grid.2x2", value: PhoneTab.all) { PhoneAllItems() }
         }
-        .onChange(of: desk.section) { onAll = false }
-        .task { if ProcessInfo.processInfo.environment["BARISTA_SECTION"] == "all" { onAll = true } }   // dev: chụp trình giả lập
+        .onChange(of: desk.section) { local = nil }
+        .task { if ProcessInfo.processInfo.environment["BARISTA_SECTION"] == "all" { local = .all } }   // dev: chụp trình giả lập
+    }
+}
+
+/// Tab của phân hệ đã ghim: các màn của phân hệ đó (đúng quyền người xem), bấm ⇒ khung làm việc trượt lên. Bỏ ghim ở đầu tab.
+struct PhoneWorkspaceTab: View {
+    @Environment(Desk.self) private var desk
+    let ws: Workspace
+
+    var body: some View {
+        NavigationStack {
+            List { ForEach(ws.screens) { PhoneScreenRow(screen: $0, workspace: ws.key) } }
+                .navigationTitle(ws.title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        if let item = desk.rail.all.first(where: { $0.ws.key == ws.key }) {
+                            HeaderPill { HeaderIcon(symbol: "pin.slash", help: "Bỏ ghim khỏi thanh dưới") { Task { await desk.togglePin(item) } } }
+                        }
+                    }
+                }
+        }
+    }
+}
+
+/// Một màn trong danh sách ("Tất cả", tab phân hệ ghim): ô biểu tượng + tên (+ nhóm). Bấm ⇒ mở ở khung làm việc.
+/// Luật ghim (anh Anh 25/11): ghim MÀN (menu con) ⇒ hàng ô nhanh của Khung làm việc; ghim PHÂN HỆ (menu chính) ⇒ thanh dưới / thanh bên.
+struct PhoneScreenRow: View {
+    @Environment(Desk.self) private var desk
+    let screen: ScreenSpec
+    var workspace: String? = nil   // nil (vd hộp phiếu duyệt) ⇒ không ghim được
+    var caption: String? = nil
+
+    var body: some View {
+        let pinned = workspace.map { desk.isPinned(screen, in: $0) } ?? false
+        Button { withAnimation(.snappy) { desk.open(.screen(screen), show: true) } } label: {
+            HStack(spacing: 12) {
+                IconTile(symbol: screen.icon, tint: screen.tintColor, size: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(screen.title).font(.t16).foregroundStyle(Color.primary).lineLimit(1)
+                    if let c = caption ?? (screen.group.isEmpty ? nil : screen.group) { Text(c).font(.t12).foregroundStyle(.secondary).lineLimit(1) }
+                }
+                Spacer(minLength: 8)
+                if pinned { Image(systemName: "pin.fill").font(.system(size: 12)).foregroundStyle(Color.accent) }
+            }
+        }
+        .swipeActions(edge: .trailing) { pinButton(pinned) }
+        .contextMenu { pinButton(pinned) }
+    }
+
+    @ViewBuilder private func pinButton(_ pinned: Bool) -> some View {
+        if let workspace {
+            Button { Task { await desk.togglePin(screen: screen, in: workspace) } } label: {
+                Label(pinned ? "Bỏ ghim" : "Ghim vào Khung làm việc", systemImage: pinned ? "pin.slash" : "pin")
+            }
+            .tint(pinned ? .gray : .accent)
+        }
     }
 }
 
@@ -128,17 +204,17 @@ struct PhoneAllItems: View {
             List {
                 if !q.trimmingCharacters(in: .whitespaces).isEmpty {
                     if hits.isEmpty { Text("Không có màn nào khớp").foregroundStyle(.secondary) }
-                    ForEach(hits, id: \.screen.key) { h in screenRow(h.screen, caption: h.ws.title) }
+                    ForEach(hits, id: \.screen.key) { h in PhoneScreenRow(screen: h.screen, workspace: h.ws.key, caption: h.ws.title) }
                 } else {
-                    if let inbox = desk.manifest?.inbox { Section { screenRow(inbox) } }
+                    if let inbox = desk.manifest?.inbox { Section { PhoneScreenRow(screen: inbox) } }
                     ForEach(layout.onRail) { w in
-                        Section(w.title) { ForEach(w.screens) { screenRow($0) } }
+                        Section(w.title) { ForEach(w.screens) { PhoneScreenRow(screen: $0, workspace: w.key) } }
                     }
                     if layout.grouped {
                         Section("Tất cả mục") {
                             ForEach(layout.all) { i in
                                 DisclosureGroup {
-                                    ForEach(i.ws.screens) { screenRow($0) }
+                                    ForEach(i.ws.screens) { PhoneScreenRow(screen: $0, workspace: i.ws.key) }
                                 } label: {
                                     HStack(spacing: 12) {
                                         IconTile(symbol: i.ws.icon, tint: i.ws.screens.first?.tintColor ?? .accent, size: 30)
@@ -164,17 +240,63 @@ struct PhoneAllItems: View {
             .searchable(text: $q, placement: .navigationBarDrawer(displayMode: .always), prompt: "Tìm màn…")
         }
     }
+}
 
-    private func screenRow(_ s: ScreenSpec, caption: String? = nil) -> some View {
-        Button { withAnimation(.snappy) { desk.open(.screen(s), show: true) } } label: {
-            HStack(spacing: 12) {
-                IconTile(symbol: s.icon, tint: s.tintColor, size: 30)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(s.title).font(.t16).foregroundStyle(Color.primary).lineLimit(1)
-                    if let c = caption ?? (s.group.isEmpty ? nil : s.group) { Text(c).font(.t12).foregroundStyle(.secondary).lineLimit(1) }
+// MARK: - Giọng nói (màn riêng)
+
+/// Chạm quả cầu / nút sóng âm: màn RIÊNG, nền sáng như app Phê Nâu ("Trợ lý AI") — tên + một dòng hướng dẫn ở đầu, thẻ trợ lý mở trong lúc nói ở
+/// giữa (nhiều thẻ ⇒ chip), khối Siri NỔI ở đáy. Không lẫn với lịch sử chat; ✕ ⇒ ``Desk.stopVoiceMode`` ⇒ về chat, thẻ vẫn ở Khung làm việc.
+struct PhoneVoice: View {
+    @Environment(Desk.self) private var desk
+    @State private var picked: String?
+    @State private var pillHeight: CGFloat = 0
+
+    private var items: [CanvasItem] { desk.voiceOpened.compactMap { id in desk.canvas.first { $0.id == id } } }
+
+    var body: some View {
+        let items = self.items
+        let current = items.first { $0.id == picked } ?? items.last
+        ZStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Trợ lý AI").font(.t20)
+                    Text("Nói chuyện với trợ lý của bạn — hoặc gõ / bấm một gợi ý bên dưới.").font(.t14).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16).padding(.top, 12)
+                if items.count > 1 {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(items) { it in
+                                Button { withAnimation(.snappy) { picked = it.id } } label: {
+                                    Text(it.title).font(.t12m).lineLimit(1).frame(maxWidth: 180)
+                                        .padding(.horizontal, 10).padding(.vertical, 6)
+                                        .background(Capsule().fill(it.id == current?.id ? Color.surface : Color.primary.opacity(0.05)))
+                                        .foregroundStyle(it.id == current?.id ? Color.primary : Color.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                    }
+                }
+                if let current {
+                    CardFrame(item: current, onClose: { withAnimation(.snappy) { desk.voiceOpened.removeAll { $0 == current.id } } })
+                        .id(current.id)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, pillHeight + 16)   // dòng cuối của thẻ cuộn được lên trên khối Siri
+                        .transition(.opacity)
+                } else {
+                    Spacer()
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            SiriPill()
+                .shadow(color: .black.opacity(0.2), radius: 16, y: 4)
+                .padding(.horizontal, 10).padding(.bottom, 8)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if abs($0 - pillHeight) >= 2 { pillHeight = $0 } }
         }
+        .background(Color.canvas.ignoresSafeArea())
+        .animation(.snappy, value: desk.voiceOpened)
     }
 }
 
