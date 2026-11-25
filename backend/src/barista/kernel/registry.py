@@ -201,6 +201,10 @@ class Op:
     # BƯỚC CHUẨN BỊ CÓ GHI RA NGOÀI không (rà 22/11, 1.79): mặc định True (an toàn) — thẻ đề xuất chiếm ``running`` trước khi gọi, lỗi lưng chừng ⇒ cần đối soát.
     # Bước chuẩn bị CHỈ ĐỌC (thử kết nối, đọc số liệu nhà cung cấp) khai False ⇒ không chiếm thẻ, lỗi mạng để thẻ vẫn chờ, bấm lại được.
     prepare_writes: bool = True
+    # NHẬN TỆP (ADR 0262, 1.86): lệnh mà đầu vào chính là MỘT tệp người tải lên (hoá đơn, ảnh phiếu…) khai đuôi tệp nhận, cách nhau dấu phẩy ("pdf,xml,jpg").
+    # Web / app vẽ nút chọn / thả NHIỀU tệp; mỗi tệp một lượt ``POST /v1/uploads/<lệnh>`` (thân = bytes, ``X-Filename``) — lõi chạy lệnh qua executor với
+    # ``ctx.files["file"]``, đầu vào chỉ mang ``filename`` / ``size`` / ``sha256`` (+ tham số query của nút). Không còn route tệp riêng từng module.
+    upload: str = ""
 
 
 @dataclass(frozen=True)
@@ -863,7 +867,8 @@ class Module:
                   import_table: ImportTable | None = None, extra: str = "",
                   info: tuple[str, ...] = (), auto: bool = False, intent: tuple[str, ...] = (),
                   basis_required: str = "", subject: tuple[str, str] | None = None, purpose: str = "", effect: str = "",
-                  irreversible: bool = False, reversible: str = "", prepare_writes: bool = True) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+                  irreversible: bool = False, reversible: str = "", prepare_writes: bool = True,
+                  upload: str = "") -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
         full = f"{self.key}.{name}"
         if irreversible and not effect.strip():
             raise ValueError(f"{full}: irreversible=True cần effect= — hộp xác nhận phải nói HỆ QUẢ bằng chữ người đọc (ADR 0253)")
@@ -914,6 +919,10 @@ class Module:
                              f"cấm, khai risk=\"low\" tường minh")
         if promotable and risk != "low":
             raise ValueError(f"{full}: chỉ lệnh rủi ro low mới nới được (0144)")
+        if upload and not (kind == "command" and not internal and public is None and agent == "deny"
+                           and all(re.fullmatch(r"[a-z0-9]{2,5}", x) for x in upload.split(","))):
+            raise ValueError(f"{full}: upload= chỉ cho lệnh người gọi (không nội bộ / link công khai), agent=\"deny\" (trợ lý không tải tệp thay người), "
+                             f"đuôi tệp chữ thường cách dấu phẩy (\"pdf,xml,jpg\")")
 
         def deco(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
             validate_pin(full, pin, _input_model(fn))
@@ -921,13 +930,15 @@ class Module:
                 validate_import_table(full, import_table, _input_model(fn))
             if intent:
                 validate_intent(full, kind, internal, intent, _input_model(fn))
+            if upload and not {"filename", "size", "sha256"} <= set(_input_model(fn).model_fields):
+                raise ValueError(f"{full}: lệnh nhận tệp cần ô filename / size / sha256 trong đầu vào (nội dung tệp ở ctx.files[\"file\"])")
             if extra and "extra" not in _input_model(fn).model_fields:
                 raise ValueError(f"{full}: lệnh khai extra= cần ô extra: dict[str, Any] trong đầu vào (fields.extra_values())")
             OPS[full] = Op(full, kind, self.key, resource, action, fn, _input_model(fn), title,
                            description or (fn.__doc__ or "").strip(), internal, importable, min_scope, agent, shows, needs, category, public,
                            basis, callers, why, family, description, aside, sensitive, apps, prepare, promotable, target, undone_by, risk,
                            import_rows, pin, consistent, import_key, import_table, extra, info, auto, intent, basis_required,
-                           subject, purpose, effect, irreversible, reversible, prepare_writes)
+                           subject, purpose, effect, irreversible, reversible, prepare_writes, upload)
             if sweep:
                 SWEEPS[full] = sweep
             return fn
@@ -944,8 +955,9 @@ class Module:
                 prepare: Callable[..., Awaitable[Any]] | None = None, consistent: bool = False, import_key: ImportKey | None = None,
                 import_table: ImportTable | None = None, extra: str = "", auto: bool = False, intent: tuple[str, ...] = (), basis_required: str = "",
                 subject: tuple[str, str] | None = None, purpose: str = "", effect: str = "", irreversible: bool = False, reversible: str = "",
-                prepare_writes: bool = True):
-        """``prepare_writes`` (1.79): bước ``prepare`` có GHI ra hệ ngoài không — mặc định True. Khai False cho bước chỉ đọc (thử kết nối, đọc số liệu):
+                prepare_writes: bool = True, upload: str = ""):
+        """``upload`` (ADR 0262, 1.86): lệnh nhận MỘT tệp người tải lên — xem ``Op.upload``.
+        ``prepare_writes`` (1.79): bước ``prepare`` có GHI ra hệ ngoài không — mặc định True. Khai False cho bước chỉ đọc (thử kết nối, đọc số liệu):
         thẻ đề xuất không bị chiếm ``running`` trước khi gọi, lỗi mạng để thẻ vẫn chờ (bấm lại được) thay vì khoá ở "cần đối soát".
         ``subject`` / ``purpose`` / ``effect`` / ``irreversible`` / ``reversible`` (ADR 0253, 1.77): mô tả cho NGƯỜI DUYỆT — xem ``Op``. Lệnh tiền / quyền
         khai đủ ``purpose`` + (``irreversible``+``effect`` | ``reversible`` | ``undone_by``) — ``tests/test_preview_contract.py`` chặn.
@@ -986,7 +998,7 @@ class Module:
                               family=family, aside=aside, sensitive=sensitive, apps=apps, promotable=promotable, target=target, undone_by=undone_by, risk=risk,
                               import_rows=import_rows, pin=pin, min_scope=min_scope, prepare=prepare, consistent=consistent, import_key=import_key, import_table=import_table, extra=extra,
                               auto=auto, intent=intent, basis_required=basis_required, subject=subject, purpose=purpose, effect=effect,
-                              irreversible=irreversible, reversible=reversible, prepare_writes=prepare_writes)
+                              irreversible=irreversible, reversible=reversible, prepare_writes=prepare_writes, upload=upload)
 
     def query(self, name: str, *, resource: str | None, title: str, action: str = "read", description: str = "",
               internal: bool = False, min_scope: str | None = None, agent: str = "allow", needs: tuple[str, ...] = (),

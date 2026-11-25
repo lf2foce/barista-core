@@ -404,6 +404,34 @@ async def command(request: Request, name: str, body: Annotated[dict[str, Any], B
     return _result(await executor.run(p, name, body, key=idempotency_key, historical=p.via == "app" and p.shadow, expect_basis=expect))
 
 
+UPLOAD_MAX = 30 * 1024 * 1024   # một tệp tải lên cho lệnh nhận tệp (hoá đơn, ảnh phiếu…) — như Kho tài liệu
+UPLOAD_RESERVED = {"filename", "size", "sha256"}
+
+
+@app.post("/v1/uploads/{name}")
+async def upload(request: Request, name: str, x_dev_user: DevUser = None, x_tenant_id: TenantId = None,
+                 idempotency_key: Annotated[str | None, Header()] = None) -> JSONResponse:
+    """TẢI MỘT TỆP cho lệnh khai ``upload=`` (ADR 0262): thân = bytes của tệp, ``X-Filename`` (mã hoá phần trăm), tham số query = các ô khác của lệnh
+    (chuỗi). Lõi kiểm đuôi tệp theo khai báo + cỡ, rồi chạy lệnh qua executor (quyền, chống lặp, nhật ký) với nội dung ở ``ctx.files["file"]`` — đầu vào
+    chỉ có tên / cỡ / sha256. Nhiều tệp ⇒ web / app gửi lần lượt từng tệp."""
+    p = await current(x_dev_user, x_tenant_id, request, apps=False)
+    op = registry.OPS.get(name)
+    if op is None or not op.upload:
+        raise HTTPException(404, "Lệnh này không nhận tệp")
+    filename = unquote(request.headers.get("x-filename") or "").strip()
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in op.upload.split(","):
+        raise HTTPException(415, f"Chỉ nhận tệp {', '.join('.' + x for x in op.upload.split(','))}")
+    data = await request.body()
+    if not data:
+        raise HTTPException(422, "Tệp rỗng")
+    if len(data) > UPLOAD_MAX:
+        raise HTTPException(413, f"Tệp quá {UPLOAD_MAX // (1024 * 1024)}MB")
+    extra = {k: v for k, v in request.query_params.items() if k not in UPLOAD_RESERVED}
+    inp = {**extra, "filename": filename[:300], "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    return _result(await executor.run(p, name, inp, key=idempotency_key, files={"file": data}))
+
+
 # ── Link gửi khách (0064): KHÔNG đăng nhập — quyền = cầm đúng link. Người gọi via="link" chỉ chạy thao tác public của đúng loại link (executor),
 # RLS chỉ mở đúng đối tượng. Thao tác theo quy ước "<module>.link_view / link_answer / link_upload" của module sở hữu loại link.
 LINK_UPLOAD_MAX = 20 * 1024 * 1024

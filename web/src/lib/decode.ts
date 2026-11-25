@@ -67,6 +67,7 @@ export function decodeAction(raw: unknown): ActionSpec {
     when: Object.fromEntries(Object.entries(obj(o.when)).map(([k, v]) => [k, arr(v) as Json[]])),
     importable: bool(o.importable),
     ...(o.import_only === true ? { import_only: true } : {}),
+    ...(typeof o.upload === "string" && /^[a-z0-9]{2,5}(,[a-z0-9]{2,5})*$/.test(o.upload) ? { upload: o.upload } : {}),
     ...(typeof o.route === "string" && ROUTE.test(o.route) ? { route: o.route } : {}),
     ...(typeof o.basis === "string" && o.basis ? { basis: o.basis } : {}),
     ...(typeof o.confirm === "string" && o.confirm ? { confirm: o.confirm } : {}),

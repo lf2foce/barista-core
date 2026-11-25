@@ -34,6 +34,7 @@ import { newKey } from "@/lib/idempotency";
 import { filterKey, recall, remember } from "@/lib/remembered-filters";
 import { splitFilters } from "@/lib/filter-layout";
 import { FilterChips, FilterPanel } from "./filter-panel";
+import { UploadButton } from "./upload-button";
 import { ClampNote } from "@/components/clamp-note";
 
 /** Một màn: bộ lọc + nút lệnh + KPI + bảng (hoặc trang chi tiết / thẻ). Mọi thứ theo `ScreenSpec` server gửi (ScreenView.swift). */
@@ -232,6 +233,9 @@ export function ScreenView({
           Dán chữ
         </button>
       </div>
+    ) : a.upload ? (
+      // NHẬN TỆP (ADR 0262): chọn nhiều tệp ⇒ mỗi tệp một lượt gửi vào lệnh — không mở form
+      <UploadButton key={a.command + a.title} a={a} onDone={changed} />
     ) : a.importable ? (
       <div key={a.command + a.title} className="flex">
         <button type="button" className={cn(actionClass(a.style), "rounded-r-none")} onClick={() => desk.openForm(a, { onDone: changed })}>{a.title}</button>

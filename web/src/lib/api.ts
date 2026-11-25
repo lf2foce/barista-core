@@ -2,6 +2,7 @@ import { decodePage, ROUTE } from "./decode";
 import { NdjsonParser } from "./ndjson";
 import { connectAction, signalAction, SseParser } from "./sse";
 import type { IntakeOut } from "./kb-intake";
+import { newKey } from "./idempotency";
 import type { Decision } from "./decide";
 import { primeDesk } from "./session";
 import type {
@@ -223,6 +224,20 @@ export const api = {
       headers: { "content-type": "application/octet-stream", "x-filename": headerFilename(file.name) },
     });
     if (res.status === 413) throw new ApiError(await detailOf(res, "File quá lớn"), res.status);
+    const body = await jsonOf<Partial<CommandResult> & { detail?: string }>(res);
+    if (body.status === undefined) throw new ApiError(body.detail ?? `Không tải được (${res.status})`, res.status);
+    return { status: body.status, output: body.output ?? null, error: body.error ?? "", approval_id: body.approval_id ?? null, replayed: !!body.replayed };
+  },
+
+  /** Một tệp cho lệnh NHẬN TỆP (ADR 0262): thân = bytes, tên ở `X-Filename`, ô khác của nút ở query. Một khoá chống lặp mỗi tệp (bấm lại cùng lượt không ghi hai lần). */
+  uploadFile: async (command: string, file: File, params: Record<string, string> = {}, key: string = newKey()): Promise<CommandResult> => {
+    const q = new URLSearchParams(params);
+    const res = await raw(`/v1/uploads/${encodeURIComponent(command)}${q.size ? `?${q}` : ""}`, {
+      method: "POST",
+      body: file,
+      headers: { "content-type": "application/octet-stream", "x-filename": headerFilename(file.name), "idempotency-key": key },
+    });
+    if ([404, 413, 415, 422].includes(res.status)) throw new ApiError(await detailOf(res, "Không tải được tệp"), res.status);
     const body = await jsonOf<Partial<CommandResult> & { detail?: string }>(res);
     if (body.status === undefined) throw new ApiError(body.detail ?? `Không tải được (${res.status})`, res.status);
     return { status: body.status, output: body.output ?? null, error: body.error ?? "", approval_id: body.approval_id ?? null, replayed: !!body.replayed };

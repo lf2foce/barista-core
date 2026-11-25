@@ -72,6 +72,7 @@ def _action(p: Principal, a: Action) -> dict[str, Any] | None:
     op = registry.OPS[a.command]
     return {"command": a.command, "title": a.title or op.title, "bind": a.bind, "prefill": a.prefill, "preset": a.preset, "when": a.when,
             "style": a.style, "importable": op.importable and op.import_table is None,
+            **({"upload": op.upload} if op.upload else {}),   # nút chọn / thả tệp (ADR 0262): mỗi tệp một lượt POST /v1/uploads/<lệnh>
             **({"import_only": True} if op.import_table is not None else action_rule(op, {*a.bind, *a.preset}))}   # luật xác nhận một chỗ (ADR 0253)
 
 

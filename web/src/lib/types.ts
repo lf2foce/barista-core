@@ -51,6 +51,8 @@ export type ActionSpec = {
   values?: Input;
   when: Record<string, Json[]>;
   importable: boolean;
+  /** NHẬN TỆP (ADR 0262): đuôi tệp nhận, cách dấu phẩy ("pdf,xml,jpg") — nút mở hộp chọn / thả NHIỀU tệp, mỗi tệp một lượt `POST /v1/uploads/{command}`. */
+  upload?: string;
   /** Lệnh nhập CẢ BẢNG (vd nhập kế hoạch từ Excel): không có form "nhập một" — nút mở thẳng màn Nhập từ Excel, `preset` đi kèm file. */
   import_only?: boolean;
   /** Đường HTTP RIÊNG của gói cho lệnh này (vd chấm công: máy chủ đọc địa chỉ mạng của kết nối) — trống ⇒ `/v1/commands/{command}`. */

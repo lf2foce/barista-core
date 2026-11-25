@@ -257,6 +257,8 @@ __version__ = "1.85.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                              khoá ngoại giữa hai bảng cùng mang ``tenant_id`` mang cả ``tenant_id``; ``tests/test_meta.py`` chặn khoá ngoại thiếu
 #                         1.85 (ADR 0262): ``docread.register`` / ``ExternalReader`` / ``Reader`` / ``Request`` — GÓI khai bộ đọc (OCR trên máy, dịch vụ tài liệu);
 #                              công ty chọn bộ đọc bằng hồ sơ đọc theo mục đích (chuỗi), không đổi gói nghiệp vụ. Tên trùng bộ đã có ⇒ từ chối
+#                              + ``Module.command(upload="pdf,xml,jpg")``: lệnh NHẬN TỆP — nút chọn / thả nhiều tệp, mỗi tệp một lượt ``POST /v1/uploads/<lệnh>``
+#                              (nội dung ở ``ctx.files["file"]``, đầu vào có filename / size / sha256); thay route tệp riêng từng module
 
 __all__ = [
     "VN",
