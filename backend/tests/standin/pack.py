@@ -172,12 +172,17 @@ class Scan(Input):
     code: str = ""
 
 
+async def read_scan(prep: Any, inp: Scan) -> int:
+    """Bước chuẩn bị (ngoài giao dịch — nơi gói gọi model / đọc tệp) thấy CÙNG tệp với handler."""
+    return len(prep.files.get("file") or b"")
+
+
 async def attach_scan(ctx: Ctx, inp: Scan) -> dict[str, Any]:
     import hashlib
 
     data = ctx.files.get("file") or b""
     return {"filename": inp.filename, "code": inp.code, "bytes": len(data), "same": hashlib.sha256(data).hexdigest() == inp.sha256,
-            "summary": f"Đã nhận {inp.filename}"}
+            "read_outside": ctx.prepared, "summary": f"Đã nhận {inp.filename}"}
 
 
 async def _order(ctx: Ctx, code: str, *, lock: bool = False) -> dict[str, Any]:
@@ -768,7 +773,8 @@ def register() -> Module:
 
     m.metric("metric_signed", "Đơn ký", "đơn", resource="orderdesk")(metric_signed)
     m.metric("metric_fee", "Phí của đơn đã ký", "đ", resource="orderdesk")(metric_fee)
-    m.command("attach_scan", resource="orderdesk", title="Tải bản scan đơn", agent="deny", upload="pdf,jpg")(attach_scan)
+    m.command("attach_scan", resource="orderdesk", title="Tải bản scan đơn", agent="deny", upload="pdf,jpg", prepare=read_scan,
+              prepare_writes=False)(attach_scan)
     m.search("search_orders", "Đơn dịch vụ", resource="orderdesk", rank=35)(search_orders)
     m.pack_blockers()(pack_blockers)
     m.query("health_report", resource="orderdesk", title="Sức khoẻ dữ liệu đơn dịch vụ", internal=True, agent="deny", callers=("health",),

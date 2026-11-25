@@ -159,6 +159,8 @@ class Prep:
     p: Principal
     module: str = ""
     preview: bool = False   # cùng tên với ``Ctx.preview`` để ``ai.run`` nhận cả hai — bước chuẩn bị không bao giờ là chạy thử
+    # tệp gửi KÈM lệnh (lệnh nhận tệp — ADR 0262): cùng nội dung ``Ctx.files`` mà handler sẽ thấy ⇒ đọc / gọi model trên tệp NGOÀI giao dịch
+    files: dict[str, bytes | bytearray] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not _MINTING.get():
@@ -194,10 +196,10 @@ class Prep:
         return out
 
 
-def _prep(p: Principal, module: str) -> Prep:
+def _prep(p: Principal, module: str, files: dict[str, bytes | bytearray] | None = None) -> Prep:
     token = _MINTING.set(True)
     try:
-        return Prep(p, module)
+        return Prep(p, module, files=dict(files or {}))
     finally:
         _MINTING.reset(token)
 
@@ -1408,7 +1410,7 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
     prepared_outside = False
     try:
         async with asyncio.timeout(previews.EXTERNAL_DECISION_S if need_prepare else None):
-            value = await op.prepare(_prep(p, op.module), model)
+            value = await op.prepare(_prep(p, op.module, files), model)
             prepared_outside = True
             finished = await _run(p, name, inp, key=given_key, quiet=quiet, expect_basis=expect_basis, edited=edited, files=files, attended=attended,
                                   background=background, keep_output=keep_output, prepared=value, dry_run=dry_run, claim=claim, on_prepare=on_prepare,

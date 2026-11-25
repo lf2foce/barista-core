@@ -19,7 +19,7 @@ async def test_a_file_goes_through_the_one_door_with_its_bytes_beside_the_input(
         r = await c.post("/v1/uploads/orderdesk.attach_scan?code=DH-1", content=b"%PDF-1.4 scan", headers={**_h(sale), "x-filename": "b%E1%BA%A3n-scan.pdf"})
         assert r.status_code == 200, r.text
         out = r.json()["output"]
-        assert out == {"filename": "bản-scan.pdf", "code": "DH-1", "bytes": 13, "same": True, "summary": "Đã nhận bản-scan.pdf"}
+        assert out == {"filename": "bản-scan.pdf", "code": "DH-1", "bytes": 13, "same": True, "read_outside": 13, "summary": "Đã nhận bản-scan.pdf"}
         bad = await c.post("/v1/uploads/orderdesk.attach_scan", content=b"MZ", headers={**_h(sale), "x-filename": "virus.exe"})
         assert bad.status_code == 415 and ".pdf" in bad.json()["detail"]
         assert (await c.post("/v1/uploads/orderdesk.attach_scan", content=b"", headers={**_h(sale), "x-filename": "a.pdf"})).status_code == 422
