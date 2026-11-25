@@ -190,6 +190,11 @@ struct CardFrame: View {
     @Environment(Desk.self) private var desk
     let item: CanvasItem
     var onClose: (() -> Void)? = nil
+    #if os(iOS)
+    static let pad: CGFloat = 14   // iPhone: thẻ trong sheet — gọn như app Phê Nâu (rà 25/11)
+    #else
+    static let pad: CGFloat = 18
+    #endif
 
     /// Thẻ là một MÀN ⇒ màn tự vẽ đầu thẻ (tên + bộ lọc chính + hỏi trợ lý cùng một hàng — rà bố cục 18/11).
     private var screenSpec: ScreenSpec? {
@@ -211,7 +216,7 @@ struct CardFrame: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(18)
+        .padding(Self.pad)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color.surface))
         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))

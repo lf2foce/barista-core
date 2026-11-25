@@ -389,7 +389,7 @@ final class Desk {
     }
 
     /// Bấm quả cầu / nút sóng âm: Mac ⇒ chế độ Siri nổi (cửa sổ chính lui, khối Siri góc màn hình + ngăn thẻ cạnh phải);
-    /// iPhone ⇒ màn giọng nói toàn màn (PhoneVoice — khối Siri ở đỉnh, thẻ trợ lý mở bên dưới).
+    /// iPhone ⇒ khối Siri nổi ở đáy cột chat (thay ô nhập); thẻ trợ lý mở vào Khung làm việc (sheet).
     func startVoiceMode() {
         if let present, !voiceMode {
             voiceOpened = []

@@ -22,23 +22,20 @@ struct PhoneShell: View {
                     CanvasView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
-                ZStack {
-                    PhoneTabs()
-                        .overlay(alignment: .bottom) { if !desk.narrowShowsCanvas { PhoneToast() } }
-                    if desk.narrowShowsCanvas {
-                        CanvasView(onBack: { withAnimation(.snappy) { desk.narrowShowsCanvas = false } })
-                            .transition(.move(edge: .bottom))   // khung làm việc là một lớp phủ ⇒ trượt lên từ dưới (như sheet), không đẩy ngang như trang con
-                            .zIndex(1)
+                // Khung làm việc = SHEET gốc của iOS (như barista_bds `PhoneCanvas`, app Phê Nâu chép theo): nấc nửa màn ↔ toàn màn, thanh kéo, nửa
+                // màn vẫn bấm được chat phía sau (khối giọng nói, ô nhập). Rà iPhone 25/11: lớp phủ tự vẽ trước đây nặng và lạc chuẩn iOS.
+                PhoneTabs()
+                    .overlay(alignment: .bottom) { if !desk.narrowShowsCanvas { PhoneToast() } }
+                    .sheet(isPresented: Binding(get: { desk.narrowShowsCanvas }, set: { desk.narrowShowsCanvas = $0 })) {
+                        PhoneCanvas()
+                            .environment(desk)
+                            .presentationDetents([.medium, .large])
+                            .presentationDragIndicator(.visible)
+                            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
                     }
-                }
             }
         }
-        // chế độ giọng nói toàn màn (PhoneVoice): Desk bật ``voiceMode`` qua ``present`` — iPhone chỉ cần màn phủ, không có cửa sổ để lui như Mac
-        .fullScreenCover(isPresented: Binding(get: { desk.voiceMode }, set: { if !$0 { desk.stopVoiceMode() } })) {
-            PhoneVoice().environment(desk)
-        }
         .task {
-            desk.present = { _ in }
             // dev / chụp trình giả lập: BARISTA_SECTION=desk | messages | notices | all ⇒ mở thẳng tab đó (không cần bấm)
             switch ProcessInfo.processInfo.environment["BARISTA_SECTION"] {
             case "desk": desk.section = .desk
@@ -181,58 +178,102 @@ struct PhoneAllItems: View {
     }
 }
 
-// MARK: - Giọng nói toàn màn
+// MARK: - Khung làm việc (sheet)
 
-/// Chạm quả cầu / nút sóng âm (rà iPhone 25/11, theo tab Phê Nâu): chế độ giọng nói TOÀN MÀN, nền tối, ẩn thanh tab — khối Siri ở đỉnh như Dynamic
-/// Island mở rộng (quả cầu, phụ đề, micro, bàn phím, đóng), thứ trợ lý mở ra trong lúc nói hiện ngay bên dưới (nhiều thẻ ⇒ hàng tab). Mac: khối nổi +
-/// ngăn thẻ cạnh phải (SiriFloat.swift). ✕ ⇒ ``Desk.stopVoiceMode`` ⇒ đóng màn, thẻ vẫn còn ở khung làm việc.
-struct PhoneVoice: View {
+/// Khung làm việc trên iPhone (theo barista_bds `PhoneCanvas` — anh Anh 25/11: "neat như phenau_v3"): đầu khung một hàng (tên · tải lại · thu),
+/// hàng ô nhanh biểu tượng TRÊN chữ (màn ghim theo ngữ cảnh + phiếu chờ duyệt), chip thẻ đã mở khi nhiều hơn một, còn lại dành hết cho thẻ đang
+/// xem. Mọi màn khác ở tab "Tất cả". Giọng nói: khối nổi ở đáy màn chat (SiriPill), không phủ toàn màn.
+struct PhoneCanvas: View {
     @Environment(Desk.self) private var desk
-    @State private var picked: String?
-
-    private var items: [CanvasItem] { desk.voiceOpened.compactMap { id in desk.canvas.first { $0.id == id } } }
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        let items = self.items
-        let current = items.first { $0.id == picked } ?? items.last
-        VStack(spacing: 12) {
-            SiriPill()
-            if items.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(items) { it in
-                            Button { withAnimation(.snappy) { picked = it.id } } label: {
-                                HStack(spacing: 6) {
-                                    IconTile(symbol: it.style.symbol, tint: it.style.tint, size: 20)
-                                    Text(it.title).font(.t12m).lineLimit(1)
-                                }
-                                .padding(.horizontal, 10).frame(height: 32)
-                                .background(Capsule().fill(it.id == current?.id ? Color.white.opacity(0.18) : Color.white.opacity(0.07)))
-                            }
-                            .buttonStyle(.plain)
+        VStack(spacing: 10) {
+            HStack(spacing: 4) {
+                Text(desk.builder != nil ? "Xem trước app" : "Khung làm việc").font(.t20).lineLimit(1)
+                Spacer(minLength: 8)
+                Button { desk.canvasRev += 1 } label: { Image(systemName: "arrow.clockwise").phoneGlyph() }
+                    .buttonStyle(.plain).accessibilityLabel("Tải lại")
+                Button { dismiss() } label: { Image(systemName: "chevron.down").phoneGlyph() }
+                    .buttonStyle(.plain).accessibilityLabel("Về trò chuyện")
+            }
+            .padding(.horizontal, 16).padding(.top, 14)
+
+            let pins = Array(desk.contextPins.prefix(desk.inboxCount > 0 ? 3 : 4))
+            if desk.builder == nil && (!pins.isEmpty || desk.inboxCount > 0) {
+                HStack(spacing: 8) {
+                    if let inbox = desk.manifest?.inbox, desk.inboxCount > 0 {
+                        quick("checkmark.seal.fill", "\(desk.inboxCount) chờ duyệt", .white, fill: .ok, on: desk.activeId == CanvasItem.screen(inbox).id) {
+                            desk.open(.screen(inbox), show: true)
                         }
                     }
+                    ForEach(pins) { s in
+                        quick(s.icon, s.title, s.tintColor, on: desk.activeId == CanvasItem.screen(s).id) { desk.open(.screen(s), show: true) }
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
+
+            if desk.canvas.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(desk.canvas) { c in
+                            Button { withAnimation(.snappy) { desk.activeId = c.id } } label: {
+                                Text(c.title).font(.t12m).lineLimit(1).frame(maxWidth: 180)
+                                    .padding(.horizontal, 10).padding(.vertical, 6)
+                                    .background(Capsule().fill(c.id == desk.activeId ? Color.surface : Color.primary.opacity(0.05)))
+                                    .overlay(Capsule().strokeBorder(Color.primary.opacity(c.id == desk.activeId ? 0.12 : 0)))
+                                    .foregroundStyle(c.id == desk.activeId ? Color.primary : Color.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu { Button("Đóng thẻ") { withAnimation(.snappy) { desk.close(c.id) } } }
+                        }
+                    }
+                    .padding(.horizontal, 12)
                 }
             }
-            if let current {
-                CardFrame(item: current, onClose: { withAnimation(.snappy) { desk.voiceOpened.removeAll { $0 == current.id } } })
-                    .id(current.id)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+
+            if let hero = desk.active {
+                CardFrame(item: hero)
+                    .id(hero.id)
+                    .padding(.horizontal, 12).padding(.bottom, 8)
+                    .transition(.opacity)
             } else {
                 Spacer()
-                VStack(spacing: 8) {
-                    Text("Cứ nói tự nhiên").font(.t20)
-                    Text("Số liệu, danh sách, lịch… trợ lý mở ra sẽ hiện ở đây").font(.t14).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                }
-                .padding(.horizontal, 24)
+                Text("Hỏi trợ lý hoặc bấm một mục ở trên — thông tin sẽ hiện ở đây.")
+                    .font(.t14).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(32)
                 Spacer()
             }
         }
-        .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color.black.ignoresSafeArea())
-        .environment(\.colorScheme, .dark)
-        .animation(.snappy, value: desk.voiceOpened)
+        .background(Color.canvas)
+        .animation(.snappy, value: desk.activeId)
+    }
+
+    /// Ô nhanh (barista_bds `quick`): biểu tượng tô màu trên, chữ dưới, ô bằng nhau — cùng ngôn ngữ ToolChipStyle (nền phẳng, viền mảnh).
+    private func quick(_ icon: String, _ label: String, _ tint: Color, fill: Color? = nil, on: Bool, _ action: @escaping () -> Void) -> some View {
+        Button { withAnimation(.snappy) { action() } } label: {
+            VStack(spacing: 4) {
+                Image(systemName: SymbolMap.name(icon)).font(.system(size: 18, weight: .semibold)).foregroundStyle(tint)
+                    .frame(height: 24)   // biểu tượng cao thấp khác nhau ⇒ chữ lệch hàng nếu không cố định
+                Text(label).font(.t12m).lineLimit(1).truncationMode(.tail)   // cùng cỡ ở mọi ô (thu chữ theo ô ⇒ ô dài chữ nhỏ, ô ngắn chữ to)
+                    .foregroundStyle(fill == nil ? Color.primary : Color.white)
+            }
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .padding(.horizontal, 2)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(fill ?? Color.surface))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(on ? Color.accent : Color.primary.opacity(fill == nil ? 0.12 : 0), lineWidth: on ? 1.5 : 1))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private extension Image {
+    /// Nút biểu tượng đầu sheet: cỡ 17 điểm, vùng chạm 44 (chuẩn iOS).
+    func phoneGlyph() -> some View {
+        font(.system(size: 17, weight: .semibold)).foregroundStyle(Color.primary.opacity(0.8)).frame(width: 44, height: 44).contentShape(Rectangle())
     }
 }
 

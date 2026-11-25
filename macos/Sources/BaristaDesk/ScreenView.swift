@@ -320,7 +320,11 @@ struct ScreenView: View {
             if table != nil { exportButton }   // đầu thẻ không cầm được hàng lọc ⇒ Xuất Excel cuối hàng lọc
             if head == nil && embedded { reloadButton }
         }
+        #if os(iOS)
+        .controlSize(.small)   // iPhone: ô chọn kiểu menu vẽ chữ xanh cỡ thân bài ⇒ hàng lọc chiếm cả mảng màn (rà 25/11)
+        #else
         .controlSize(.regular)
+        #endif
         .font(.t12)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -821,6 +825,11 @@ struct KPIRow: View {
 struct KPITile: View {
     @Environment(Desk.self) private var desk: Desk?
     let k: KPI
+    #if os(iOS)
+    static let pad: CGFloat = 12, hintLines = 1   // iPhone: ô thấp, gợi ý một dòng (đủ câu ở menu chạm giữ / bấm xem nguồn) — như app Phê Nâu
+    #else
+    static let pad: CGFloat = 14, hintLines = 2
+    #endif
     var inset = false
     var onEdit: ((ActionSpec) -> Void)? = nil
 
@@ -831,10 +840,10 @@ struct KPITile: View {
                 if k.drill != nil { Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary) }
             }
             Text(Fmt.kpi(k)).font(.t20).monospacedDigit().foregroundStyle(Color.tone(k.tone)).lineLimit(1).minimumScaleFactor(0.55)
-            if !k.hint.isEmpty { Text(k.hint).font(.t12).foregroundStyle(.tertiary).lineLimit(2).fixedSize(horizontal: false, vertical: true) }
+            if !k.hint.isEmpty { Text(k.hint).font(.t12).foregroundStyle(.tertiary).lineLimit(Self.hintLines).fixedSize(horizontal: false, vertical: true) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(14)
+        .padding(Self.pad)
         .background(inset ? AnyView(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.surface2))
                           : AnyView(Color.clear))
         .modifier(SurfaceIf(on: !inset))
