@@ -478,3 +478,20 @@ async def test_pack_samples_choose_their_profiles_finish_last_and_add_companies(
             return {}
         monkeypatch.setattr(seed_pay, name, _none)
     assert (await seed_pay.seed_pay())["extra"] == {"mgmt": {"done": "thêm một công ty"}}
+
+
+async def test_the_one_person_shop_profile_is_a_core_company_packs_only_add_their_samples(monkeypatch):
+    """Hồ sơ ``cua-hang`` (ADR 0262 mục C): LÕI dựng công ty một người trung tính (một chủ, Tài chính, công tắc công ty nhiều người tắt, chủ được ghi tiền khách
+    trả); gói đã cài khai ``PROFILES`` chứa "cua-hang" được bật + góp mẫu. Không gói nào khai ⇒ công ty vẫn dựng được, chỉ có phần của lõi."""
+    import importlib.metadata as md
+
+    real = md.entry_points
+    monkeypatch.setattr(md, "entry_points", lambda **kw: md.EntryPoints([]) if kw.get("group") == seed.SAMPLE_GROUP else real(**kw))
+    assert "cua-hang" in seed.profiles() and seed.profile_packs("cua-hang") == ()
+    tid = await seed.shop_company(name=f"Cửa hàng thử {uuid.uuid4().hex[:6]} (dữ liệu giả)")
+    chu = await seed.who(tid, "chu", seed.SHOP_DOMAIN)
+    assert {"finance", "talk"} <= set(await seed._packs_on(tid))
+    members = await seed._owner_rows("SELECT count(*) AS n FROM core.memberships WHERE tenant_id = %s AND active", (tid,))
+    assert members[0]["n"] == 1 and chu.role == "admin"
+    off = await seed._owner_rows("SELECT key FROM core.settings WHERE tenant_id = %s AND NOT enabled", (tid,))
+    assert set(seed.SHOP_SETTINGS_OFF) <= {r["key"] for r in off}

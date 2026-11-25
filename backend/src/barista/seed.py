@@ -559,7 +559,7 @@ async def demo_autonomy(tid: UUID) -> str | None:
     return DEMO_AUTONOMY
 
 
-BUILTIN_PROFILES = ("sample", "pay-demo")   # công ty mẫu trung tính của lõi (+ gói đã cài tự khai thuộc hồ sơ này) · nhiều công ty của gói Lương
+BUILTIN_PROFILES = ("sample", "pay-demo", "cua-hang")   # công ty mẫu trung tính của lõi (+ gói đã cài tự khai thuộc hồ sơ này) · nhiều công ty của gói Lương · cửa hàng một người
 PROFILE_GROUP = "barista.seed_profiles"   # gói ngoài lõi khai hồ sơ nạp mẫu của bản cài nó (vd ``bank``, ``accounting``, ``research``)
 
 
@@ -674,6 +674,37 @@ async def sample_company(name: str = TENANT, profile: str = "sample", extra_pack
         await seed_titles(tid, await who(tid, "admin"), since=add_months(today(), -9).isoformat())
     if then is not None:
         await then(tid)
+    await sample_finish(tid)
+    return tid
+
+
+# CỬA HÀNG MỘT NGƯỜI (``--profile cua-hang`` — ADR 0262 mục C): HỒ SƠ là việc của bản cài, không của gói nào. Lõi dựng công ty một người trung tính (một chủ, Tài
+# chính, công tắc của công ty một người); gói đã cài khai ``PROFILES`` chứa "cua-hang" được bật và tự góp dữ liệu mẫu của nó (``prepare`` / ``seed`` /
+# ``finish`` của phần mẫu) — gói không tạo công ty, không biết gói khác. Bộ gói thực tế = gói bản cài ghim (chỉ gói đã cài mới có phần mẫu).
+SHOP_PROFILE = "cua-hang"
+SHOP_NAME = "Cửa hàng mẫu (dữ liệu giả)"
+SHOP_DOMAIN = "cuahang.demo"
+SHOP_PEOPLE = [("chu", "Nguyễn Thị Hoa", "admin", "QT", True)]
+SHOP_PACKS = ("finance", "talk")
+# công ty MỘT người không dùng nghiệp vụ của công ty nhiều người: tắt công tắc ⇒ màn ẩn khỏi menu (Cài đặt công ty bật lại được; dữ liệu / quyền giữ nguyên)
+SHOP_SETTINGS_OFF = ("schedule.use_resources", "acct.use_remittances", "acct.use_cost_objects", "acct.cash_low_alert")
+
+
+async def shop_company(name: str = SHOP_NAME, extra_packs: tuple[str, ...] = ()) -> UUID:
+    tid = await create_tenant(name, SHOP_DOMAIN, people=SHOP_PEOPLE, packs=(*SHOP_PACKS, *profile_packs(SHOP_PROFILE), *extra_packs),
+                              about="cửa hàng một người (mẫu)")
+    chu = await who(tid, "chu", SHOP_DOMAIN)
+    # chủ tự ghi tiền khách trả + xem sổ — cấp cho RIÊNG công ty này (gói không khai quyền lên Kế toán: sẽ lan sang công ty khác cùng bản cài)
+    system = system_principal(tid)
+    for role, resource, actions in (("admin", "acct", ["read", "write"]), ("director", "acct", ["read", "write"]), ("admin", "ledger", ["read"])):
+        await run(system, "admin.set_grant", role=role, resource=resource, scope="all", actions=actions)
+    for key in SHOP_SETTINGS_OFF:
+        await run(chu, "admin.set_setting", key=key, enabled=False)
+    mods = await _samples_on(tid)
+    for hook in ("prepare", "seed"):
+        for mod in mods.values():
+            if (fn := getattr(mod, hook, None)) is not None:
+                await fn(tid)
     await sample_finish(tid)
     return tid
 
@@ -813,13 +844,17 @@ async def add_company(profile: str, extra_packs: tuple[str, ...] = ()) -> None:
     """``--add``: thêm công ty mẫu của MỘT hồ sơ gói vào bản demo ĐANG CÓ dữ liệu (bản cài nhiều công ty — mỗi người đăng nhập vào đúng công ty của mình).
     Công ty cùng tên đã có ⇒ bỏ qua (chạy lại an toàn). Chỉ hồ sơ của gói (``NAME`` riêng) — công ty mẫu của lõi không thêm được lần hai."""
     prof = pack_profile(profile)
-    if prof is None:
-        raise SystemExit(f"Dừng: --add chỉ cho hồ sơ của gói đã cài (không phải {profile})")
-    name = prof.NAME
+    if prof is None and profile != SHOP_PROFILE:
+        raise SystemExit(f"Dừng: --add chỉ cho hồ sơ của gói đã cài hoặc {SHOP_PROFILE} (không phải {profile})")
+    name = prof.NAME if prof is not None else SHOP_NAME
     async with db.owner.connection() as conn:
         if await (await conn.execute("SELECT 1 FROM core.tenants WHERE name = %s", (name,))).fetchone():
             print(f"Đã có công ty \"{name}\" — bỏ qua")
             return
+    if prof is None:
+        await shop_company(name, extra_packs)
+        print(f"OK: {name} · đăng nhập dev: chu@{SHOP_DOMAIN}")
+        return
     kw = {"extra_packs": extra_packs} if "extra_packs" in inspect.signature(prof.seed).parameters else {}
     tid = await prof.seed(name=name, **kw)
     if getattr(prof, "AUTONOMY", True):
@@ -883,6 +918,10 @@ async def main(reset: bool, profile: str, upgrade: bool = False, extra_packs: tu
                   f"nvan / nvbinh / nvchi (nhân viên), luong, ketoan")
             for extra in got["extra"].values():   # công ty mẫu do gói đã cài góp (``COMPANIES["pay-demo"]`` của phần mẫu)
                 print(extra["done"])
+            return
+        if profile == SHOP_PROFILE:
+            tid = await shop_company(settings.demo_company.strip() or SHOP_NAME, extra_packs)
+            print(f"OK: tenant {tid} · cửa hàng một người · gói: {', '.join(sorted(await _packs_on(tid)))} · đăng nhập dev: chu@{SHOP_DOMAIN}")
             return
         tid = await sample_company(TENANT, "sample", extra_packs)
         print(f"OK: tenant {tid} · công ty mẫu · gói: {', '.join(sorted(await _packs_on(tid)))} · đăng nhập dev: <vai>@{DOMAIN}")
