@@ -33,6 +33,10 @@ struct ChatColumn: View {
                     }
                 }
                 .clipped()
+                #if os(iOS)
+                // chạm vùng hội thoại ⇒ cất bàn phím (kéo đã cất sẵn — scrollDismissesKeyboard); cử chỉ song song nên nút / thẻ trong hội thoại vẫn bấm được
+                .simultaneousGesture(TapGesture().onEnded { focused = false })
+                #endif
             ComposerBar(focused: $focused)
         }
         .background { ZStack { WA.wall; Doodles() } }   // nền ngăn phủ cả đầu ngăn ⇒ đầu ngăn nổi trên nền, không thành dải riêng (cùng web)
@@ -59,9 +63,7 @@ private struct ChatHeader: View {
                 }
             }
             Spacer(minLength: 8)
-            #if os(iOS)
-            NoticeBell()   // Mac: thông báo nằm trong "Tin nhắn" ở thanh bên trái; iPhone: "Việc" / "Tin nhắn" ở thanh tab dưới đáy
-            #endif
+            // không chuông ở đây (cả iPhone): thông báo là dòng đầu tab "Tin nhắn" — số chưa đọc đã cộng vào huy hiệu của tab đó (Mac: cột Tin nhắn)
             HeaderPill {
                 HeaderIcon(symbol: "square.and.pencil", help: "Cuộc trò chuyện mới") { desk.newThread() }
                 Menu {
@@ -113,13 +115,24 @@ struct PersonaMenu: View {
 /// Nút tiện ích đầu cột — ô vuông bo góc, gradient màu (như IconTile), không còn vòng tròn xám nhạt.
 /// Viên nút đầu ngăn NỔI kiểu ChatGPT — cùng họ `HeaderGroup` của web: viên tròn nền ``Color/surface`` + viền mảnh;
 /// nút cùng việc (cuộc trò chuyện mới + cuộc trước; nhắn riêng + tạo phòng) chung một viên, biểu tượng đơn sắc thay ô màu.
+/// Cỡ viên nút đầu ngăn — iPhone to hơn cho ngón tay: biểu tượng cùng cỡ nút "Tải lại" của tab Việc (17 điểm).
+enum HeaderMetrics {
+    #if os(iOS)
+    static let height: CGFloat = 38
+    static let glyph: CGFloat = 17
+    #else
+    static let height: CGFloat = 32
+    static let glyph: CGFloat = 14
+    #endif
+}
+
 struct HeaderPill<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
         HStack(spacing: 0) { content }
             .padding(.horizontal, 2)
-            .frame(height: 32)
+            .frame(height: HeaderMetrics.height)
             .background(Capsule().fill(Color.surface))
             .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12)))
     }
@@ -132,9 +145,9 @@ struct HeaderGlyph: View {
 
     var body: some View {
         Image(systemName: SymbolMap.name(symbol))
-            .font(.system(size: 14, weight: .medium))
+            .font(.system(size: HeaderMetrics.glyph, weight: .medium))
             .foregroundStyle(Color.primary.opacity(hover ? 1 : 0.78))
-            .frame(width: 32, height: 28)
+            .frame(width: HeaderMetrics.glyph + 18, height: HeaderMetrics.height - 4)
             .background(Capsule().fill(Color.primary.opacity(hover ? 0.07 : 0)))
             .contentShape(Capsule())
             .onHover { hover = $0 }

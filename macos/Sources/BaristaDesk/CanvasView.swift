@@ -65,13 +65,15 @@ private struct CanvasHeader: View {
     let onBack: (() -> Void)?
 
     #if os(iOS)
-    /// iPhone: hai hàng — (quay lại + tên) rồi dải nút màn kéo ngang; một hàng cố định bề rộng sẽ làm cả khung tràn màn hình.
+    /// iPhone: hai hàng — (thu xuống + tên) rồi dải nút màn kéo ngang; một hàng cố định bề rộng sẽ làm cả khung tràn màn hình.
+    /// Khung trượt LÊN từ dưới (PhoneShell) ⇒ nút thu là mũi tên xuống, không phải "quay lại".
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 if let onBack {
-                    Button(action: onBack) { Image(systemName: "chevron.left").font(.system(size: 14, weight: .semibold)) }
+                    Button(action: onBack) { Image(systemName: "chevron.down").font(.system(size: 14, weight: .semibold)) }
                         .buttonStyle(ToolChipStyle())
+                        .accessibilityLabel("Thu khung làm việc")
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(desk.builder != nil ? "Xem trước app" : "Khung làm việc").font(.t16).lineLimit(1)

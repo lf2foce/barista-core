@@ -27,14 +27,19 @@ struct PhoneShell: View {
                         .overlay(alignment: .bottom) { if !desk.narrowShowsCanvas { PhoneToast() } }
                     if desk.narrowShowsCanvas {
                         CanvasView(onBack: { withAnimation(.snappy) { desk.narrowShowsCanvas = false } })
-                            .transition(.move(edge: .trailing))
+                            .transition(.move(edge: .bottom))   // khung làm việc là một lớp phủ ⇒ trượt lên từ dưới (như sheet), không đẩy ngang như trang con
                             .zIndex(1)
                     }
                 }
             }
         }
+        // chế độ giọng nói toàn màn (PhoneVoice): Desk bật ``voiceMode`` qua ``present`` — iPhone chỉ cần màn phủ, không có cửa sổ để lui như Mac
+        .fullScreenCover(isPresented: Binding(get: { desk.voiceMode }, set: { if !$0 { desk.stopVoiceMode() } })) {
+            PhoneVoice().environment(desk)
+        }
         .task {
-            // dev / chụp trình giả lập: BARISTA_SECTION=desk | messages | notices ⇒ mở thẳng tab đó (không cần bấm)
+            desk.present = { _ in }
+            // dev / chụp trình giả lập: BARISTA_SECTION=desk | messages | notices | all ⇒ mở thẳng tab đó (không cần bấm)
             switch ProcessInfo.processInfo.environment["BARISTA_SECTION"] {
             case "desk": desk.section = .desk
             case "messages": desk.section = .messages
@@ -67,23 +72,167 @@ private struct PhoneToast: View {
     }
 }
 
+/// Tab dưới đáy: ba mục đầu của thanh bên trái trên Mac + "Tất cả" (thay chính thanh bên — iPhone không có chỗ cho nó, ADR 0255).
+private enum PhoneTab: Hashable {
+    case rail(RailSection)
+    case all
+}
+
 private struct PhoneTabs: View {
     @Environment(Desk.self) private var desk
+    @State private var onAll = false
 
     /// Phân hệ (``.workspace``) chỉ có trên thanh bên trái của Mac; trên iPhone mở qua khung làm việc ⇒ coi như đang ở trợ lý.
-    private var selection: Binding<RailSection> {
-        Binding(get: { if case .workspace = desk.section { return .assistant }; return desk.section },
-                set: { desk.section = $0 })
+    /// "Tất cả" không phải một ``RailSection`` (Mac không có) ⇒ giữ ở đây; có nơi khác đổi mục (thông báo đẩy mở Tin nhắn…) thì rời "Tất cả".
+    private var selection: Binding<PhoneTab> {
+        Binding(get: {
+            if onAll { return .all }
+            if case .workspace = desk.section { return .rail(.assistant) }
+            return .rail(desk.section)
+        }, set: { t in
+            switch t {
+            case .all: onAll = true
+            case .rail(let s): onAll = false; desk.section = s
+            }
+        })
     }
 
     var body: some View {
         TabView(selection: selection) {
-            Tab("Trợ lý", systemImage: "sparkles", value: RailSection.assistant) { ChatColumn() }
-            Tab("Việc", systemImage: "checklist", value: RailSection.desk) { DeskColumn() }
+            Tab("Trợ lý", systemImage: "sparkles", value: PhoneTab.rail(.assistant)) { ChatColumn() }
+            Tab("Việc", systemImage: "checklist", value: PhoneTab.rail(.desk)) { DeskColumn() }
                 .badge(desk.deskPage?.count ?? 0)
-            Tab("Tin nhắn", systemImage: "bubble.left.and.bubble.right", value: RailSection.messages) { PhoneMessages() }
+            Tab("Tin nhắn", systemImage: "bubble.left.and.bubble.right", value: PhoneTab.rail(.messages)) { PhoneMessages() }
                 .badge(desk.unread + (desk.talk?.unread ?? 0))
+            Tab("Tất cả", systemImage: "square.grid.2x2", value: PhoneTab.all) { PhoneAllItems() }
         }
+        .onChange(of: desk.section) { onAll = false }
+        .task { if ProcessInfo.processInfo.environment["BARISTA_SECTION"] == "all" { onAll = true } }   // dev: chụp trình giả lập
+    }
+}
+
+// MARK: - Tất cả
+
+/// Tab "Tất cả" (rà iPhone 25/11): mọi màn theo phân hệ — đúng quyền người xem, cùng luật với thanh bên của Mac (``RailLayout``): phân hệ theo vai
+/// + đã ghim lên đầu, mọi phân hệ khác gấp trong "Tất cả mục" có nút ghim / bỏ ghim. Bấm một màn ⇒ khung làm việc trượt lên.
+struct PhoneAllItems: View {
+    @Environment(Desk.self) private var desk
+    @State private var q = ""
+
+    private var hits: [(ws: Workspace, screen: ScreenSpec)] {
+        let t = q.trimmingCharacters(in: .whitespaces)
+        return (desk.manifest?.workspaces ?? []).flatMap { w in w.screens.map { (w, $0) } }
+            .filter { $0.screen.title.localizedStandardContains(t) || $0.ws.title.localizedStandardContains(t) }
+    }
+
+    var body: some View {
+        let layout = desk.rail
+        NavigationStack {
+            List {
+                if !q.trimmingCharacters(in: .whitespaces).isEmpty {
+                    if hits.isEmpty { Text("Không có màn nào khớp").foregroundStyle(.secondary) }
+                    ForEach(hits, id: \.screen.key) { h in screenRow(h.screen, caption: h.ws.title) }
+                } else {
+                    if let inbox = desk.manifest?.inbox { Section { screenRow(inbox) } }
+                    ForEach(layout.onRail) { w in
+                        Section(w.title) { ForEach(w.screens) { screenRow($0) } }
+                    }
+                    if layout.grouped {
+                        Section("Tất cả mục") {
+                            ForEach(layout.all) { i in
+                                DisclosureGroup {
+                                    ForEach(i.ws.screens) { screenRow($0) }
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        IconTile(symbol: i.ws.icon, tint: i.ws.screens.first?.tintColor ?? .accent, size: 30)
+                                        Text(i.ws.title).font(.t16).lineLimit(1)
+                                        Spacer(minLength: 8)
+                                        Button { Task { await desk.togglePin(i) } } label: {
+                                            Image(systemName: i.pinned ? "pin.fill" : "pin")
+                                                .font(.system(size: 17, weight: .medium))
+                                                .foregroundStyle(i.pinned ? Color.accent : Color.secondary)
+                                                .frame(width: 40, height: 36)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityLabel(i.pinned ? "Bỏ ghim \(i.ws.title)" : "Ghim \(i.ws.title) lên đầu")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Tất cả")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $q, placement: .navigationBarDrawer(displayMode: .always), prompt: "Tìm màn…")
+        }
+    }
+
+    private func screenRow(_ s: ScreenSpec, caption: String? = nil) -> some View {
+        Button { withAnimation(.snappy) { desk.open(.screen(s), show: true) } } label: {
+            HStack(spacing: 12) {
+                IconTile(symbol: s.icon, tint: s.tintColor, size: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(s.title).font(.t16).foregroundStyle(Color.primary).lineLimit(1)
+                    if let c = caption ?? (s.group.isEmpty ? nil : s.group) { Text(c).font(.t12).foregroundStyle(.secondary).lineLimit(1) }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Giọng nói toàn màn
+
+/// Chạm quả cầu / nút sóng âm (rà iPhone 25/11, theo tab Phê Nâu): chế độ giọng nói TOÀN MÀN, nền tối, ẩn thanh tab — khối Siri ở đỉnh như Dynamic
+/// Island mở rộng (quả cầu, phụ đề, micro, bàn phím, đóng), thứ trợ lý mở ra trong lúc nói hiện ngay bên dưới (nhiều thẻ ⇒ hàng tab). Mac: khối nổi +
+/// ngăn thẻ cạnh phải (SiriFloat.swift). ✕ ⇒ ``Desk.stopVoiceMode`` ⇒ đóng màn, thẻ vẫn còn ở khung làm việc.
+struct PhoneVoice: View {
+    @Environment(Desk.self) private var desk
+    @State private var picked: String?
+
+    private var items: [CanvasItem] { desk.voiceOpened.compactMap { id in desk.canvas.first { $0.id == id } } }
+
+    var body: some View {
+        let items = self.items
+        let current = items.first { $0.id == picked } ?? items.last
+        VStack(spacing: 12) {
+            SiriPill()
+            if items.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(items) { it in
+                            Button { withAnimation(.snappy) { picked = it.id } } label: {
+                                HStack(spacing: 6) {
+                                    IconTile(symbol: it.style.symbol, tint: it.style.tint, size: 20)
+                                    Text(it.title).font(.t12m).lineLimit(1)
+                                }
+                                .padding(.horizontal, 10).frame(height: 32)
+                                .background(Capsule().fill(it.id == current?.id ? Color.white.opacity(0.18) : Color.white.opacity(0.07)))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            if let current {
+                CardFrame(item: current, onClose: { withAnimation(.snappy) { desk.voiceOpened.removeAll { $0 == current.id } } })
+                    .id(current.id)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                Spacer()
+                VStack(spacing: 8) {
+                    Text("Cứ nói tự nhiên").font(.t20)
+                    Text("Số liệu, danh sách, lịch… trợ lý mở ra sẽ hiện ở đây").font(.t14).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 24)
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color.black.ignoresSafeArea())
+        .environment(\.colorScheme, .dark)
+        .animation(.snappy, value: desk.voiceOpened)
     }
 }
 
@@ -121,14 +270,15 @@ struct PhoneMessages: View {
             .navigationTitle("Tin nhắn")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if desk.talk?.can_start_direct == true {
-                        Button { creating = Self.command("talk.start_direct", "Nhắn riêng") } label: { Image(systemName: "square.and.pencil") }
-                            .accessibilityLabel("Nhắn riêng")
-                    }
+                ToolbarItem(placement: .topBarTrailing) {
+                    // một viên như đầu màn Trợ lý (HeaderPill): hai nút cùng khung ⇒ bằng nhau (ký hiệu hệ thống to nhỏ khác nhau khi đứng rời)
                     if desk.talk != nil {
-                        Button { creating = Self.command("talk.create_room", "Tạo phòng nhắn tin") } label: { Image(systemName: "plus.bubble") }
-                            .accessibilityLabel("Tạo phòng nhắn tin")
+                        HeaderPill {
+                            if desk.talk?.can_start_direct == true {
+                                HeaderIcon(symbol: "square.and.pencil", help: "Nhắn riêng") { creating = Self.command("talk.start_direct", "Nhắn riêng") }
+                            }
+                            HeaderIcon(symbol: "plus.bubble", help: "Tạo phòng nhắn tin") { creating = Self.command("talk.create_room", "Tạo phòng nhắn tin") }
+                        }
                     }
                 }
             }

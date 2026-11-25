@@ -430,6 +430,22 @@ struct ScreenView: View {
             }
             CardView(page: c, onChanged: { Task { await reload(); onChanged() } }, inHead: head != nil, rev: rev)
         case .table(let t):
+            #if os(iOS)
+            // iPhone (rà 25/11 — màn Giao dịch không cuộn): ô số 2 cột chiếm gần hết màn mà danh sách dòng tự cuộn trong khung riêng ⇒ không tới
+            // được phần dưới. Ô số + ghi chú + các dòng chung MỘT vùng cuộn (bộ lọc đứng yên ở trên); danh sách dòng thôi cuộn riêng.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) { tableArea(t, scrolls: false) }
+            }
+            .scrollDismissesKeyboard(.interactively)
+            #else
+            tableArea(t, scrolls: true)
+            #endif
+        }
+    }
+
+    /// Phần BẢNG của màn: lời nhắc đầu bảng, ô số, ghi chú, góc nhìn, các dòng. ``scrolls`` = danh sách dòng tự cuộn (Mac; iPhone đã bọc cả khối).
+    @ViewBuilder
+    private func tableArea(_ t: TablePage, scrolls: Bool) -> some View {
             ForEach(Array(t.header.enumerated()), id: \.offset) { _, b in
                 if case .callout(let tone, let title, let text, let facts, let draft, let actions) = b {
                     Callout(tone: tone, title: title, text: text, facts: facts, draft: draft, actions: actions) { run($0) }
@@ -460,13 +476,19 @@ struct ScreenView: View {
                           onOpen: { o in opening = OpenRequest(title: o.title ?? "", query: o.query, input: o.input) })
                     .frame(maxHeight: .infinity, alignment: .top)
             } else if mode == "timeline", let tl = t.views?.timeline {
-                ScrollView { TimelineList(data: tl) { o in opening = OpenRequest(title: o.title ?? "", query: o.query, input: o.input) }.padding(12) }
+                Group {
+                    if scrolls {
+                        ScrollView { TimelineList(data: tl) { o in opening = OpenRequest(title: o.title ?? "", query: o.query, input: o.input) }.padding(12) }
+                    } else {
+                        TimelineList(data: tl) { o in opening = OpenRequest(title: o.title ?? "", query: o.query, input: o.input) }.padding(12)
+                    }
+                }
                     .cardSurface(radius: embedded ? 12 : 16)
             } else if mode == "calendar", let cal = t.views?.calendar {
                 AgendaView(rows: t.rows, spec: cal, open: { open($0) })
                     .cardSurface(radius: embedded ? 12 : 16)
             } else {
-                DataTable(page: t, selection: $selection,
+                DataTable(page: t, selection: $selection, scrolls: scrolls,
                           menu: { row in rowMenu(row) },
                           open: { row in open(row) },
                           activate: spec.row_click == nil ? nil : { row in activate(row) })
@@ -482,7 +504,6 @@ struct ScreenView: View {
                 }
                 if let row = selectedRow { rowBar(row) }
             }
-        }
     }
 
     private func moreLabel(_ t: TablePage) -> String? {
@@ -795,6 +816,7 @@ struct KPITile: View {
 struct DataTable<Menu: View>: View {
     let page: TablePage
     @Binding var selection: Set<Row.ID>
+    var scrolls = true   // iPhone: false khi cả màn đã nằm trong một vùng cuộn (ScreenView.tableArea) — tránh cuộn lồng cuộn
     @ViewBuilder let menu: (Row) -> Menu
     let open: (Row) -> Void
     /// Bấm MỘT lần (màn khai ``row_click``): chọn dòng bằng chuột ⇒ mở luôn. ⌘ / ⇧-bấm, phím mũi tên: chỉ chọn như cũ.
@@ -853,6 +875,7 @@ struct DataTable<Menu: View>: View {
 struct DataTable<Menu: View>: View {
     let page: TablePage
     @Binding var selection: Set<Row.ID>
+    var scrolls = true   // iPhone: false khi cả màn đã nằm trong một vùng cuộn (ScreenView.tableArea) — tránh cuộn lồng cuộn
     @ViewBuilder let menu: (Row) -> Menu
     let open: (Row) -> Void
     /// Chạm MỘT lần (màn khai ``row_click``): chọn thẻ rồi mở luôn; giữ = menu thao tác như cũ.
@@ -863,12 +886,18 @@ struct DataTable<Menu: View>: View {
     private var rest: [Column] { page.shownColumns.filter { $0.key != title?.key && $0.format != "badge" } }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                ForEach(page.rows) { row in card(row) }
-            }
-            .padding(10)
+        if scrolls {
+            ScrollView { rows }
+        } else {
+            rows
         }
+    }
+
+    private var rows: some View {
+        LazyVStack(spacing: 8) {
+            ForEach(page.rows) { row in card(row) }
+        }
+        .padding(10)
     }
 
     @ViewBuilder
