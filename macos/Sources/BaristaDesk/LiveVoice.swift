@@ -38,10 +38,18 @@ final class LiveVoice {
     @ObservationIgnored private var pendingTools = 0
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var lastLevelAt = 0.0
-    /// "Dạ, em xem ngay ạ" (đóng sẵn trong app): Gemini Live không tự nói trước khi gọi công cụ ⇒ vài giây im lặng lúc tra số liệu.
-    @ObservationIgnored private lazy var ackPCM: Data? = Bundle.main.url(forResource: "ack", withExtension: "wav")
-        .flatMap { try? Data(contentsOf: $0) }
-        .flatMap { d in d.range(of: Data("data".utf8)).map { d.subdata(in: ($0.upperBound + 4)..<d.count) } }
+    /// Câu ghi sẵn bằng CHÍNH giọng của trợ lý (Gemini Live, Despina — 24 kHz PCM16; cùng bộ câu với app Phê Nâu, anh Anh 25/11):
+    /// "Chào bạn" ngay khi loa / micro mở xong; một trong bốn câu báo ("Dạ, em xem ngay ạ", "Chờ em chút, em tra liền ạ"…) khi trợ lý bắt đầu
+    /// tra số liệu — Gemini Live không tự nói trước khi gọi công cụ ⇒ không có câu báo là vài giây im lặng. Đổi giọng ⇒ ghi lại các tệp này.
+    private static func clip(_ name: String) -> Data? {
+        Bundle.main.url(forResource: name, withExtension: "wav")
+            .flatMap { try? Data(contentsOf: $0) }
+            .flatMap { d in d.range(of: Data("data".utf8)).map { d.subdata(in: ($0.upperBound + 4)..<d.count) } }
+    }
+    @ObservationIgnored private lazy var ackClips: [Data] = (1...4).compactMap { Self.clip("ack-\($0)") }
+    @ObservationIgnored private lazy var greetingClip: Data? = Self.clip("greeting")
+    @ObservationIgnored private var lastAck = -1
+    @ObservationIgnored private var greeted = false
 
     var isOn: Bool { state != .off }
 
@@ -64,6 +72,7 @@ final class LiveVoice {
         state = .connecting
         userCaption = ""
         botCaption = ""
+        greeted = false
         #if os(iOS)
         UIApplication.shared.isIdleTimerDisabled = true  // màn hình không tự tắt giữa lúc nói chuyện
         #endif
@@ -284,9 +293,23 @@ final class LiveVoice {
     }
 
     private func acknowledge() {
-        // phát qua CHÍNH đường loa của trợ lý (cùng engine) + khoá micro lúc phát để khỏi nghe lại chính mình
-        guard let pcm = ackPCM, let audio, state != .speaking else { return }
-        micOpenAt = max(micOpenAt, Date().addingTimeInterval(Double(pcm.count) / 48000 + 0.3))
+        // phát qua CHÍNH đường loa của trợ lý (cùng engine) + khoá micro lúc phát để khỏi nghe lại chính mình; không lặp liền một câu
+        guard !ackClips.isEmpty, let audio, state != .speaking else { return }
+        var i = Int.random(in: 0..<ackClips.count)
+        if ackClips.count > 1, i == lastAck { i = (i + 1) % ackClips.count }
+        lastAck = i
+        micOpenAt = max(micOpenAt, Date().addingTimeInterval(Double(ackClips[i].count) / 48000 + 0.3))
+        audio.play(pcm16k24: ackClips[i])
+    }
+
+    /// Chào một lần mỗi phiên, ngay khi loa / micro mở xong (không chào lại khi nối lại mạng).
+    private func greet() {
+        guard !greeted, let audio, let pcm = greetingClip else { return }
+        greeted = true
+        userTurnDone = true
+        botCaption = "Chào bạn"
+        state = .speaking   // loa phát xong (onDrained) ⇒ về nghe
+        micOpenAt = max(micOpenAt, Date().addingTimeInterval(Double(pcm.count) / 48000 + 0.35))
         audio.play(pcm16k24: pcm)
     }
 
@@ -328,6 +351,7 @@ final class LiveVoice {
             audio = a
             state = .listening
             watchMic()
+            greet()
             // dev: tự hỏi một câu khi vừa nối (kiểm thử không cần nói vào micro)
             if let q = ProcessInfo.processInfo.environment["BARISTA_SAY"], !q.isEmpty { say(q) }
         } catch {
