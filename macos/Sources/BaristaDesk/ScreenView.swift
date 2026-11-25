@@ -87,7 +87,11 @@ struct ScreenView: View {
         side ? ([], spec.filters.filter { $0.group != nil }) : FilterSplit.split(spec.filters)
     }
     /// Bộ lọc chính + nút lên ĐẦU THẺ khi ít (≤ 3 ô, ≤ 2 nút) — đầu thẻ không thành một bức tường ô.
+    #if os(iOS)
+    private var inHead: Bool { false }   // iPhone: đầu thẻ chỉ tên; lọc + nút ở hàng chip một dòng (filterBar) — ô chọn trên đầu thẻ chữ to, xuống dòng
+    #else
     private var inHead: Bool { head != nil && split.inline.count <= 3 && spec.actions.count <= 2 }
+    #endif
     private var showAsk: Bool {
         guard let ask = spec.ask, let deskEnv else { return false }
         return !(ask.app_id != nil && deskEnv.builder?.appId == ask.app_id)
@@ -178,7 +182,9 @@ struct ScreenView: View {
         askButton(secondary: true)
         if inHead { commandButtons }
         if inHead, table != nil { exportButton }
-        reloadButton
+        #if os(macOS)
+        reloadButton   // iPhone: "Tải lại" nằm trong nút "…" của hàng lọc (filterBar) — không để một nút lẻ dưới tên thẻ
+        #endif
     }
 
     /// Rộng: tên thẻ + công cụ một hàng; hẹp: tên thẻ một hàng, công cụ tự xuống dòng bên dưới (không ô nào đè lên ô khác).
@@ -310,6 +316,69 @@ struct ScreenView: View {
             .keyboardShortcut("r", modifiers: .command)
     }
 
+    #if os(iOS)
+    /// iPhone (rà 25/11 — màn Giao dịch ba dòng lọc + nút): MỘT dòng — ô chọn thành chip "Nhãn: giá trị ▾" cuộn ngang + "Bộ lọc", mọi nút lệnh
+    /// (thêm / nhập, xuất Excel, tải lại, hỏi trợ lý) gom vào nút "…". Nút tải tệp (cần trình chọn tệp riêng) vẫn đứng ngoài.
+    private var filterBar: some View {
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(split.inline) { f in compactFilter(f) }
+                    if !split.more.isEmpty { panelButton }
+                    ForEach(spec.actions.filter { $0.upload != nil }) { a in if let exts = a.upload { uploadButton(a, exts) } }
+                }
+            }
+            .controlSize(.small)
+            Menu {
+                if spec.actions.contains(where: { $0.command == "kb.add_document" }) {
+                    Button { uploading = true } label: { Label("Tải file (PDF / Word)", systemImage: "doc.badge.arrow.up") }
+                }
+                ForEach(spec.actions.filter { $0.upload == nil }) { a in
+                    if a.importable {
+                        Button { form = FormRequest(action: a, row: nil) } label: { Label(a.title, systemImage: "plus") }
+                        Button { importing = a } label: { Label("\(a.title) từ Excel…", systemImage: "tablecells") }
+                    } else {
+                        Button(role: a.style == "destructive" ? .destructive : nil) { form = FormRequest(action: a, row: nil) } label: { Text(a.title) }
+                    }
+                }
+                if table != nil { Button { Task { await export() } } label: { Label("Xuất Excel", systemImage: "square.and.arrow.up") } }
+                Button { Task { await reload() } } label: { Label("Tải lại", systemImage: "arrow.clockwise") }
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 17, weight: .semibold)).frame(width: 36, height: 32)
+            }
+            .buttonStyle(ToolChipStyle())
+            .accessibilityLabel("Thao tác khác")
+        }
+        .font(.t12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Ô lọc dạng chip (iPhone): ô chọn ⇒ "Nhãn: giá trị ▾" mở menu; ô khác (đúng/sai, gõ chữ) giữ như cũ.
+    @ViewBuilder private func compactFilter(_ f: FieldSpec) -> some View {
+        if let opts = f.options ?? filterOptions[f.key], f.kind != "bool" {
+            let cur = filters[f.key]?.text ?? f.default?.text ?? ""
+            let shown = opts.first { $0.value == cur }?.label ?? "Tất cả"
+            Menu {
+                Picker(f.label, selection: Binding(get: { cur }, set: { filters[f.key] = .string($0); Task { await reload() } })) {
+                    if !opts.contains(where: { $0.value.isEmpty }) { Text("Tất cả").tag("") }
+                    ForEach(opts, id: \.value) { Text($0.label).tag($0.value) }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(f.label + ":").foregroundStyle(.secondary)
+                    Text(shown).foregroundStyle(Color.primary).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                }
+                .font(.t12m)
+                .padding(.horizontal, 10).frame(height: 32)
+                .background(Capsule().fill(Color.surface2))
+            }
+            .buttonStyle(.plain)
+        } else {
+            filterControl(f)
+        }
+    }
+    #else
     /// Hàng lọc khi đầu thẻ không cầm được: ô chính + "Bộ lọc" bên trái, nút lệnh bên phải (tự xuống dòng — không đè nội dung).
     private var filterBar: some View {
         FlowRow(spacing: 10) {
@@ -320,14 +389,11 @@ struct ScreenView: View {
             if table != nil { exportButton }   // đầu thẻ không cầm được hàng lọc ⇒ Xuất Excel cuối hàng lọc
             if head == nil && embedded { reloadButton }
         }
-        #if os(iOS)
-        .controlSize(.small)   // iPhone: ô chọn kiểu menu vẽ chữ xanh cỡ thân bài ⇒ hàng lọc chiếm cả mảng màn (rà 25/11)
-        #else
         .controlSize(.regular)
-        #endif
         .font(.t12)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+    #endif
 
     // MARK: bộ lọc
 

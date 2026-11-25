@@ -64,6 +64,18 @@ private struct ChatHeader: View {
             }
             Spacer(minLength: 8)
             // không chuông ở đây (cả iPhone): thông báo là dòng đầu tab "Tin nhắn" — số chưa đọc đã cộng vào huy hiệu của tab đó (Mac: cột Tin nhắn)
+            #if os(iOS)
+            // iPhone (rà 25/11): đầu màn rộng ⇒ mỗi nút một viên tròn riêng, cùng kiểu nút "Tải lại" của tab Việc — dễ thấy, dễ chạm
+            Button { desk.newThread() } label: { Image(systemName: "square.and.pencil") }
+                .buttonStyle(ToolChipStyle()).accessibilityLabel("Cuộc trò chuyện mới")
+            Menu {
+                if desk.threads.isEmpty { Text("Chưa có cuộc trò chuyện nào") }
+                ForEach(desk.threads.prefix(20)) { t in
+                    Button(t.title.isEmpty ? "(không tên)" : t.title) { Task { await desk.openThread(t.id) } }
+                }
+            } label: { Image(systemName: "clock.arrow.circlepath") }
+            .buttonStyle(ToolChipStyle()).accessibilityLabel("Cuộc trò chuyện trước")
+            #else
             HeaderPill {
                 HeaderIcon(symbol: "square.and.pencil", help: "Cuộc trò chuyện mới") { desk.newThread() }
                 Menu {
@@ -78,6 +90,7 @@ private struct ChatHeader: View {
                 .fixedSize()
                 .help("Cuộc trò chuyện trước")
             }
+            #endif
             #if os(iOS)
             PersonaMenu()   // Mac: ở đáy thanh bên trái
             #endif

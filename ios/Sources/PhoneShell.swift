@@ -434,13 +434,15 @@ struct PhoneMessages: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    // một viên như đầu màn Trợ lý (HeaderPill): hai nút cùng khung ⇒ bằng nhau (ký hiệu hệ thống to nhỏ khác nhau khi đứng rời)
+                    // mỗi nút một viên tròn riêng, cùng cỡ nút "Tải lại" của tab Việc (rà 25/11) — khung cố định nên hai ký hiệu bằng nhau
                     if desk.talk != nil {
-                        HeaderPill {
+                        HStack(spacing: 8) {
                             if desk.talk?.can_start_direct == true {
-                                HeaderIcon(symbol: "square.and.pencil", help: "Nhắn riêng") { creating = Self.command("talk.start_direct", "Nhắn riêng") }
+                                Button { creating = Self.command("talk.start_direct", "Nhắn riêng") } label: { Image(systemName: "square.and.pencil").frame(width: 22, height: 22) }
+                                    .buttonStyle(ToolChipStyle()).accessibilityLabel("Nhắn riêng")
                             }
-                            HeaderIcon(symbol: "plus.bubble", help: "Tạo phòng nhắn tin") { creating = Self.command("talk.create_room", "Tạo phòng nhắn tin") }
+                            Button { creating = Self.command("talk.create_room", "Tạo phòng nhắn tin") } label: { Image(systemName: "plus.bubble").frame(width: 22, height: 22) }
+                                .buttonStyle(ToolChipStyle()).accessibilityLabel("Tạo phòng nhắn tin")
                         }
                     }
                 }
