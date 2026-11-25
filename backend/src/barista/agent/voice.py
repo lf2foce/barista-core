@@ -38,7 +38,7 @@ from barista.kernel.standing import Revoked, Standing
 
 log = logging.getLogger("barista.voice")
 
-VOICE = "Achernar"
+VOICE = "Despina"   # cùng giọng trợ lý của app Phê Nâu (anh Anh 25/11)
 _TAGS = re.compile(r"<[^>]*>|\{[^}]*\}")  # phiên âm có nhãn kỹ thuật kiểu <no speech>, {pause}
 
 # Hỏi bằng giọng: người dùng chờ trong im lặng ⇒ trả lời chữ ngắn (nhanh hơn), chi tiết để thẻ gánh.
