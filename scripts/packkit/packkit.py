@@ -76,6 +76,9 @@ IMPORTS_OK = frozenset({
     "pathlib", "random", "re", "secrets", "statistics", "string", "struct", "textwrap", "time", "tomllib", "types", "typing", "unicodedata",
     "urllib.parse", "uuid", "warnings", "zlib", "zoneinfo",
     "pydantic", "pydantic_core", "psycopg.types.json", "psycopg.errors",
+    # đọc XML do người ngoài gửi (hoá đơn điện tử — ADR 0262): chỉ trình phân tích có sẵn, không tải gì từ mạng; gói TỰ từ chối DTD / thực thể (chặn bom
+    # thực thể) trước khi phân tích — người review soi điều đó
+    "xml.etree.ElementTree",
 })
 BUILTINS_NO = frozenset({"eval", "exec", "compile", "__import__", "breakpoint"})
 ATTRS_NO = frozenset({"__builtins__", "__globals__", "__subclasses__", "__code__", "__closure__",   # lách vào nội bộ trình thông dịch
