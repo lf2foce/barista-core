@@ -299,7 +299,6 @@ private struct PhoneMessagesRow: View {
 struct PhoneVoice: View {
     @Environment(Desk.self) private var desk
     @State private var picked: String?
-    @State private var pillHeight: CGFloat = 0
     @State private var grown = false   // khối Siri nở ra sau khi nền đã vào
 
     static let spring = Animation.spring(response: 0.5, dampingFraction: 0.84)
@@ -309,53 +308,51 @@ struct PhoneVoice: View {
     var body: some View {
         let items = self.items
         let current = items.first { $0.id == picked } ?? items.last
-        ZStack(alignment: .bottom) {
-            VStack(alignment: .leading, spacing: 8) {
-                if current == nil {   // có thẻ ⇒ thẻ chiếm cả màn (như Phê Nâu), không còn dòng tên / hướng dẫn
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Trợ lý AI").font(.t20)
-                        Text("Nói chuyện với trợ lý của bạn — hoặc gõ / bấm một gợi ý bên dưới.").font(.t14).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 16).padding(.top, 12)
+        // như màn "Trợ lý AI" của app Phê Nâu: thẻ ở trên, khối Siri ở DƯỚI (không nổi đè lên thẻ ⇒ không phải đo / chừa chỗ theo chiều cao khối);
+        // có thẻ thì nền đổi sang màu thẻ. Bàn phím (gõ thay nói) đẩy khối Siri lên theo vùng an toàn của SwiftUI.
+        VStack(alignment: .leading, spacing: 8) {
+            if current == nil {   // có thẻ ⇒ thẻ chiếm cả màn, không còn dòng tên / hướng dẫn
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Trợ lý AI").font(.t20)
+                    Text("Nói chuyện với trợ lý của bạn — hoặc gõ / bấm một gợi ý bên dưới.").font(.t14).foregroundStyle(.secondary)
                 }
-                if items.count > 1 {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(items) { it in
-                                Button { withAnimation(.snappy) { picked = it.id } } label: {
-                                    Text(it.title).font(.t12m).lineLimit(1).frame(maxWidth: 180)
-                                        .padding(.horizontal, 10).padding(.vertical, 6)
-                                        .background(Capsule().fill(it.id == current?.id ? Color.surface : Color.primary.opacity(0.05)))
-                                        .foregroundStyle(it.id == current?.id ? Color.primary : Color.secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                    }
-                    .padding(.top, 4)
-                }
-                if let current {
-                    // thẻ chiếm hết phần màn trên khối Siri (không đè: đặt lề cuộn chung cho thẻ thì cả dải chip lọc cuộn ngang cũng nhận lề ⇒ hở trắng)
-                    CardFrame(item: current, onClose: { withAnimation(.snappy) { desk.voiceOpened.removeAll { $0 == current.id } } })
-                        .id(current.id)
-                        .frame(maxHeight: .infinity)
-                        .padding(.bottom, pillHeight + 14)
-                        .padding(.horizontal, 8)
-                        .padding(.top, items.count > 1 ? 0 : 4)
-                        .transition(.opacity)
-                } else {
-                    Spacer()
-                }
+                .padding(.horizontal, 16).padding(.top, 12)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            if items.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(items) { it in
+                            Button { withAnimation(.snappy) { picked = it.id } } label: {
+                                Text(it.title).font(.t12m).lineLimit(1).frame(maxWidth: 180)
+                                    .padding(.horizontal, 10).padding(.vertical, 6)
+                                    .background(Capsule().fill(it.id == current?.id ? Color.surface : Color.primary.opacity(0.05)))
+                                    .foregroundStyle(it.id == current?.id ? Color.primary : Color.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+            }
+            if let current {
+                CardFrame(item: current, onClose: { withAnimation(.snappy) { desk.voiceOpened.removeAll { $0 == current.id } } })
+                    .id(current.id)
+                    .frame(maxHeight: .infinity)
+                    .padding(.horizontal, 8)
+                    .padding(.top, items.count > 1 ? 0 : 4)
+                    .transition(.opacity)
+            } else {
+                Spacer(minLength: 0)
+            }
             SiriPill()
-                .shadow(color: .black.opacity(0.2), radius: 16, y: 4)
+                .shadow(color: .black.opacity(0.18), radius: 14, y: 4)
                 .padding(.horizontal, 10).padding(.bottom, 8)
                 .scaleEffect(grown ? 1 : 0.2, anchor: .bottomTrailing)   // nút sóng âm ở góc phải ô nhập ⇒ nở từ đó
                 .opacity(grown ? 1 : 0)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if abs($0 - pillHeight) >= 2 { pillHeight = $0 } }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.canvas.ignoresSafeArea())
         .animation(.snappy, value: desk.voiceOpened)
         .onAppear {

@@ -805,7 +805,12 @@ private struct ComposerBar: View {
                     .lineLimit(1...6)
                     .focused($focused)
                     .onSubmit { desk.send() }
-                    .onChange(of: desk.focusChat) { focused = true }
+                    .onChange(of: desk.focusChat) { if !desk.voiceMode { focused = true } }
+                    #if os(iOS)
+                    // màn giọng nói phủ lên chat: ô chat bên dưới không được giữ / nhận con trỏ ⇒ bàn phím không tự bật lên khi không thấy ô nhập
+                    .disabled(desk.voiceMode)
+                    .onChange(of: desk.voiceMode) { if desk.voiceMode { focused = false } }
+                    #endif
                     .padding(.vertical, 9)
                     .padding(.leading, 14).padding(.trailing, desk.fieldRecorder.isRecording ? 84 : 36)
                     .frame(minHeight: ComposerMetrics.control)
@@ -846,8 +851,8 @@ private struct ComposerBar: View {
         .background(WA.bar)
         .overlay(alignment: .top) { Rectangle().fill(Color.hairline).frame(height: 1) }
         .onAppear {
-            focused = true
             #if os(macOS)
+            focused = true   // iPhone: KHÔNG tự lấy con trỏ — bàn phím chỉ lên khi người dùng chạm ô chat (trước: mở app / đóng màn giọng nói là bàn phím bật)
             // ⌘V khi bảng nháp có ẢNH mà không có chữ (chụp màn hình, "Sao chép ảnh" từ Zalo / trình duyệt) ⇒ đính ảnh; còn lại để ô chat
             // dán chữ như thường (kể cả copy ô Excel — có cả chữ lẫn ảnh xem trước)
             pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in

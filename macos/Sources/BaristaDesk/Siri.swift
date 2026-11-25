@@ -17,7 +17,7 @@ struct SiriPill: View {
                 Button {
                     if v.state == .speaking { v.interrupt() } else if v.state == .off { desk.toggleVoice() }
                 } label: {
-                    SiriOrb(mood: mood, level: v.level)
+                    LevelOrb(mood: mood)
                 }
                 .buttonStyle(.plain)
                 .help(v.state == .speaking ? "Chạm để ngắt lời" : "")
@@ -98,7 +98,7 @@ struct SiriPill: View {
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
         )
         .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-        .overlay(RunningBorder(mood: mood, level: CGFloat(v.level), cornerRadius: 30))
+        .overlay(LevelBorder(mood: mood))
         .environment(\.colorScheme, .dark)
         // khối đổi cao (phụ đề xuất hiện / hết, đổi trạng thái, lỗi) theo nhịp lò xo thay vì nhảy (rà iPhone 25/11: "chưa mượt như bản Mac")
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: v.state)
@@ -166,6 +166,20 @@ private struct PillSteps: View {
 }
 
 /// Tách đọc mức tiếng ra khỏi SiriPill: mỗi nhịp âm lượng chỉ vẽ lại quả cầu, không tính lại bố cục chữ / nút.
+/// Mức tiếng đổi ~12 lần / giây khi đang nói ⇒ CHỈ quả cầu và viền đọc nó (hai view nhỏ này tự đọc ``LiveVoice/level``). Trước đây thân
+/// ``SiriPill`` đọc mức tiếng ⇒ mỗi lần đổi dựng lại cả phụ đề, các bước, chip — thấy giật (rà 25/11, so với app Phê Nâu tách y như vậy).
+private struct LevelOrb: View {
+    @Environment(Desk.self) private var desk
+    let mood: Orb.Mood
+    var body: some View { SiriOrb(mood: mood, level: desk.voice.level) }
+}
+
+private struct LevelBorder: View {
+    @Environment(Desk.self) private var desk
+    let mood: Orb.Mood
+    var body: some View { RunningBorder(mood: mood, level: CGFloat(desk.voice.level), cornerRadius: 30) }
+}
+
 private struct SiriOrb: View {
     let mood: Orb.Mood
     let level: Float
