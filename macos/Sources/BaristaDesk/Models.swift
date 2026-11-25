@@ -165,6 +165,8 @@ struct ActionSpec: Decodable, Hashable, Identifiable {
     var values: [String: JSON]? = nil
     /// Nút mở thẳng màn "Nhập từ Excel" (lệnh nhập cả bảng — không có form nhập một), như web: lối vào chính của màn trống là TẢI FILE, không gõ tay.
     var import_only: Bool? = nil
+    /// NHẬN TỆP (ADR 0262): đuôi tệp nhận, cách dấu phẩy ("xml,pdf,jpg") — nút mở chọn tệp / chụp ảnh (iPhone), mỗi tệp một lượt `POST /v1/uploads/{command}`.
+    var upload: String? = nil
     var id: String { command + title }
 
     /// Nút dòng chỉ hiện khi dòng thoả `when` (trình bày thôi — server vẫn kiểm lại khi chạy).

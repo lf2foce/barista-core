@@ -194,6 +194,28 @@ struct API: Sendable {
         return try decode(d, code)
     }
 
+    /// Một tệp cho lệnh NHẬN TỆP (ADR 0262): thân = bytes, tên ở `X-Filename` (mã hoá phần trăm), ô khác của nút ở query; một khoá chống lặp mỗi tệp.
+    /// Server kiểm đuôi / cỡ rồi chạy lệnh qua executor — đọc ảnh / PDF bằng model có thể mất vài chục giây.
+    func uploadFile(_ command: String, data: Data, filename: String, params: [String: String] = [:]) async throws -> CommandResult {
+        var comps = URLComponents(url: base.appending(path: "/v1/uploads/\(command)"), resolvingAgainstBaseURL: false)!
+        if !params.isEmpty { comps.queryItems = params.map { URLQueryItem(name: $0.key, value: $0.value) } }
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 180
+        identify(&req)
+        req.setValue(filename.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(.init(charactersIn: "._-"))) ?? "file",
+                     forHTTPHeaderField: "X-Filename")
+        req.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        req.httpBody = data
+        let (d, resp) = try await URLSession.shared.data(for: req)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if [404, 413, 415, 422].contains(code), let detail = try? JSONDecoder().decode([String: String].self, from: d)["detail"] {
+            throw APIError(message: detail)
+        }
+        return try decode(d, code)
+    }
+
     func importXLSX(_ command: String, data: Data, dryRun: Bool) async throws -> ImportReport {
         let (d, c) = try await request("/v1/imports/\(command)/xlsx?dry_run=\(dryRun)", method: "POST", body: data)
         if c == 422, let detail = try? JSONDecoder().decode([String: String].self, from: d)["detail"] {

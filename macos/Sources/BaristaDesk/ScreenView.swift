@@ -68,6 +68,7 @@ struct ScreenView: View {
     @State private var form: FormRequest?
     @State private var importing: ActionSpec?
     @State private var uploading = false   // tải PDF / Word lên kho tài liệu (màn có lệnh kb.add_document)
+    @State private var sending = false     // nút nhận tệp đang gửi (ADR 0262)
     @State private var opening: OpenRequest?
     @State private var toast: Toast?
     @State private var panelOpen = false   // nút "Bộ lọc" (ô lọc phụ — rà bố cục 18/11)
@@ -239,7 +240,9 @@ struct ScreenView: View {
                 .help("Tải PDF / Word / chữ lên kho — PDF scan trợ lý tự đọc (mất vài giây)")
         }
         ForEach(spec.actions) { a in
-            if a.importable {
+            if let exts = a.upload {
+                uploadButton(a, exts)
+            } else if a.importable {
                 Menu {
                     Button("Nhập một") { form = FormRequest(action: a, row: nil) }
                     Button("Nhập từ Excel…") { importing = a }
@@ -254,6 +257,37 @@ struct ScreenView: View {
                     .buttonStyle(.bordered)
                     .fixedSize()
             }
+        }
+    }
+
+    /// Nút NHẬN TỆP (ADR 0262): Mac chọn tệp; iPhone Thư viện ảnh / Chụp ảnh / Chọn tệp (``AttachButton``). Mỗi tệp một lượt gửi, báo kết quả, tải lại bảng.
+    @ViewBuilder
+    private func uploadButton(_ a: ActionSpec, _ exts: String) -> some View {
+        let types = exts.split(separator: ",").compactMap { UTType(filenameExtension: String($0)) }
+        let button = AttachButton(types: types.isEmpty ? [.data] : types, onPick: { data, name in Task { await upload(a, data, name) } },
+                                  onError: { show($0, isError: true) }) {
+            Label(sending ? "Đang gửi…" : a.title, systemImage: "doc.badge.arrow.up")
+        }
+        .disabled(sending)
+        .help("Nhận tệp " + exts.split(separator: ",").map { "." + $0 }.joined(separator: ", "))
+        .fixedSize()
+        if a.style == "primary" { button.buttonStyle(.borderedProminent) } else { button.buttonStyle(.bordered) }
+    }
+
+    private func upload(_ a: ActionSpec, _ data: Data, _ name: String) async {
+        sending = true
+        defer { sending = false }
+        do {
+            let r = try await api.uploadFile(a.command, data: data, filename: name, params: a.preset.mapValues(\.text))
+            guard ["ok", "pending_approval", "proposed"].contains(r.status) else {
+                show(r.error.isEmpty ? "Không nhận được tệp (\(r.status))" : r.error, isError: true)
+                return
+            }
+            if case .object(let o) = r.output, case .string(let said) = o["summary"], !said.isEmpty { show(said, isError: false) }
+            else { show("Đã nhận \(name)", isError: false) }
+            await reload()
+        } catch {
+            show(error.localizedDescription, isError: true)
         }
     }
 
