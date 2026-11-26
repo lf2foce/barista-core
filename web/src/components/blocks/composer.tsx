@@ -722,11 +722,10 @@ export function Working({ status, steps }: { status: string; steps: LiveStep[] }
 /** Chọn tài liệu từ Kho tài liệu để gắn làm NGUỒN cho lượt soạn (gửi mã tài liệu, máy chủ kiểm quyền đọc + đưa cho AI). Truy vấn danh sách do khối gửi
  *  (`commands.kb_documents`, đúng quyền kệ của người dùng); không xem được kho ⇒ báo gọn, không vỡ ô nhập. Danh sách lấy trọn một trang (máy chủ trả tới 1.000
  *  tài liệu), lọc theo chữ gõ, chỉ hiện 50 dòng đầu — còn nữa thì nhắc gõ để thu hẹp. */
-export function KbPicker({ query, picked, onPick }: { query: string; picked: KbRef | null; onPick: (d: KbRef | null) => void }) {
-  const [open, setOpen] = useState(false);
+/** Tài liệu Kho người gọi xem được (bảng của truy vấn ``query``) — tải một lần khi mở bộ chọn lần đầu. */
+function useKbDocs(query: string, open: boolean): { docs: KbRef[] | null; failed: boolean } {
   const [docs, setDocs] = useState<KbRef[] | null>(null);
   const [failed, setFailed] = useState(false);
-  const [q, setQ] = useState("");
   useEffect(() => {
     if (!open || docs !== null) return;
     api.query(query, {}).then((page) => {
@@ -737,6 +736,69 @@ export function KbPicker({ query, picked, onPick }: { query: string; picked: KbR
       })).filter((d) => d.id && d.title) : []);
     }, () => { setFailed(true); setDocs([]); });
   }, [open, docs, query]);
+  return { docs, failed };
+}
+
+const KB_NONE = "Bạn chưa xem được Kho tài liệu — soạn không cần tài liệu, hoặc hỏi quản trị cấp quyền.";
+
+/**
+ * TÀI LIỆU THAM CHIẾU (màn Soạn thảo): agent đọc NGUYÊN VĂN đúng các tài liệu được tích (tối đa ``max``) — khác tìm kiếm cả kho: chỉ đích danh nguồn để lấy đúng
+ * số liệu / điều khoản. Một nút gọn "N tài liệu tham chiếu"; mở ra là danh sách có ô tích (đã chọn lên đầu), bật / tắt không đóng hộp.
+ */
+export function KbMultiPicker({ query, picked, max, onChange }: { query: string; picked: KbRef[]; max: number; onChange: (list: KbRef[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const { docs, failed } = useKbDocs(query, open);
+  const ids = new Set(picked.map((d) => d.id));
+  const { shown, more } = pickDocs((docs ?? []).filter((d) => !ids.has(d.id)), q);
+  const full = picked.length >= max;
+  const toggle = (d: KbRef) => onChange(ids.has(d.id) ? picked.filter((x) => x.id !== d.id) : full ? picked : [...picked, d]);
+  const row = (d: KbRef) => {
+    const on = ids.has(d.id);
+    return (
+      <li key={d.id}>
+        <label className={cn("flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-accent", !on && full && "cursor-not-allowed opacity-50")}>
+          <input type="checkbox" checked={on} disabled={!on && full} onChange={() => toggle(d)} className="size-4 shrink-0 accent-primary" />
+          <span className={cn("t14 min-w-0 flex-1 truncate", on && "t14m")}>{d.title}</span>
+          {d.shelf ? <span className="t12 shrink-0 text-muted-foreground">{d.shelf}</span> : null}
+        </label>
+      </li>
+    );
+  };
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger className={cn("t12m inline-flex h-7 items-center gap-1 rounded-full border px-2.5", RING,
+                                    picked.length ? "border-primary/40 bg-primary/10 text-primary" : "border-hairline bg-surface text-muted-foreground hover:bg-accent hover:text-foreground")}>
+        <BookOpen className="size-3.5" aria-hidden />
+        <span>{picked.length ? `${picked.length} tài liệu tham chiếu` : "Tài liệu tham chiếu"}</span>
+        <ChevronDown className="size-3" aria-hidden />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[min(24rem,calc(100vw-1.5rem))] gap-2 p-2.5">
+        <p className="t12 text-muted-foreground">Agent đọc nguyên văn các tài liệu được tích để lấy đúng số liệu, điều khoản (tối đa {max}). Không tích ⇒ soạn không dựa tài liệu nào.</p>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm tên tài liệu…" aria-label="Tìm tài liệu trong kho"
+               className="t14 h-8 w-full rounded-lg border border-border bg-surface px-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+        <ul className="flex max-h-64 flex-col gap-0.5 overflow-y-auto" aria-label="Tài liệu trong kho">
+          {picked.map(row)}
+          {picked.length && (shown.length || docs === null) ? <li aria-hidden className="my-1 border-t border-hairline" /> : null}
+          {docs === null ? <li className="t12 px-2 py-2 text-muted-foreground">Đang tải…</li>
+            : failed ? <li className="t12 px-2 py-2 text-muted-foreground">{KB_NONE}</li>
+            : !shown.length && !picked.length ? <li className="t12 px-2 py-2 text-muted-foreground">Chưa có tài liệu nào khớp.</li>
+            : shown.map(row)}
+          {more ? <li className="t12 px-2 py-1.5 text-muted-foreground">Còn {more} tài liệu khớp — gõ thêm để thu hẹp.</li> : null}
+        </ul>
+        {full ? <p className="t12 text-muted-foreground">Đã đủ {max} tài liệu — bỏ tích một cái để chọn cái khác.</p> : null}
+        {picked.length ? (
+          <button type="button" onClick={() => onChange([])} className={cn("t12 self-start rounded text-muted-foreground hover:text-foreground", RING)}>Bỏ chọn tất cả</button>
+        ) : null}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+export function KbPicker({ query, picked, onPick }: { query: string; picked: KbRef | null; onPick: (d: KbRef | null) => void }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const { docs, failed } = useKbDocs(query, open);
   const { shown, more } = pickDocs(docs ?? [], q);
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -752,7 +814,7 @@ export function KbPicker({ query, picked, onPick }: { query: string; picked: KbR
                className="t14 h-8 w-full rounded-lg border border-border bg-surface px-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         <ul className="flex max-h-56 flex-col gap-0.5 overflow-y-auto" aria-label="Tài liệu trong kho">
           {docs === null ? <li className="t12 px-2 py-2 text-muted-foreground">Đang tải…</li>
-            : failed ? <li className="t12 px-2 py-2 text-muted-foreground">Bạn chưa xem được Kho tài liệu — soạn không cần tài liệu, hoặc hỏi quản trị cấp quyền.</li>
+            : failed ? <li className="t12 px-2 py-2 text-muted-foreground">{KB_NONE}</li>
             : !shown.length ? <li className="t12 px-2 py-2 text-muted-foreground">Chưa có tài liệu nào khớp.</li>
             : shown.map((d) => (
               <li key={d.id}>

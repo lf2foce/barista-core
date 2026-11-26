@@ -6,7 +6,7 @@ import { applyAll } from "@/components/blocks/word-apply";
 import { collect } from "@/components/blocks/word-assist";
 import { ReviewList } from "@/components/blocks/word-review";
 import { loadWord, WordEditor, type WordHandle } from "@/components/blocks/word-doc";
-import { CopyButton, Failed, KbPicker, UserBubble, Working, type KbRef } from "@/components/blocks/composer";
+import { CopyButton, Failed, KbMultiPicker, UserBubble, Working, type KbRef } from "@/components/blocks/composer";
 import { useDesk } from "@/components/desk/desk-context";
 import { ScreensMenu } from "@/components/desk/screens-menu";
 import { useFrameActions } from "@/components/desk/frame-context";
@@ -453,17 +453,8 @@ function StudioInput({ block, hasDraft, busy, form, setForm, sources, setSources
             </PopoverContent>
           </Popover>
         </>}
-          {/* nguồn cho agent: tài liệu kho (đúng quyền kệ) — giữ qua các lượt nhắn, bỏ từng cái */}
-          {block.doc.kb_documents && sources.length < 3 ? (
-            <KbPicker query={block.doc.kb_documents} picked={null} onPick={(d) => { if (d && !sources.some((x) => x.id === d.id)) setSources([...sources, d]); }} />
-          ) : null}
-          {sources.map((x) => (
-            <span key={x.id} className="t12m inline-flex h-7 max-w-[14rem] items-center gap-1 rounded-full border border-primary/40 bg-primary/10 pr-1 pl-2.5 text-primary">
-              <span className="truncate">{x.title}</span>
-              <button type="button" onClick={() => setSources(sources.filter((y) => y.id !== x.id))} aria-label={`Bỏ tài liệu ${x.title}`}
-                      className={cn("grid size-5 place-items-center rounded-full hover:bg-primary/15", RING)}>×</button>
-            </span>
-          ))}
+          {/* nguồn cho agent: tài liệu kho (đúng quyền kệ) — một nút gọn, mở ra tích / bỏ từng cái; giữ qua các lượt nhắn */}
+          {block.doc.kb_documents ? <KbMultiPicker query={block.doc.kb_documents} picked={sources} max={3} onChange={setSources} /> : null}
         </div>
         <div className={cn(COMPOSER_PILL, "pl-3")}>
           <textarea ref={ta} value={draft} rows={1} autoFocus onChange={(e) => setDraft(e.target.value)}
