@@ -1,16 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { Check, Sparkles, Undo2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ListChecks, Sparkles, Undo2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { newKey } from "@/lib/idempotency";
 import { decodeAssist, splitParagraphs, type AssistResult } from "@/lib/word";
+import { flash, newParaAfter, setText } from "@/components/blocks/word-apply";
+import { ReviewList } from "@/components/blocks/word-review";
 import { actionClass } from "@/components/primitives";
 
 // Trợ lý soạn thảo trong trình sửa Word (0227 §2.8). Model chỉ ĐỀ XUẤT chữ cho các đoạn gửi lên; người xem từng đề xuất, bấm áp dụng (đổi chữ trên trang
 // giấy, chưa ghi file), rồi tự bấm Lưu như mọi lần sửa ⇒ thành một phiên bản mới, khôi phục được.
 
-const QUICK = ["Sửa lỗi chính tả, ngữ pháp", "Viết trang trọng hơn", "Viết ngắn gọn hơn", "Viết rõ ràng, dễ hiểu hơn", "Viết tiếp đoạn sau"];
+const QUICK = ["Viết trang trọng hơn", "Viết ngắn gọn hơn", "Viết rõ ràng, dễ hiểu hơn", "Viết tiếp đoạn sau"];
 const MAX_WHOLE = 400;
 
 type Para = { id: string; text: string };
@@ -29,66 +31,10 @@ export function collect(sheet: HTMLElement, range: Range | null): { paras: Para[
   return { paras: filled.length ? filled : paras.slice(0, 1), scope: picked.length ? "selection" : "document" };
 }
 
-/** Đặt chữ mới cho một đoạn trên trang giấy: giữ định dạng của lượt chữ đầu (mã nguồn + kiểu), bỏ phần còn lại. */
-function setText(p: HTMLElement, text: string) {
-  const first = p.querySelector<HTMLElement>("span[data-pid]");
-  const span = first ? (first.cloneNode(false) as HTMLElement) : document.createElement("span");
-  span.textContent = text;
-  p.replaceChildren(span);
-}
-
-/** Đoạn MỚI ngay sau ``ref`` (chép định dạng đoạn + lượt chữ đầu của ``model``; bỏ mã ⇒ lúc lưu là đoạn mới). */
-function newParaAfter(ref: HTMLElement, model: HTMLElement, text: string): HTMLElement {
-  const p = model.cloneNode(false) as HTMLElement;
-  delete p.dataset.id;
-  const first = model.querySelector<HTMLElement>("span[data-pid]");
-  const span = first ? (first.cloneNode(false) as HTMLElement) : document.createElement("span");
-  span.textContent = text;
-  p.appendChild(span);
-  ref.after(p);
-  return p;
-}
-
-/** Áp TẤT CẢ đề xuất lên trang giấy (màn "Soạn": agent viết thẳng, người hoàn tác bằng phiên bản) — cùng cách đặt chữ / thêm đoạn như "Áp dụng". Trả số mục đã áp. */
-export function applyAll(root: HTMLElement, result: AssistResult): number {
-  const find = (id: string) => root.querySelector<HTMLElement>(`[data-seg] > p[data-id="${CSS.escape(id)}"]`);
-  let n = 0;
-  for (const e of result.edits) {
-    const p = find(e.id);
-    if (!p) continue;
-    const [head, ...rest] = splitParagraphs(e.text);
-    setText(p, head);
-    flash(p);
-    let tail = p;
-    for (const line of rest) {
-      tail = newParaAfter(tail, p, line);
-      flash(tail);
-    }
-    n += 1;
-  }
-  const tail = new Map<string, HTMLElement>();
-  for (const a of result.additions) {
-    const ref = tail.get(a.after) ?? find(a.after);
-    const model = find(a.after) ?? ref;
-    if (!ref || !model) continue;
-    let last = ref;
-    for (const line of splitParagraphs(a.text)) {
-      last = newParaAfter(last, model, line);
-      flash(last);
-    }
-    tail.set(a.after, last);
-    n += 1;
-  }
-  return n;
-}
-
-function flash(el: HTMLElement) {
-  el.animate([{ backgroundColor: "#fef08a" }, { backgroundColor: "transparent" }], { duration: 1600 });
-}
-
-export function AssistPanel({ op, documentId, sheet, range, onChanged, notify, onClose }: {
+/** ``startReview``: mở khung là RÀ SOÁT ngay (nút "Rà soát" trên dải công cụ) — chạy một lần lúc mở. */
+export function AssistPanel({ op, documentId, sheet, range, onChanged, notify, onClose, startReview = false }: {
   op: string; documentId: string; sheet: React.RefObject<HTMLDivElement | null>; range: React.RefObject<Range | null>;
-  onChanged: () => void; notify: (text: string, isError?: boolean) => void; onClose: () => void;
+  onChanged: () => void; notify: (text: string, isError?: boolean) => void; onClose: () => void; startReview?: boolean;
 }) {
   const [ask, setAsk] = useState("");
   const [busy, setBusy] = useState(false);
@@ -96,9 +42,11 @@ export function AssistPanel({ op, documentId, sheet, range, onChanged, notify, o
   const [done, setDone] = useState<Set<string>>(new Set());
   const [undo, setUndo] = useState<Undo | null>(null);
   const [scope, setScope] = useState("");
+  const [mode, setMode] = useState<"write" | "review">("write");
+  const getSheet = () => sheet.current;
 
-  async function run(instruction: string) {
-    if (!sheet.current || !instruction.trim() || busy) return;
+  async function run(instruction: string, how: "write" | "review" = "write") {
+    if (!sheet.current || (how === "write" && !instruction.trim()) || busy) return;
     const { paras, scope: s } = collect(sheet.current, range.current);
     if (!paras.length) {
       notify("Không có đoạn nào sửa được", true);
@@ -109,8 +57,9 @@ export function AssistPanel({ op, documentId, sheet, range, onChanged, notify, o
     setDone(new Set());
     setUndo(null);
     setScope(s === "selection" ? `${paras.length} đoạn đang chọn` : "cả văn bản");
+    setMode(how);
     try {
-      const r = await api.command(op, { document_id: documentId, instruction, paragraphs_json: JSON.stringify(paras), scope: s }, newKey());
+      const r = await api.command(op, { document_id: documentId, instruction, paragraphs_json: JSON.stringify(paras), scope: s, mode: how }, newKey());
       if (r.status !== "ok") notify(r.error || "Trợ lý chưa trả lời được", true);
       else setResult(decodeAssist(r.output));
     } catch (e) {
@@ -172,6 +121,14 @@ export function AssistPanel({ op, documentId, sheet, range, onChanged, notify, o
     onChanged();
   }
 
+  // mở bằng nút "Rà soát" ⇒ rà ngay, một lần (khung mở lại bằng "Trợ lý AI" không rà lại — nơi gọi đổi ``key``)
+  const started = useRef(false);
+  useEffect(() => {
+    if (!startReview || started.current) return;
+    started.current = true;
+    void run("", "review");
+  });
+
   const keys = result ? [...result.edits.map((e) => e.id), ...result.additions.map((_, i) => `+${i}`)] : [];
   const left = keys.filter((k) => !done.has(k));
 
@@ -182,7 +139,15 @@ export function AssistPanel({ op, documentId, sheet, range, onChanged, notify, o
         <span className="t14m flex-1">Trợ lý soạn thảo</span>
         <button type="button" aria-label="Đóng trợ lý" className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-foreground/5" onClick={onClose}><X className="size-4" /></button>
       </div>
-      <p className="t12 text-muted-foreground">Bôi đen đoạn cần sửa rồi chọn việc; không chọn gì thì trợ lý làm trên cả văn bản. Đề xuất chỉ đổi chữ trên trang — bấm Lưu mới thành phiên bản mới.</p>
+      <button type="button" disabled={busy} onMouseDown={(e) => e.preventDefault()} onClick={() => void run(ask, "review")}
+              className="flex items-start gap-2.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5 text-left outline-none hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+        <ListChecks className="mt-0.5 size-4 shrink-0 text-primary" />
+        <span className="flex flex-col gap-0.5">
+          <span className="t14m text-primary">{busy && mode === "review" ? "Đang rà soát…" : "Rà soát văn bản"}</span>
+          <span className="t12 text-muted-foreground">Chính tả, câu chữ, số liệu / ngày / tên ghi lệch nhau, thể thức — gạch ngay trên trang, nhận từng chỗ</span>
+        </span>
+      </button>
+      <p className="t12 text-muted-foreground">Hoặc bôi đen đoạn cần sửa rồi chọn việc; không chọn gì thì trợ lý làm trên cả văn bản. Đề xuất chỉ đổi chữ trên trang — bấm Lưu mới thành phiên bản mới.</p>
       <div className="flex flex-wrap gap-1.5">
         {QUICK.map((qk) => (
           <button key={qk} type="button" disabled={busy} className="t12 rounded-full border border-border px-2.5 py-1 hover:bg-foreground/5 disabled:opacity-40"
@@ -195,10 +160,17 @@ export function AssistPanel({ op, documentId, sheet, range, onChanged, notify, o
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void run(ask); } }} />
         <button type="submit" className={actionClass("primary")} disabled={busy || !ask.trim()}>
           <Sparkles className="size-4" />
-          {busy ? "Trợ lý đang viết…" : "Gửi cho trợ lý"}
+          {busy && mode === "write" ? "Trợ lý đang viết…" : "Gửi cho trợ lý"}
         </button>
       </form>
-      {result && (
+      {result && mode === "review" && (
+        <div className="flex flex-col gap-2">
+          <p className="t12 text-muted-foreground">Rà soát: {scope}</p>
+          {result.reply && <p className="t14 rounded-lg bg-foreground/5 px-3 py-2">{result.reply}</p>}
+          <ReviewList edits={result.edits} checks={result.checks} sheet={getSheet} onChanged={onChanged} />
+        </div>
+      )}
+      {result && mode === "write" && (
         <div className="flex flex-col gap-2">
           <p className="t12 text-muted-foreground">Phạm vi: {scope}</p>
           {result.reply && <p className="t14 rounded-lg bg-foreground/5 px-3 py-2">{result.reply}</p>}

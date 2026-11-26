@@ -243,17 +243,21 @@ export function buildOps(paras: Map<string, WordPara>, segments: Segment[]): Wor
 
 // ── Trợ lý soạn thảo (đề xuất của model; người áp dụng trên trang giấy rồi tự lưu) ──
 
-export type AssistEdit = { id: string; before: string; text: string };
+/** `why`: khi RÀ SOÁT — một câu nêu lỗi đã sửa (trợ lý soạn thường để trống). */
+export type AssistEdit = { id: string; before: string; text: string; why: string };
 export type AssistAddition = { after: string; text: string };
-export type AssistResult = { reply: string; edits: AssistEdit[]; additions: AssistAddition[] };
+/** Chỗ RÀ SOÁT nghi sai mà trợ lý không tự sửa (không biết giá trị nào đúng): người viết tự kiểm. ``quote`` = cụm chữ nghi sai trong đoạn ("" ⇒ cả đoạn). */
+export type AssistCheck = { id: string; why: string; quote: string };
+export type AssistResult = { reply: string; edits: AssistEdit[]; additions: AssistAddition[]; checks: AssistCheck[] };
 
 /** Giải mã kết quả `assist` (phòng thủ: mục thiếu mã / chữ bị bỏ). */
 export function decodeAssist(x: unknown): AssistResult {
   const o = obj(x);
   return {
     reply: str(o.reply),
-    edits: arr(o.edits).map((e) => ({ id: str(obj(e).id), before: str(obj(e).before), text: str(obj(e).text) })).filter((e) => e.id && e.text),
+    edits: arr(o.edits).map((e) => ({ id: str(obj(e).id), before: str(obj(e).before), text: str(obj(e).text), why: str(obj(e).why) })).filter((e) => e.id && e.text),
     additions: arr(o.additions).map((a) => ({ after: str(obj(a).after), text: str(obj(a).text) })).filter((a) => a.after && a.text),
+    checks: arr(o.checks).map((c) => ({ id: str(obj(c).id), why: str(obj(c).why), quote: str(obj(c).quote) })).filter((c) => c.id && c.why),
   };
 }
 
@@ -262,4 +266,129 @@ export function decodeAssist(x: unknown): AssistResult {
 export function splitParagraphs(text: string): string[] {
   const parts = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   return parts.length ? parts : [text.trim()];
+}
+
+// ── Rà soát: so chữ cũ / mới theo từ (thẻ đề xuất gạch đỏ phần bỏ, tô xanh phần thêm; trang giấy gạch dưới đúng chỗ sai) ──
+
+export type DiffPart = { kind: "same" | "del" | "ins"; text: string };
+
+/** So hai chữ theo TỪ (khoảng trắng là một mảnh riêng). Mỗi cụm khác nhau ra đúng một "del" rồi một "ins" (khoảng trắng đơn lẻ kẹp giữa hai chỗ đổi gộp vào
+ *  cụm — không vỡ vụn). Chữ quá dài để so từng từ ⇒ bỏ cả phần giữa, thêm cả phần giữa. */
+export function diffWords(a: string, b: string): DiffPart[] {
+  const ta = a.match(/\s+|\S+/g) ?? [];
+  const tb = b.match(/\s+|\S+/g) ?? [];
+  let pre = 0;
+  while (pre < ta.length && pre < tb.length && ta[pre] === tb[pre]) pre++;
+  let suf = 0;
+  while (suf < ta.length - pre && suf < tb.length - pre && ta[ta.length - 1 - suf] === tb[tb.length - 1 - suf]) suf++;
+  const A = ta.slice(pre, ta.length - suf);
+  const B = tb.slice(pre, tb.length - suf);
+  const raw: DiffPart[] = [];
+  if (A.length * B.length > 250_000) {
+    raw.push({ kind: "del", text: A.join("") }, { kind: "ins", text: B.join("") });
+  } else {
+    const n = A.length, m = B.length;
+    const L = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (A[i] === B[j]) {
+        raw.push({ kind: "same", text: A[i++] });
+        j++;
+      } else if (L[i + 1][j] >= L[i][j + 1]) raw.push({ kind: "del", text: A[i++] });
+      else raw.push({ kind: "ins", text: B[j++] });
+    }
+    while (i < n) raw.push({ kind: "del", text: A[i++] });
+    while (j < m) raw.push({ kind: "ins", text: B[j++] });
+  }
+  // khoảng trắng "giống" kẹp giữa hai chỗ đổi ⇒ thuộc cụm đổi (bỏ ở bên cũ, thêm ở bên mới)
+  const mid: DiffPart[] = [];
+  raw.forEach((x, k) => {
+    if (x.kind === "same" && /^\s+$/.test(x.text) && raw[k - 1] && raw[k - 1].kind !== "same" && raw[k + 1] && raw[k + 1].kind !== "same") {
+      mid.push({ kind: "del", text: x.text }, { kind: "ins", text: x.text });
+    } else mid.push(x);
+  });
+  const out: DiffPart[] = [];
+  const same = (text: string) => { if (text) out.push({ kind: "same", text }); };
+  same(ta.slice(0, pre).join(""));
+  for (let k = 0; k < mid.length;) {
+    if (mid[k].kind === "same") {
+      let t = "";
+      while (k < mid.length && mid[k].kind === "same") t += mid[k++].text;
+      same(t);
+      continue;
+    }
+    let del = "", ins = "";
+    while (k < mid.length && mid[k].kind !== "same") {
+      if (mid[k].kind === "del") del += mid[k].text;
+      else ins += mid[k].text;
+      k++;
+    }
+    // khoảng trắng chung ở đầu / cuối cụm (cả hai bên đều có) là phần giữ nguyên — không gạch
+    const head = del && ins ? (del.match(/^\s*/)![0].length <= ins.match(/^\s*/)![0].length ? del.match(/^\s*/)![0] : ins.match(/^\s*/)![0]) : "";
+    del = del.slice(head.length);
+    ins = ins.slice(head.length);
+    const dt = del.match(/\s*$/)![0], it = ins.match(/\s*$/)![0];
+    const tail = del && ins ? (dt.length <= it.length ? dt : it) : "";
+    same(head);
+    if (del) out.push({ kind: "del", text: del.slice(0, del.length - tail.length) });
+    if (ins) out.push({ kind: "ins", text: ins.slice(0, ins.length - tail.length) });
+    same(tail);
+  }
+  same(ta.slice(ta.length - suf).join(""));
+  // gộp "same" liền nhau (đầu / cuối nối với phần giữa)
+  return out.reduce<DiffPart[]>((acc, x) => {
+    const last = acc[acc.length - 1];
+    if (last && last.kind === "same" && x.kind === "same") last.text += x.text;
+    else acc.push({ ...x });
+    return acc;
+  }, []);
+}
+
+/** Khoảng [đầu, cuối) trong chữ CŨ cần gạch trên trang giấy: phần bị bỏ (cắt khoảng trắng hai đầu); chỗ chỉ THÊM chữ ⇒ gạch từ đứng ngay trước (đầu đoạn ⇒
+ *  từ ngay sau) để người thấy chỗ đó. */
+export function changedSpans(parts: DiffPart[]): [number, number][] {
+  const a = parts.filter((x) => x.kind !== "ins").map((x) => x.text).join("");
+  const spans: [number, number][] = [];
+  let off = 0;
+  parts.forEach((x, k) => {
+    if (x.kind === "del") {
+      const lead = x.text.length - x.text.trimStart().length;
+      const body = x.text.trim().length;
+      if (body) spans.push([off + lead, off + lead + body]);
+      else spans.push(wordAt(a, off));
+      off += x.text.length;
+    } else if (x.kind === "ins") {
+      if (parts[k - 1]?.kind !== "del") spans.push(wordAt(a, off));
+    } else off += x.text.length;
+  });
+  return spans.filter(([s, e]) => e > s);
+}
+
+/** Từ đứng ngay trước vị trí ``off`` (bỏ khoảng trắng); không có ⇒ từ ngay sau. */
+function wordAt(a: string, off: number): [number, number] {
+  let e = off;
+  while (e > 0 && /\s/.test(a[e - 1])) e--;
+  if (e > 0) {
+    let s = e;
+    while (s > 0 && !/\s/.test(a[s - 1])) s--;
+    return [s, e];
+  }
+  let s = off;
+  while (s < a.length && /\s/.test(a[s])) s++;
+  let t = s;
+  while (t < a.length && !/\s/.test(a[t])) t++;
+  return [s, t];
+}
+
+/** Rút gọn phần GIỐNG nhau dài trên thẻ (đoạn dài chỉ sai một chữ): giữ ``keep`` ký tự sát chỗ đổi, phần xa thay bằng "…". */
+export function clipSame(parts: DiffPart[], keep = 40): DiffPart[] {
+  return parts.map((x, k) => {
+    if (x.kind !== "same" || x.text.length <= keep * 2 + 10) return x;
+    const first = k === 0, last = k === parts.length - 1;
+    if (first && last) return x;
+    if (first) return { ...x, text: `…${x.text.slice(-keep).replace(/^\S*/, "")}` };
+    if (last) return { ...x, text: `${x.text.slice(0, keep).replace(/\S*$/, "")}…` };
+    return { ...x, text: `${x.text.slice(0, keep).replace(/\S*$/, "")}… ${x.text.slice(-keep).replace(/^\S*/, "")}` };
+  });
 }

@@ -344,6 +344,44 @@ async def test_the_editor_assistant_only_proposes_text_for_the_paragraphs_sent_a
     assert (await q(an, "word.versions", document_id=up["document_id"]))["rows"][0]["version"] == 1   # không ghi gì: vẫn phiên bản 1
 
 
+async def test_review_mode_only_fixes_real_mistakes_with_a_reason_and_never_adds_paragraphs() -> None:
+    from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from barista.modules import word
+
+    people = await _company()
+    an = people["an"]
+    up = await ok(an, "word.add", filename="de-nghi.docx", title="Đề nghị", data_b64=base64.b64encode(_sample()).decode())
+    seen: list[str] = []
+
+    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(str(messages))
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {
+            "reply": "Có 1 lỗi chính tả.",
+            "edits": [{"id": "b1", "text": "Đề nghị thanh toán", "why": "Sai chính tả: thanh tóan → thanh toán"},
+                      {"id": "b2", "text": "Điều khoản một", "why": "không đổi gì"}],          # chữ y nguyên ⇒ bỏ
+            "additions": [{"after": "b1", "text": "Nơi nhận: …"}],                                 # rà soát không thêm đoạn ⇒ bỏ
+            "checks": [{"id": "b2", "quote": "một", "why": "Số điều khoản lệch mục lục"},
+                       {"id": "b2", "quote": "không có trong đoạn", "why": "Trích sai ⇒ cả đoạn"}, {"id": "b9", "why": "mã lạ ⇒ bỏ"}]})])
+
+    paras = json.dumps([{"id": "b1", "text": "Đề nghị thanh tóan"}, {"id": "b2", "text": "Điều khoản một"}])
+    word.ASSIST_MODEL = FunctionModel(reply, model_name="word-fake")
+    try:
+        out = await ok(an, "word.assist", document_id=up["document_id"], instruction="", paragraphs_json=paras, scope="document", mode="review")
+        r = await executor.run(an, "word.assist", {"document_id": up["document_id"], "instruction": "", "paragraphs_json": paras})
+        assert r.status == "invalid"                                                   # cách làm thường vẫn bắt nhập yêu cầu
+    finally:
+        word.ASSIST_MODEL = None
+    assert len(seen) == 1 and "RÀ SOÁT" in seen[0] and "[b1] Đề nghị thanh tóan" in seen[0]
+    assert out["edits"] == [{"id": "b1", "before": "Đề nghị thanh tóan", "text": "Đề nghị thanh toán", "why": "Sai chính tả: thanh tóan → thanh toán"}]
+    assert out["checks"] == [{"id": "b2", "why": "Số điều khoản lệch mục lục", "quote": "một"}, {"id": "b2", "why": "Trích sai ⇒ cả đoạn", "quote": ""}]
+    assert out["additions"] == [] and out["summary"] == "Rà soát: 1 chỗ nên sửa, 2 chỗ cần kiểm tra"
+    chat = _word(await q(an, "word.view", document_id=up["document_id"]))["chat"]
+    assert [t["text"] for t in chat[-2:]] == ["Rà soát văn bản", "Có 1 lỗi chính tả."] and chat[-1]["note"] == "Rà soát · 3 chỗ"
+    assert (await q(an, "word.versions", document_id=up["document_id"]))["rows"][0]["version"] == 1   # không ghi file
+
+
 def test_a_blank_document_is_a4_with_one_empty_paragraph_ready_to_type() -> None:
     m = dm.read(dm.blank())
     assert (round(m["page"]["w"]), round(m["page"]["h"])) == (595, 842)                 # A4 dọc

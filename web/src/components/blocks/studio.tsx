@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, FileText, History, MessageSquarePlus } from "lucide-react";
-import { applyAll, collect } from "@/components/blocks/word-assist";
+import { ArrowUp, Check, ChevronDown, FileText, History, ListChecks, MessageSquarePlus } from "lucide-react";
+import { applyAll } from "@/components/blocks/word-apply";
+import { collect } from "@/components/blocks/word-assist";
+import { ReviewList } from "@/components/blocks/word-review";
 import { loadWord, WordEditor, type WordHandle } from "@/components/blocks/word-doc";
 import { CopyButton, Failed, KbPicker, UserBubble, Working, type KbRef } from "@/components/blocks/composer";
 import { useDesk } from "@/components/desk/desk-context";
@@ -20,9 +22,10 @@ import { datetime } from "@/lib/format";
 import { newKey } from "@/lib/idempotency";
 import type { StudioData } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { decodeAssist, type WordData } from "@/lib/word";
+import { decodeAssist, type AssistResult, type WordData } from "@/lib/word";
 
-type Msg = { role: "user" | "agent"; text: string; note?: string; error?: boolean };
+/** ``review``: lượt RÀ SOÁT — các chỗ trợ lý thấy sai, người Nhận / Bỏ từng chỗ ngay dưới câu trả lời (chỉ lượt rà gần nhất còn bấm được). */
+type Msg = { role: "user" | "agent"; text: string; note?: string; error?: boolean; review?: Pick<AssistResult, "edits" | "checks"> };
 type DocRef = WordData["documents"][number];
 
 const RING = "outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -143,6 +146,41 @@ export function StudioBlock({ block }: { block: StudioData }) {
     }
   }
 
+  const getSheet = useCallback(() => handle.current?.sheet() ?? null, []);
+
+  /** RÀ SOÁT văn bản đang mở (cả văn bản, hoặc đoạn đang bôi đen): KHÔNG tự ghi — trợ lý chỉ chỉ chỗ sai; người nhận chỗ nào thì chữ đổi trên trang, rồi Lưu. */
+  async function review() {
+    if (!word || busy) return;
+    setBusy(true);
+    setView("chat");   // màn hẹp đang ở "Bản xem" ⇒ sang trò chuyện để thấy tiến độ + thẻ nhận / bỏ (vệt gạch vẫn ở trang khi quay lại)
+    say({ role: "user", text: "Rà soát văn bản" });
+    try {
+      const h = await ready(handle);
+      const root = h?.sheet();
+      if (!h || !root) {
+        say({ role: "agent", text: "Trình soạn chưa sẵn sàng — thử lại", error: true });
+        return;
+      }
+      const { paras, scope } = collect(root, h.range());
+      const r = await api.command(block.doc.assist, { document_id: word.documentId, instruction: "", paragraphs_json: JSON.stringify(paras), scope, mode: "review",
+                                                     sources_json: JSON.stringify(sources.map((x) => x.id)) }, newKey());
+      if (r.status !== "ok") {
+        say({ role: "agent", text: r.error || "Agent chưa rà soát được", error: true });
+        return;
+      }
+      const result = decodeAssist(r.output);
+      const n = result.edits.length + result.checks.length;
+      say({ role: "agent", text: result.reply || (n ? `Có ${n} chỗ cần xem.` : "Không thấy lỗi cần sửa."),
+            note: n ? `Rà soát ${scope === "selection" ? "đoạn đang chọn" : "cả văn bản"} · chỗ nào Nhận thì chữ đổi trên văn bản, rồi Lưu` : undefined,
+            review: { edits: result.edits, checks: result.checks } });
+    } catch (e) {
+      say({ role: "agent", text: e instanceof Error ? e.message : "Agent chưa rà soát được", error: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+  const lastReview = msgs.findLastIndex((m) => !!m.review);
+
   function fresher() {
     if (busy) return;
     setWord(null);
@@ -193,7 +231,11 @@ export function StudioBlock({ block }: { block: StudioData }) {
                   <h2 className="t20">Sửa “{word.title}”</h2>
                   <p className="t14 text-muted-foreground">Nhắn agent việc cần sửa — cả văn bản, hoặc bôi đen một đoạn bên phải để sửa riêng đoạn đó. Mỗi lần sửa lưu thành một phiên bản, khôi phục được.</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {["Sửa lỗi chính tả, ngữ pháp", "Viết trang trọng hơn", "Viết ngắn gọn hơn", "Điền các chỗ còn “……” nếu đã rõ"].map((x) => (
+                    <button type="button" onClick={() => void review()}
+                            className={cn("t12m inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1.5 text-primary-foreground hover:bg-primary/90", RING)}>
+                      <ListChecks className="size-3.5" aria-hidden />Rà soát văn bản
+                    </button>
+                    {["Viết trang trọng hơn", "Viết ngắn gọn hơn", "Điền các chỗ còn “……” nếu đã rõ"].map((x) => (
                       <button key={x} type="button" onClick={() => void send(x)}
                               className={cn("t12 rounded-full border border-hairline bg-surface px-2.5 py-1.5 hover:bg-accent", RING)}>{x}</button>
                     ))}
@@ -243,6 +285,11 @@ export function StudioBlock({ block }: { block: StudioData }) {
                       <span className="whitespace-pre-wrap">{m.text}</span>
                     </p>
                     {m.note ? <p className="t12 ml-6 text-muted-foreground">{m.note}</p> : null}
+                    {m.review && m.review.edits.length + m.review.checks.length > 0 ? (
+                      i === lastReview
+                        ? <div className="ml-6"><ReviewList edits={m.review.edits} checks={m.review.checks} sheet={getSheet} onChanged={() => handle.current?.markDirty()} /></div>
+                        : <p className="t12 ml-6 text-muted-foreground">Lượt rà soát cũ — rà lại để xem trên văn bản hiện tại</p>
+                    ) : null}
                     <div className="ml-6 flex items-center gap-1"><CopyButton text={m.text} /></div>
                   </div>
                 ))}
@@ -251,7 +298,8 @@ export function StudioBlock({ block }: { block: StudioData }) {
             </div>
           </div>
         </div>
-        <StudioInput block={block} hasDraft={hasDraft} busy={busy} form={form} setForm={setForm} sources={sources} setSources={setSources} onSend={(t) => void send(t)} />
+        <StudioInput block={block} hasDraft={hasDraft} busy={busy} form={form} setForm={setForm} sources={sources} setSources={setSources} onSend={(t) => void send(t)}
+                     onReview={() => void review()} />
       </section>
 
       {hasDraft && word ? (
@@ -272,7 +320,7 @@ export function StudioBlock({ block }: { block: StudioData }) {
           <section id={`${tabsId}-panel-draft`} role="region"
                    className={cn("min-h-0 min-w-0 flex-1 flex-col bg-canvas", view === "draft" ? "flex" : "hidden", "@3xl:flex")}
                    aria-label="Khung làm việc — văn bản">
-            <WordEditor key={word.documentId} initial={word} notify={desk.show} handleRef={handle} agentOutside pane
+            <WordEditor key={word.documentId} initial={word} notify={desk.show} handleRef={handle} agentOutside pane onReview={() => void review()}
                         lead={<ViewSwitch view={view} onView={setView} fresh={fresh} />} />
           </section>
         </>
@@ -344,9 +392,9 @@ function DocsMenu({ docs, currentId, disabled, onOpen, onNew }: { docs: DocRef[]
 }
 
 /** Ô nhập — cùng hàng chip + ô viên (mic · gửi) với Soạn với AI. Chip "Loại" nói đang soạn loại nào và mở các cách soạn khác. */
-function StudioInput({ block, hasDraft, busy, form, setForm, sources, setSources, onSend }: {
+function StudioInput({ block, hasDraft, busy, form, setForm, sources, setSources, onSend, onReview }: {
   block: StudioData; hasDraft: boolean; busy: boolean; form: string; setForm: (f: string) => void;
-  sources: KbRef[]; setSources: (s: KbRef[]) => void; onSend: (t: string) => void;
+  sources: KbRef[]; setSources: (s: KbRef[]) => void; onSend: (t: string) => void; onReview: () => void;
 }) {
   const desk = useDesk();
   const [draft, setDraft] = useState("");
@@ -370,7 +418,13 @@ function StudioInput({ block, hasDraft, busy, form, setForm, sources, setSources
     <div className="flex flex-col gap-1.5 px-3 pt-1 pb-3">
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-2">
         <div className="flex flex-wrap items-center gap-1.5 px-1">
-        {hasDraft ? null : <>
+        {hasDraft ? (
+          // đã có văn bản ⇒ việc hay làm nhất trước khi gửi: rà soát — nút đặc, đứng đầu hàng chip
+          <button type="button" onClick={onReview} disabled={busy}
+                  className={cn("t12m inline-flex h-7 items-center gap-1 rounded-full bg-primary px-2.5 text-primary-foreground hover:bg-primary/90 disabled:opacity-50", RING)}>
+            <ListChecks className="size-3.5" aria-hidden />Rà soát
+          </button>
+        ) : <>
           <Popover open={kindOpen} onOpenChange={setKindOpen}>
             <PopoverTrigger className={cn("t12m inline-flex h-7 items-center gap-1 rounded-full border border-hairline bg-surface px-2.5 text-foreground hover:bg-accent", RING)}>
               <FileText className="size-3.5 text-primary" aria-hidden />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PAGE, buildOps, decodeWord, splitParagraphs, indexParas, normalize, originalRuns, type EditedPara, type EditedRun, type WordPara } from "@/lib/word";
+import { PAGE, buildOps, changedSpans, clipSame, decodeAssist, decodeWord, diffWords, splitParagraphs, indexParas, normalize, originalRuns, type EditedPara, type EditedRun, type WordPara } from "@/lib/word";
 
 const RAW = {
   type: "word", document_id: "d1", title: "Hợp đồng", version: 2, editable: true, page: { w: 612, ml: 90 },
@@ -110,5 +110,46 @@ describe("khối word", () => {
     expect(splitParagraphs("Kính gửi Ban Giám đốc,\n\n  Công ty đề xuất…  \r\nTrân trọng.")).toEqual(["Kính gửi Ban Giám đốc,", "Công ty đề xuất…", "Trân trọng."]);
     expect(splitParagraphs("Một dòng")).toEqual(["Một dòng"]);
     expect(splitParagraphs("  ")).toEqual([""]);
+  });
+});
+
+describe("rà soát: so chữ theo từ", () => {
+  it("một chữ sai ⇒ một cụm bỏ + một cụm thêm, gạch đúng chữ sai trên trang", () => {
+    const parts = diffWords("Đề nghị thanh tóan khoản phí", "Đề nghị thanh toán khoản phí");
+    expect(parts).toEqual([
+      { kind: "same", text: "Đề nghị thanh " }, { kind: "del", text: "tóan" }, { kind: "ins", text: "toán" }, { kind: "same", text: " khoản phí" },
+    ]);
+    expect(changedSpans(parts)).toEqual([[14, 18]]);
+  });
+
+  it("viết lại cả cụm: khoảng trắng kẹp giữa không làm vỡ vụn", () => {
+    const parts = diffWords("Bên em đề nghị bên anh thanh toán", "Sàn mẫu kính đề nghị Quý Chủ đầu tư thanh toán");
+    expect(parts.map((x) => x.kind)).toEqual(["del", "ins", "same", "del", "ins", "same"]);
+    expect(parts[0]).toEqual({ kind: "del", text: "Bên em" });
+    expect(parts[4]).toEqual({ kind: "ins", text: "Quý Chủ đầu tư" });
+    // ghép lại đúng hai chữ
+    expect(parts.filter((x) => x.kind !== "ins").map((x) => x.text).join("")).toBe("Bên em đề nghị bên anh thanh toán");
+    expect(parts.filter((x) => x.kind !== "del").map((x) => x.text).join("")).toBe("Sàn mẫu kính đề nghị Quý Chủ đầu tư thanh toán");
+  });
+
+  it("chỉ thêm chữ ⇒ gạch từ đứng ngay trước (đầu đoạn ⇒ từ ngay sau)", () => {
+    expect(changedSpans(diffWords("Hạn thanh toán 30 ngày", "Hạn thanh toán là 30 ngày"))).toEqual([[10, 14]]);
+    expect(changedSpans(diffWords("thanh toán", "Đề nghị thanh toán"))).toEqual([[0, 5]]);
+  });
+
+  it("chữ giống nhau dài được rút gọn quanh chỗ đổi", () => {
+    const long = "Căn cứ hợp đồng môi giới đã ký giữa hai bên và các phụ lục kèm theo, ";
+    const parts = clipSame(diffWords(`${long}số tiền là 54.500.000 đ`, `${long}số tiền là 54.500.000 đồng`));
+    expect(parts[0].text.startsWith("…")).toBe(true);
+    expect(parts[0].text.length).toBeLessThan(45);
+    expect(parts.slice(1)).toEqual([{ kind: "del", text: "đ" }, { kind: "ins", text: "đồng" }]);
+  });
+
+  it("giải mã giữ lý do của từng đề xuất", () => {
+    expect(decodeAssist({ edits: [{ id: "b1", before: "a", text: "b", why: "Sai chính tả" }, { id: "b2", text: "c" }] }).edits)
+      .toEqual([{ id: "b1", before: "a", text: "b", why: "Sai chính tả" }, { id: "b2", before: "", text: "c", why: "" }]);
+    expect(decodeAssist({ checks: [{ id: "b3", why: "Số tiền bằng chữ lệch", quote: "Năm mươi bốn triệu" }, { id: "b4" }] }).checks)
+      .toEqual([{ id: "b3", why: "Số tiền bằng chữ lệch", quote: "Năm mươi bốn triệu" }]);   // thiếu lý do ⇒ bỏ
+    expect(decodeAssist({}).checks).toEqual([]);   // máy chủ cũ / trợ lý soạn thường: không có mục ⇒ rỗng
   });
 });

@@ -267,3 +267,19 @@ body {
     opacity: 1;
   }
 }
+
+/* Rà soát văn bản Word (word-review.tsx): chỗ trợ lý thấy sai gạch dưới ngay trên trang giấy — CSS Custom Highlight, không chèn thẻ vào trang.
+   Đỏ: nên sửa (có đề xuất) · cam: cần người kiểm · nền: thẻ đang xem */
+::highlight(word-review) {
+  text-decoration: underline wavy var(--bad);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+::highlight(word-review-check) {
+  text-decoration: underline wavy var(--warn);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+::highlight(word-review-active) {
+  background-color: color-mix(in oklab, var(--warn) 24%, transparent);
+}
