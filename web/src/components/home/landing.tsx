@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, BellRing, BookCheck, MonitorSmartphone, ShieldCheck } from "lucide-react";
+import { ArrowRight, BellRing, BookCheck, CircleCheck, MonitorSmartphone, ShieldCheck } from "lucide-react";
 import { AgentStage } from "@/components/home/agent-stage";
 import { HeroDemo } from "@/components/home/hero-demo";
 import "./landing.css";
@@ -42,28 +42,31 @@ export function Landing() {
 
       <main className="relative">
         {/* ---- đầu trang: chữ lớn, rồi chính sản phẩm đang chạy ---- */}
-        <section className="mx-auto max-w-6xl px-4 pt-12 sm:px-6 md:pt-20">
-          <a href="#du-an" className="t12m inline-flex items-center gap-2 rounded-full border border-hairline bg-surface py-1 pr-3 pl-1 text-muted-foreground hover:text-foreground">
-            <span className="rounded-full bg-primary/12 px-2 py-0.5 text-primary">Mới</span>
-            Quản trị dự án từ file Excel đang có
-            <ArrowRight className="size-3.5" />
-          </a>
-          <h1 className="bl-display mt-6">
-            Trợ lý làm.
-            <br />
-            <span className="text-muted-foreground">Bạn duyệt.</span>
-          </h1>
-          <p className="mt-6 max-w-xl text-[17px] leading-relaxed text-muted-foreground sm:text-[19px]">
-            Bàn làm việc chung của công ty: bán hàng, thu tiền, sổ sách, kế hoạch, văn bản. Trợ lý đọc dữ liệu thật, làm việc trong hạn mức và soạn sẵn phần còn lại để bạn bấm duyệt.
-          </p>
-          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <Link href="/login" className="t14m inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 text-primary-foreground hover:opacity-90">
-              Đăng nhập <ArrowRight className="size-4" />
-            </Link>
-            <a href="#xem-tro-ly" className="t14m inline-flex items-center gap-1.5 text-foreground hover:text-primary">
-              Xem trợ lý suy luận <ArrowRight className="size-4" />
+        <section className="mx-auto grid max-w-6xl items-center gap-12 px-4 pt-12 sm:px-6 md:pt-20 lg:grid-cols-[minmax(0,1fr)_400px]">
+          <div>
+            <a href="#du-an" className="t12m inline-flex items-center gap-2 rounded-full border border-hairline bg-surface py-1 pr-3 pl-1 text-muted-foreground hover:text-foreground">
+              <span className="rounded-full bg-primary/12 px-2 py-0.5 text-primary">Mới</span>
+              Quản trị dự án từ file Excel đang có
+              <ArrowRight className="size-3.5" />
             </a>
+            <h1 className="bl-display mt-6">
+              Trợ lý làm.
+              <br />
+              <span className="text-muted-foreground">Bạn duyệt.</span>
+            </h1>
+            <p className="mt-6 max-w-xl text-[17px] leading-relaxed text-muted-foreground sm:text-[19px]">
+              Một nền tảng cho bán hàng, thu chi, kế toán, dự án và văn bản. Trợ lý AI làm việc trên dữ liệu thật của doanh nghiệp, tự xử lý trong hạn mức được giao và chuẩn bị sẵn những việc cần bạn phê duyệt.
+            </p>
+            <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+              <Link href="/login" className="t14m inline-flex h-11 items-center gap-2 rounded-full bg-primary px-5 text-primary-foreground hover:opacity-90">
+                Đăng nhập <ArrowRight className="size-4" />
+              </Link>
+              <a href="#xem-tro-ly" className="t14m inline-flex items-center gap-1.5 text-foreground hover:text-primary">
+                Xem trợ lý suy luận <ArrowRight className="size-4" />
+              </a>
+            </div>
           </div>
+          <HeroPhoto />
         </section>
 
         <section className="mx-auto mt-12 max-w-6xl md:mt-16" aria-label="Minh hoạ: tiền về, trợ lý đề xuất khớp đơn, người bấm duyệt">
@@ -154,6 +157,32 @@ export function Landing() {
           </nav>
         </div>
       </footer>
+    </div>
+  );
+}
+
+/** Ảnh bên phải tiêu đề (màn rộng): tách latte và điện thoại trên bàn quán cà phê — duyệt việc thư thái; ảnh do AI tạo.
+ *  Thẻ thông báo vắt qua mép trái ảnh (việc chờ duyệt), chip nhỏ ở góc trên (việc trợ lý tự làm trong hạn mức). Chữ là ví dụ. */
+function HeroPhoto() {
+  return (
+    <div className="relative hidden lg:block" aria-hidden>
+      <div className="relative aspect-[4/5] overflow-hidden rounded-[28px] border border-hairline">
+        <Image src="/landing/cafe-sang.webp" alt="" fill priority sizes="400px" className="object-cover object-[40%_50%]" />
+      </div>
+      <span className="t12m absolute -top-3 right-6 inline-flex items-center gap-1.5 rounded-full border border-hairline bg-surface px-3 py-1.5 shadow-[0_8px_20px_-10px_rgb(0_0_0/0.25)]">
+        <CircleCheck className="size-3.5 text-ok" /> Đã tự khớp 12 khoản tiền về
+      </span>
+      <div className="absolute bottom-10 -left-16 w-[288px] rounded-2xl border border-hairline bg-surface p-4 shadow-[0_18px_40px_-16px_rgb(0_0_0/0.3)]">
+        <div className="t12 flex items-center gap-2 text-muted-foreground">
+          <span className="size-2 rounded-full bg-primary" /> Trợ lý · vừa xong
+        </div>
+        <p className="t14m mt-2">Chờ chị duyệt: tạm ứng công tác</p>
+        <p className="t12 mt-1 leading-relaxed text-muted-foreground">5.000.000 ₫ cho anh Quân. Trợ lý đã đối chiếu hạn mức và chứng từ.</p>
+        <div className="mt-3 flex gap-2">
+          <span className="t12m inline-flex h-8 items-center rounded-full bg-primary px-4 text-primary-foreground">Duyệt</span>
+          <span className="t12m inline-flex h-8 items-center rounded-full border border-hairline px-4">Xem chi tiết</span>
+        </div>
+      </div>
     </div>
   );
 }
