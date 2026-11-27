@@ -1,0 +1,376 @@
+/* Ảnh động đầu trang giới thiệu (hero-demo.tsx). Màu lấy từ token của bộ dựng (--ss-*), accent = --primary của app; sáng / tối theo app. */
+
+.bh .ss-stage {
+  overflow: hidden;
+  background: transparent;
+}
+
+/* Cửa sổ rộng: cách mép trên và trái 40, tràn phải và dưới (ảnh chụp sản phẩm, không đóng khung) */
+/* Cửa sổ thẳng hàng với cột chữ của trang (cách mép 24), tràn đáy 44 (24 + 500 − 480): chỉ danh sách và thanh bên chạy tiếp, ô nhập của trợ lý còn nguyên */
+.bh-win {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  width: 1104px;
+  height: 500px;
+  /* bóng ngắn: bóng dài của bộ dựng bị mép khung cắt thành vệt xám ở hai bên */
+  box-shadow: 0 0 0 1px var(--ss-line), 0 18px 30px -18px rgb(0 0 0 / 0.18);
+}
+
+.bh-icon {
+  flex-shrink: 0;
+  color: var(--ss-icon);
+}
+
+.bh-icon--on {
+  color: var(--ss-accent);
+}
+
+/* ---- thanh bên: mờ, để danh sách dẫn mắt ---- */
+.bh-side {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 6px 10px 0;
+}
+
+.bh-org {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+}
+
+.bh-group {
+  display: grid;
+  gap: 2px;
+}
+
+.bh-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+}
+
+.bh-nav[data-active] {
+  background: var(--ss-ink-2);
+}
+
+.bh-nav__label {
+  color: var(--ss-text-strong);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* ---- thân: danh sách tiền vào | trợ lý ---- */
+.bh-body {
+  padding: 0;
+}
+
+.bh-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 384px;
+  height: 100%;
+}
+
+.bh-money {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px 20px 0;
+  border-top: 1px solid var(--ss-line);
+}
+
+.bh-headline {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.bh-title {
+  color: var(--ss-text-strong);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.bh-open {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--ss-text);
+  font-size: 12px;
+}
+
+.bh-open__n {
+  color: var(--ss-warning-text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.bh-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.bh-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--ss-line-faint);
+}
+
+.bh-lead {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--ss-success-soft);
+  color: var(--ss-success-text);
+}
+
+.bh-row[data-new] .bh-lead {
+  background: var(--ss-warning-soft);
+  color: var(--ss-warning-text);
+}
+
+.bh-lead--quiet {
+  background: var(--ss-ink-1);
+}
+
+.bh-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bh-amt {
+  color: var(--ss-text-strong);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-box: trim-both cap alphabetic;
+}
+
+.bh-memo {
+  overflow: hidden;
+  color: var(--ss-text);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-box: trim-both cap alphabetic;
+}
+
+.bh-row .ss-badge {
+  white-space: nowrap;
+}
+
+/* ---- trợ lý ---- */
+.bh-chat {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  border-top: 1px solid var(--ss-line);
+  border-left: 1px solid var(--ss-line);
+  background: var(--ss-surface);
+}
+
+.bh-chat__head {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--ss-line);
+}
+
+.bh-chat__title {
+  color: var(--ss-text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Neo đáy, ngay trên ô nhập; lượt cũ trôi lên và mờ ở mép trên, không bị cắt ngang */
+.bh-thread {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 14px;
+  min-height: 0;
+  padding: 0 20px 16px;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, transparent, #000 32px);
+}
+
+.bh-thread > * {
+  will-change: transform;
+}
+
+.bh-past {
+  display: grid;
+  gap: 8px;
+}
+
+.bh-past-q {
+  justify-self: end;
+}
+
+.bh-reply {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.bh-a {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.bh-line,
+.bh-thinking {
+  color: var(--ss-text-strong);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: normal;
+  text-wrap: pretty;
+}
+
+.bh-thinking {
+  color: var(--ss-text);
+}
+
+/* Thẻ đề xuất: phần của câu trả lời, nút ngay trên thẻ */
+.bh-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--ss-line);
+}
+
+.bh-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  padding-bottom: 2px;
+}
+
+.bh-card__title {
+  white-space: nowrap;
+  color: var(--ss-text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bh-tried {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--ss-text);
+  font-size: 11px;
+}
+
+.bh-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ss-text);
+  font-size: 12px;
+}
+
+.bh-kv__v {
+  color: var(--ss-text-strong);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nút: một ô, mỗi nhãn một lớp mờ dần sang nhau — không xô ngang */
+.bh-approve {
+  display: grid;
+  grid-template-areas: "stack";
+  place-items: center;
+  height: 36px;
+  margin-top: 4px;
+  border-radius: 9px;
+  background: var(--ss-accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 0.3s ease;
+}
+
+.bh-approve[data-done] {
+  background: var(--ss-success);
+}
+
+.bh-layer {
+  grid-area: stack;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  filter: blur(2px);
+  transition: opacity 0.25s ease, filter 0.25s ease;
+  text-box: trim-both cap alphabetic;
+}
+
+.bh-layer[data-on] {
+  opacity: 1;
+  filter: none;
+  transition-delay: 0.08s;
+}
+
+.bh-approve .ss-check__ring { stroke: rgb(255 255 255 / 0.45); }
+.bh-approve .ss-check__arc { stroke: #fff; }
+.bh-approve .ss-check__fill { fill: #fff; }
+.bh-approve .ss-check__tick { stroke: var(--ss-success); }
+
+.bh-composer {
+  margin: 0 20px 64px;
+}
+
+/* ---- điện thoại: một cột, danh sách trên, trợ lý dưới ---- */
+.bh .ss-stage[data-layout="compact"] .bh-win {
+  top: 16px;
+  left: 16px;
+  width: 326px;
+  height: 660px;
+}
+
+.bh-stack {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  background: var(--ss-surface);
+}
+
+.bh .ss-stage[data-layout="compact"] .bh-money {
+  padding: 14px 14px 0;
+}
+
+.bh .ss-stage[data-layout="compact"] .bh-chat {
+  border-left: 0;
+  border-top: 1px solid var(--ss-line);
+}
+
+.bh .ss-stage[data-layout="compact"] .bh-chat__head {
+  display: none;
+}
+
+.bh .ss-stage[data-layout="compact"] .bh-thread {
+  padding: 12px 14px 14px;
+}
+
+.bh .ss-stage[data-layout="compact"] .bh-composer {
+  margin: 0 14px 52px;
+}

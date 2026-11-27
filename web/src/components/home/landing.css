@@ -1,0 +1,424 @@
+/* Trang giới thiệu (landing.tsx). Chỉ biến màu của app (globals.css) ⇒ sáng / tối tự theo. Không đổ bóng ở thẻ, không dải màu. */
+
+.bl-display {
+  font-size: clamp(44px, 8vw, 84px);
+  line-height: 1.02;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+/* Nền đầu trang: hai quầng màu nhấn rất nhạt + lưới chấm, mờ dần trước khi tới dải nguyên tắc */
+.bl-backdrop {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1100px;
+  pointer-events: none;
+  background:
+    radial-gradient(48% 52% at 82% 12%, color-mix(in oklab, var(--primary) 22%, transparent), transparent 72%),
+    radial-gradient(36% 40% at 12% 0%, color-mix(in oklab, var(--primary) 12%, transparent), transparent 70%);
+}
+
+.bl-backdrop::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, color-mix(in oklab, var(--foreground) 16%, transparent) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+  mask-image: radial-gradient(70% 60% at 72% 18%, #000, transparent 75%);
+}
+
+.bl-h2 {
+  font-size: clamp(24px, 3.2vw, 34px);
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-wrap: pretty;
+}
+
+
+/* ---- lưới ô ---- */
+.bl-bento {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.bl-span2 {
+  grid-column: span 2;
+}
+
+@media (max-width: 860px) {
+  .bl-bento { grid-template-columns: minmax(0, 1fr); }
+  .bl-span2 { grid-column: auto; }
+}
+
+.bl-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 20px;
+  background: var(--surface);
+}
+
+.bl-tile__copy {
+  max-width: 34em;
+  padding: 24px 24px 0;
+  color: var(--muted-foreground);
+  font-size: 17px;
+  line-height: 1.45;
+  font-weight: 500;
+  text-wrap: pretty;
+}
+
+.bl-pic {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+  margin-top: 24px;
+}
+
+/* Ô ảnh người: câu khẳng định chữ lớn trên lớp xanh của màu nhấn, ảnh lộ ở giữa và chân */
+.bl-tile--ink {
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px;
+  border-color: transparent;
+  background: #0b1a2e;   /* nền tối dưới ảnh: mép bo tròn không lộ viền xanh */
+  color: #fff;
+}
+
+.bl-tile--ink > :not(.bl-photo) {
+  position: relative;
+  z-index: 1;
+}
+
+.bl-photo {
+  object-fit: cover;
+  object-position: 50% 0%;
+}
+
+.bl-tile--ink::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom,
+    color-mix(in oklab, var(--primary) 92%, #000 8%) 0%,
+    color-mix(in oklab, var(--primary) 55%, transparent) 38%,
+    transparent 58%,
+    rgb(0 0 0 / 0.55) 100%);
+}
+
+.bl-photo__note {
+  color: rgb(255 255 255 / 0.9);
+}
+
+.bl-statement {
+  font-size: clamp(34px, 4vw, 44px);
+  line-height: 1.05;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.bl-ink {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--foreground) 9%, transparent);
+}
+
+.bl-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bl-btn--quiet {
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: var(--surface);
+  color: var(--foreground);
+}
+
+/* ---- Kế hoạch: tiến độ cắt ở mép phải / dưới ---- */
+.bl-plan {
+  position: absolute;
+  inset: 0 -40px -20px 24px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 16px 0 0 168px;
+  border-top: 1px solid var(--hairline);
+  border-left: 1px solid var(--hairline);
+  border-top-left-radius: 14px;
+  background: var(--canvas);
+}
+
+.bl-plan__grid {
+  position: absolute;
+  inset: 0 0 0 168px;
+  background-image: linear-gradient(to right, var(--hairline) 1px, transparent 1px);
+}
+
+.bl-plan__row {
+  position: relative;
+  height: 28px;
+}
+
+.bl-span2 .bl-pic {
+  min-height: 272px;
+}
+
+.bl-plan__name {
+  position: absolute;
+  right: calc(100% + 16px);
+  top: 50%;
+  width: 140px;
+  overflow: hidden;
+  transform: translateY(-50%);
+  color: var(--foreground);
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bl-plan__track {
+  position: absolute;
+  inset: 0;
+}
+
+.bl-plan__bar {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--foreground) 14%, transparent);
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.bl-plan__bar[data-state="done"] { background: color-mix(in oklab, var(--ok) 28%, transparent); }
+.bl-plan__bar[data-state="doing"] { background: var(--primary); color: var(--primary-foreground); }
+.bl-plan__bar[data-state="late"] { background: var(--warn); color: #fff; }
+
+.bl-plan__flag {
+  position: absolute;
+  top: 50%;
+  margin-left: 8px;
+  transform: translateY(-50%);
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bl-plan__ms {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--foreground);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.bl-plan__nudge {
+  position: relative;
+  justify-self: start;
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ---- Nhắc nợ: một bản nháp tin nhắn, ghim đáy ---- */
+.bl-remind {
+  position: absolute;
+  inset: auto 24px -1px 24px;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--hairline);
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  background: var(--canvas);
+}
+
+.bl-remind__to {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.bl-remind__to b {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.bl-ava {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--cold) 18%, var(--surface));
+  color: var(--cold);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.bl-remind__msg {
+  padding: 10px 12px;
+  border-radius: 14px 14px 14px 4px;
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.bl-remind__acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ---- Chụp phiếu: tờ phiếu nghiêng + các ô máy đã đọc ---- */
+.bl-receipt {
+  position: absolute;
+  inset: 0;
+}
+
+.bl-paper {
+  position: absolute;
+  top: 6px;
+  left: 24px;
+  display: grid;
+  gap: 10px;
+  width: 168px;
+  padding: 16px 16px 20px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--warn) 6%, var(--surface));
+  transform: rotate(-4deg);
+}
+
+.bl-paper__title {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bl-paper__sum {
+  justify-self: start;
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* các ô máy đọc được: nằm chéo góc dưới phải, chừa số tổng trên phiếu */
+.bl-fields {
+  position: absolute;
+  right: 24px;
+  bottom: 20px;
+  display: grid;
+  gap: 6px;
+  width: 200px;
+}
+
+.bl-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.bl-field b {
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ---- Rà văn bản: một trang giấy, một chỗ lệch được đánh dấu ---- */
+.bl-doc {
+  position: absolute;
+  inset: 0 24px -1px 24px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 20px 20px 0;
+  border: 1px solid var(--hairline);
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  background: var(--canvas);
+}
+
+.bl-doc__h {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bl-doc__p {
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.bl-doc__p mark {
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--warn) 26%, transparent);
+  color: inherit;
+}
+
+.bl-doc__note {
+  justify-self: start;
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--warn);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---- điện thoại: cột tên hẹp lại, ô màu nhấn không cao thừa ---- */
+@media (max-width: 520px) {
+  .bl-plan { inset: 0 -16px -20px 16px; padding-left: 112px; }
+  .bl-plan__grid { left: 112px; }
+  .bl-plan__name { right: calc(100% + 10px); width: 96px; font-size: 12px; }
+  .bl-plan__flag { font-size: 11px; margin-left: 6px; }
+  .bl-tile--ink { min-height: 440px; }
+  .bl-statement { margin-block: 24px; }
+}

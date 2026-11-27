@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Receipt, RotateCcw, Sparkles, Store } from "lucide-react";
+import { ChevronRight, Receipt, RotateCcw, Store } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { FLOWS, type Action, type Kind, type Node, type Scenario } from "@/components/home/scenarios";
@@ -41,9 +41,10 @@ export function AgentStage() {
   const [run, setRun] = useState(0);
 
   return (
-    <div className="grid gap-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="inline-flex rounded-2xl bg-surface p-1" role="group" aria-label="Chọn quy trình">
+    <div className="grid gap-4">
+      {/* thanh chọn: quy trình (nút phân đoạn) · đối tượng dùng; dưới là tình huống (thẻ gạch chân) và chuỗi khâu (dòng chữ nhỏ) — cùng kiểu với cả trang */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-full border border-hairline bg-surface p-1" role="group" aria-label="Chọn quy trình">
           {FLOWS.map((f) => {
             const on = f.key === flow.key;
             const Icon = f.key === "solo" ? Store : Receipt;
@@ -57,28 +58,27 @@ export function AgentStage() {
                   setScenKey(f.scenarios[0].key);
                   setRun((r) => r + 1);
                 }}
-                className={cn("t14m inline-flex items-center gap-2 rounded-xl px-3.5 py-2 transition-colors", on ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
+                className={cn("inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-full px-3 text-[13px] font-medium transition-colors sm:px-4 sm:text-[14px]", on ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground")}
               >
-                <Icon className="size-4" />
+                <Icon className="hidden size-4 sm:block" />
                 {f.title}
               </button>
             );
           })}
         </div>
-        <span className="t12 text-muted-foreground">Dành cho: {flow.who.toLowerCase()}</span>
+        <span className="t12 text-muted-foreground">Dành cho {flow.who.toLowerCase()}</span>
       </div>
 
-      <div className="grid gap-2 rounded-2xl bg-surface p-3 sm:p-4">
-        <ol className="flex flex-wrap items-center gap-1.5" aria-label={`Các khâu của quy trình ${flow.title}`}>
+      <div className="grid gap-3 border-b border-hairline">
+        <ol className="t12 flex flex-wrap items-center gap-x-1.5 gap-y-1" aria-label={`Các khâu của quy trình ${flow.title}`}>
           {flow.chain.map((c, i) => (
             <li key={c} className="flex items-center gap-1.5">
-              <span className={cn("t12m rounded-full px-2.5 py-1", scen.chain.includes(i) ? "bg-primary text-primary-foreground" : "bg-canvas text-muted-foreground")}>{c}</span>
-              {i < flow.chain.length - 1 && <ArrowRight className="size-3.5 text-muted-foreground" aria-hidden />}
+              <span className={scen.chain.includes(i) ? "font-medium text-primary" : "text-muted-foreground"}>{c}</span>
+              {i < flow.chain.length - 1 && <ChevronRight className="size-3 text-muted-foreground/60" aria-hidden />}
             </li>
           ))}
         </ol>
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Chọn tình huống">
-          <span className="t12 text-muted-foreground">Tình huống:</span>
+        <div className="-mb-px flex flex-wrap gap-x-6" role="group" aria-label="Chọn tình huống">
           {flow.scenarios.map((s) => {
             const on = s.key === scen.key;
             return (
@@ -90,9 +90,9 @@ export function AgentStage() {
                   setScenKey(s.key);
                   setRun((r) => r + 1);
                 }}
-                className={cn("t14m rounded-full border px-3.5 py-1.5 transition-colors", on ? "border-primary bg-primary/10 text-primary" : "border-hairline text-foreground hover:bg-canvas")}
+                className={cn("t14m border-b-2 pt-1 pb-3 transition-colors", on ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
               >
-                <span className="tnum opacity-70">{s.time}</span> · {s.tab}
+                <span className="tnum mr-1.5 font-normal text-muted-foreground">{s.time}</span>{s.tab}
               </button>
             );
           })}
@@ -301,12 +301,13 @@ function Play({ scen, onReplay }: { scen: Scenario; onReplay: () => void }) {
 
   return (
     <div className="grid gap-3">
-      <div className="flex min-h-[52px] flex-wrap items-center gap-3 rounded-xl border border-primary/40 bg-primary/10 px-4 py-3">
-        <span className="t12m inline-flex items-center gap-1.5 text-primary">
-          <Sparkles className="size-4" /> Trợ lý đang nghĩ
+      {/* lời kể của trợ lý: một dòng trên nền thẻ như các khối khác của trang; chấm xanh nhịp khi đang chạy */}
+      <div className="flex min-h-[52px] flex-wrap items-center gap-3 rounded-2xl border border-hairline bg-surface px-4 py-3">
+        <span className="t12m inline-flex items-center gap-2 text-primary">
+          <span className={cn("size-2 rounded-full bg-primary", busy && "animate-pulse")} aria-hidden /> {busy ? "Trợ lý đang xử lý" : "Trợ lý đã xong"}
         </span>
-        <p className="t14m min-w-0 flex-[1_1_320px]" aria-live="polite">{say}</p>
-        <button type="button" onClick={onReplay} className="t12m inline-flex items-center gap-1.5 rounded-full border border-primary/50 bg-surface px-3 py-1.5 text-primary hover:bg-primary/5">
+        <p className="t14 min-w-0 flex-[1_1_320px]" aria-live="polite">{say}</p>
+        <button type="button" onClick={onReplay} className="t12m inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-foreground hover:bg-surface2">
           <RotateCcw className="size-3.5" /> Chạy lại
         </button>
       </div>

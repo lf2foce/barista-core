@@ -13,6 +13,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // mã chép từ bên thứ ba (Stageshow, MIT) — giữ nguyên để cập nhật được, không lint theo luật của app
+    "src/components/stageshow/**",
   ]),
 ]);
 
