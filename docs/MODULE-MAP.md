@@ -41,7 +41,7 @@
 | `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/plugins.py`, `kernel/rail.py`, `kernel/record_files.py`, `kernel/screen_usage.py` | 37 | 42 | 10 |
 | `crm` | Khách hàng | `crm` | `crm` | `modules/crm/` (18 file) | 24 | 49 | 42 |
 | `findings` | Báo cáo chạy song song | `findings` | — | `modules/findings.py` | 0 | 7 | 1 |
-| `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (16 file) | 37 | 49 | 33 |
+| `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (17 file) | 37 | 49 | 33 |
 | `health` | Sức khoẻ dữ liệu | `base` | — | `modules/health.py` | 0 | 2 | 1 |
 | `hr` | Hồ sơ làm việc | `hr` | `hr` | `modules/hr/` (2 file) | 13 | 14 | 4 |
 | `kb` | Tài liệu | `base` | `kb` | `modules/kb/` (4 file) | 15 | 23 | 12 |
@@ -247,7 +247,7 @@
 
 ### `flow` — Quy trình & việc
 
-- **Mã:** `flow/__init__.py`, `flow/assign.py`, `flow/automations.py`, `flow/cases.py`, `flow/due_phrase.py`, `flow/evidence.py`, `flow/messages.py`, `flow/plan_import.py`, `flow/plan_logic.py`, `flow/plans.py`, `flow/requests.py`, `flow/schedule_rules.py`, `flow/screens.py`, `flow/starters.py`, `flow/tasks.py`, `flow/timeline.py`
+- **Mã:** `flow/__init__.py`, `flow/assign.py`, `flow/automations.py`, `flow/cases.py`, `flow/due_phrase.py`, `flow/evidence.py`, `flow/messages.py`, `flow/plan_import.py`, `flow/plan_logic.py`, `flow/plan_template.py`, `flow/plans.py`, `flow/requests.py`, `flow/schedule_rules.py`, `flow/screens.py`, `flow/starters.py`, `flow/tasks.py`, `flow/timeline.py`
 - **Tài nguyên quyền:** `flow`, `flow.automations`, `flow.templates`
 - **Hợp đồng quyền hệ thống** (thao tác ← module được gọi):
   - `flow.calendar_of` ← `schedule`

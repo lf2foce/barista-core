@@ -115,6 +115,8 @@ def test_template_round_trip_for_every_importable_command() -> None:
     assert len(ops) >= 5 and registry.OPS["crm.create_lead"] in ops
     with_example = 0
     for op in ops:
+        if op.name in imports.TEMPLATES:   # mẫu RIÊNG (vd kế hoạch: dòng 1 là tên dự án, nhập cả bảng qua bước tự tìm dòng tiêu đề) — module của nó tự kiểm
+            continue                       # đọc lại bằng đúng đường nhập của nó (test_plan_import: test_downloadable_template_…)
         mapped, unknown = imports.map_rows(op, imports.read_xlsx(imports.template_xlsx(op)))
         assert unknown == [], (op.name, unknown)
         specs = [s for s in field_specs(op) if not s["hidden"] and isinstance(s.get("example"), str) and s["example"]]

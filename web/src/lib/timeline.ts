@@ -62,7 +62,8 @@ export function flatten(groups: TimelineGroup[], opened: Record<string, boolean>
   return out;
 }
 
-export type Arrow = { from: { x: number; y: number }; to: { x: number; y: number } };
+/** ``pre`` / ``next`` = mã việc trước / việc sau — để tô đậm mũi tên của việc đang rê chuột. */
+export type Arrow = { from: { x: number; y: number }; to: { x: number; y: number }; pre: string; next: string };
 
 /** Mũi tên phụ thuộc giữa các dòng ĐANG HIỆN: từ cuối thanh việc trước tới đầu thanh việc sau. Dòng không hiện (nhóm gấp) ⇒ không vẽ. */
 export function arrows(rows: FlatRow[], r: Range): Arrow[] {
@@ -75,7 +76,7 @@ export function arrows(rows: FlatRow[], r: Range): Arrow[] {
       if (!pre) continue;
       const pb = barBox(r, pre.item.start, pre.item.end);
       const sb = barBox(r, item.start, item.end);
-      out.push({ from: { x: pb.left + pb.width, y: pre.y + ROW_H / 2 }, to: { x: sb.left, y: y + ROW_H / 2 } });
+      out.push({ from: { x: pb.left + pb.width, y: pre.y + ROW_H / 2 }, to: { x: sb.left, y: y + ROW_H / 2 }, pre: id, next: item.id });
     }
   }
   return out;
@@ -97,6 +98,11 @@ export function weekTicks(r: Range): { x: number; label: string; month: boolean 
 }
 
 /** Câu đọc cho trình đọc màn hình: một dòng việc nói đủ tên, người làm, ngày, trạng thái, cảnh báo. */
+/** Chữ cạnh thanh: chỉ NGƯỜI LÀM (ngắn — trục đã nói ngày); việc chưa giao thì ngày. Đủ người · ngày · trạng thái ở ``itemLabel`` (rê chuột / trình đọc). */
+export function barText(i: TimelineItem): string {
+  return i.who || i.dates;
+}
+
 export function itemLabel(i: TimelineItem): string {
   return [i.title, i.who, i.kind === "milestone" ? `mốc ${i.dates}` : i.dates, i.status, i.flag].filter(Boolean).join(", ");
 }

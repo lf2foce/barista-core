@@ -17,7 +17,8 @@ struct CompactCard: View {
 
     private var count: String {
         guard let c = (page ?? initial)?.compact, c.shown > 0 else { return "" }
-        if let total = c.total { return total > c.shown ? "\(c.shown)/\(total)" : "\(total)" }
+        // tổng có thể cộng lẫn nhiều loại khối (cảnh báo + thẻ phòng + việc) ⇒ không hiện "3/14"; chỉ nói còn bao nhiêu mục chưa hiện (như web — lib/compact.ts)
+        if let total = c.total { return total > c.shown ? "còn \(total - c.shown) mục" : "" }
         return "\(c.shown) dòng đầu"
     }
 

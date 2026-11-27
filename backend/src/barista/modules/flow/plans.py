@@ -206,6 +206,14 @@ async def remind_plan(ctx: Ctx, inp: PlanRemind) -> dict[str, Any]:
     else:
         n = await _remind(ctx, inp.plan_id, plan["title"], ctx.p.name, inp.note,
                           await ctx.all("SELECT assignee_id, title, status, due_on FROM flow.tasks WHERE plan_id = %s", (inp.plan_id,)))
+    # LỊCH SỬ NHẮC ở "Trao đổi" của kế hoạch (cả nhóm thấy đã nhắc lúc nào, ai nhắc) — CHỈ con số: người xem kế hoạch không thấy hết việc phòng khác
+    # (thẻ kế hoạch thay tên việc phòng khác bằng "việc của <phòng>") ⇒ không ghi tên việc / người bị nhắc. Gói Trao đổi tắt / không dùng được ⇒ bỏ qua.
+    note = inp.note.strip()
+    try:
+        await ctx.call_optional("talk.post", subject_kind=PLAN_SUBJECT, subject_id=inp.plan_id,
+                                body=f"Đã nhắc {n['people']} người đang chậm ({n['tasks']} việc)" + (f" — {note}" if note else ""))
+    except (Denied, NotFound, Invalid):
+        pass
     return {**n, "summary": f"Nhắc {n['people']} người đang chậm ({n['tasks']} việc) — kế hoạch “{plan['title']}”"}
 
 
@@ -367,10 +375,16 @@ def _progress(plan: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str, An
     # việc có bộ kiểm bị huỷ (qua duyệt / huỷ cả kế hoạch) không làm mà không còn chặn tiến độ ⇒ hiện rõ, không lặng lẽ rơi khỏi tổng
     dropped = sum(1 for t in tasks if t["status"] == "cancelled" and t.get("checked"))
     recent = sum(1 for t in done if t["done_at"] and t["done_at"].astimezone(zone()).date() > t0 - timedelta(days=RATE_DAYS))
-    started = plan["created_at"].astimezone(zone()).date()
+    # kế hoạch bắt đầu từ việc SỚM NHẤT (kế hoạch nhập từ file đang chạy dở: tạo hôm nay nhưng việc đã làm từ trước) — tính từ ngày tạo thì vài việc
+    # đã xong trong file thành "tốc độ vài việc / ngày" và dự báo xong sớm vô lý (27/11: dự báo 29/11 khi còn 4 việc quá hạn, mốc 10/12)
+    started = min([plan["created_at"].astimezone(zone()).date(), *(t["start_on"] for t in live if t.get("start_on"))])
     days = max(1, min(RATE_DAYS, (t0 - started).days))
     rate = recent / days
     forecast = (t0 + timedelta(days=math.ceil(remaining / rate))) if remaining and rate > 0 else (t0 if not remaining else None)
+    # không sớm hơn việc còn mở có hạn muộn nhất: kế hoạch đã xếp ngày cho chúng, tốc độ nhanh không làm việc chưa tới lượt xong sớm hơn
+    last_open = max((t["due_on"] for t in live if t["status"] != "done" and t["due_on"] and t["due_on"] >= t0), default=None)
+    if forecast and last_open and forecast < last_open:
+        forecast = last_open
     due = plan["due_on"]
     if plan["status"] != "open":
         closed = f" {plan['closed_at'].astimezone(zone()):%d/%m/%Y}" if plan.get("closed_at") else ""
@@ -469,10 +483,10 @@ async def _plan_view(ctx: Ctx, plan_ids: list[UUID]) -> list[dict[str, Any]]:
     tên thay bằng "việc của <phòng>"."""
     if not plan_ids:
         return []
-    seen = {r["id"]: r for r in await ctx.all("""SELECT t.id, t.title, t.assignee_id, t.phase, t.depends_on, u.name AS who FROM flow.tasks t
+    seen = {r["id"]: r for r in await ctx.all("""SELECT t.id, t.title, t.assignee_id, t.phase, t.depends_on, t.plan_ref, u.name AS who FROM flow.tasks t
                                                  LEFT JOIN core.users u ON u.id = t.assignee_id WHERE t.plan_id = ANY(%s)""", (plan_ids,))}
     return [{**t, **seen[t["id"]], "seen": True} if t["id"] in seen
-            else {**t, "title": f"việc của {t['team'] or 'phòng khác'}", "assignee_id": None, "who": None, "phase": "", "depends_on": [], "seen": False}
+            else {**t, "title": f"việc của {t['team'] or 'phòng khác'}", "assignee_id": None, "who": None, "phase": "", "depends_on": [], "plan_ref": None, "seen": False}
             for t in await ctx.call_system("flow.plan_tasks", plan_ids=plan_ids)]
 
 
@@ -510,23 +524,22 @@ async def plan(ctx: Ctx, inp: PlanRef) -> dict[str, Any]:
         for it, r in zip(items, rows, strict=True):
             it["subtitle"] = " · ".join(x for x in (it["subtitle"], r["team"]) if x)
     tone = {"ok": "ok", "risk": "warn", "late": "bad", "review": "accent", "done": "ok", "cancelled": "muted"}[g["risk"]]
-    # Nút xử lý do CODE chọn từ tín hiệu: có việc chậm ⇒ nhắc cả loạt + giao lại / dời hạn từng việc chậm nhất (form mở sẵn việc đó)
+    # Nút xử lý do CODE chọn từ tín hiệu: có việc chậm ⇒ MỘT nút nhắc cả loạt. Giao lại / dời hạn TỪNG việc nằm ở thẻ của việc đó (bấm việc trong danh sách) —
+    # không rải một nút / việc trễ lên đầu thẻ (27/11: càng trễ thẻ càng dài, ba giây đầu không thấy câu cần biết). Trợ lý vẫn đề xuất adjust_task như cũ.
     fixes: list[dict[str, Any]] = []
     if g["risk"] in ("risk", "late") and ctx.p.can("flow", "write"):
         soon = today() + timedelta(days=3)
-        def lagging(ts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            return [r for r in ts if r["status"] in ("todo", "doing", "blocked") and r["due_on"] and r["due_on"] <= soon]
-        slow = lagging(rows)
-        # người phụ trách / quản lý kế hoạch nhắc được cả việc phòng khác (remind_plan) — giao lại / dời hạn thì chỉ việc mình thấy
-        if lagging(full if p["runs"] else rows):
+        # người phụ trách / quản lý kế hoạch nhắc được cả việc phòng khác (remind_plan); người khác chỉ việc mình thấy
+        if any(r["status"] in ("todo", "doing", "blocked") and r["due_on"] and r["due_on"] <= soon for r in (full if p["runs"] else rows)):
             fixes.append(ui.act("flow.remind_plan", "Nhắc người đang chậm", {"plan_id": str(p["id"])}, "primary"))
-        fixes += [ui.act("flow.adjust_task", f"Giao lại / dời hạn: {r['title'][:40]}", {"task_id": str(r["id"])}) for r in slow[:3]]
     if g["risk"] == "review" and ctx.p.can("flow", "write"):
         fixes.append(ui.act("flow.set_plan", "Nghiệm thu kế hoạch", {"plan_id": str(p["id"]), "status": "done"}, "primary"))
     # trao đổi của kế hoạch = luồng trên chính kế hoạch (0117) — gói Trao đổi tắt / không có quyền ⇒ thẻ vẫn mở, không có khối
     talk = await ctx.call_as_optional("talk.block", ctx.p, subject_kind=PLAN_SUBJECT, subject_id=p["id"])
     tl = await plan_timeline(ctx, p, full)
+    # THỨ TỰ (27/11 — ba giây đầu là câu cần biết): trạng thái + nút xử lý → ô số → dòng thời gian → các việc → theo phòng → trao đổi
     return ui.card(p["title"], [
+        ui.b_callout(tone, RISK[g["risk"]], g["why"], actions=fixes),
         ui.b_kpis([*([ui.kpi("Mục tiêu", f"{goal['value']}/{goal['target']} {goal['unit']}", "text",
                              tone="green" if goal["status"] == "met" else ("red" if goal["status"] in ("risk", "late") else None),
                              hint=f"{goal['label']} · cần khoảng {goal['expected']} tới hôm nay")] if goal else []),
@@ -534,14 +547,13 @@ async def plan(ctx: Ctx, inp: PlanRef) -> dict[str, Any]:
                    ui.kpi("Quá hạn", g["overdue"], tone="red" if g["overdue"] else None),
                    ui.kpi("Dự báo xong", f"{g['forecast']:%d/%m/%Y}" if g["forecast"] else "Chưa đủ dữ liệu", "text"),
                    ui.kpi("Mốc", f"{p['due_on']:%d/%m/%Y}" if p["due_on"] else "—", "text")]),
-        ui.b_callout(tone, RISK[g["risk"]], g["why"], actions=fixes),
         *([tl] if tl else []),
         *([ui.b_text(p["goal"], "Mục tiêu")] if p["goal"] else []),
-        *([ui.b_tiles(by_team, "Theo phòng")] if len(by_team) > 1 else []),
         *([ui.b_list([{"title": r["title"], "subtitle": f"Nhờ {r['team']}" + (f" · hạn {r['due_on']:%d/%m}" if r["due_on"] else ""),
                        "badge": "Chờ nhận", "tone": "warn"} for r in pending], "Đang nhờ phòng khác")] if pending else []),
         ui.b_list(items or [{"title": "Chưa có việc", "subtitle": ""}],
                   "Các việc" if len(rows) == len(full) else f"Các việc bạn được xem ({len(rows)}/{len(full)} — còn lại của phòng khác)"),
+        *([ui.b_tiles(by_team, "Theo phòng", rows=True)] if len(by_team) > 1 else []),   # hàng gọn, sau danh sách việc
         *([talk] if talk else []),
     ], subtitle=f"{PLAN_STATUS[p['status']]} · phụ trách {p['owner'] or '—'}", icon="list.bullet.clipboard",
         actions=([ui.act("flow.create_task", "Thêm việc vào kế hoạch", {"plan_id": str(p["id"])}),

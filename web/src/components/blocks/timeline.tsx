@@ -2,12 +2,13 @@
 
 import { ChevronDown, TriangleAlert } from "lucide-react";
 import { useState } from "react";
-import { arrows, barBox, type Arrow, flatten, HEAD_H, itemLabel, rangeOf, ROW_H, weekTicks, xOf, type FlatRow, type Range } from "@/lib/timeline";
+import { arrows, barBox, barText, type Arrow, flatten, HEAD_H, itemLabel, rangeOf, ROW_H, weekTicks, xOf, type FlatRow, type Range } from "@/lib/timeline";
 import { cardToneVar } from "@/lib/format";
 import type { OpenRef, TimelineData, TimelineItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const LABEL_W = 232;
+const BAR_H = 20;   // thanh việc cao h-5
 
 /**
  * Dòng thời gian / Gantt (0222). Server dựng nhóm, thanh, mốc, ngày nghỉ, mũi tên — chỗ này chỉ vẽ. Cột trái = tên (đọc được bằng bàn phím / trình đọc
@@ -15,6 +16,7 @@ const LABEL_W = 232;
  */
 export function TimelineBlock({ data, onOpen }: { data: TimelineData; onOpen: (o: OpenRef) => void }) {
   const [opened, setOpened] = useState<Record<string, boolean>>({});
+  const [hot, setHot] = useState("");   // việc đang rê chuột (cột tên hoặc thanh) ⇒ mũi tên "chờ việc" của nó đậm lên, còn lại mờ
   const r = rangeOf(data);
   const rows = flatten(data.groups, opened);
   const height = rows.length * ROW_H;
@@ -35,7 +37,7 @@ export function TimelineBlock({ data, onOpen }: { data: TimelineData; onOpen: (o
             {data.title || "Việc"}
           </div>
           <ul>
-            {rows.map((row) => (row.kind === "group" ? <GroupLabel key={`g${row.group.key}`} row={row} onToggle={toggle} onOpen={onOpen} /> : <ItemLabel key={row.item.id} item={row.item} onOpen={onOpen} />))}
+            {rows.map((row) => (row.kind === "group" ? <GroupLabel key={`g${row.group.key}`} row={row} onToggle={toggle} onOpen={onOpen} /> : <ItemLabel key={row.item.id} item={row.item} onOpen={onOpen} onHot={setHot} />))}
           </ul>
         </div>
         {/* trục ngày */}
@@ -52,20 +54,27 @@ export function TimelineBlock({ data, onOpen }: { data: TimelineData; onOpen: (o
               ))}
             </div>
             <div className="absolute inset-x-0" style={{ top: HEAD_H, height }}>
-              {rows.map((row) => (row.kind === "group" ? <GroupTrack key={`g${row.group.key}`} row={row} r={r} /> : <ItemTrack key={row.item.id} item={row.item} y={row.y} r={r} onOpen={onOpen} />))}
+              {rows.map((row) => (row.kind === "group" ? <GroupTrack key={`g${row.group.key}`} row={row} r={r} /> : <ItemTrack key={row.item.id} item={row.item} y={row.y} r={r} onOpen={onOpen} onHot={setHot} />))}
               {data.milestones.map((m) => (
                 <span key={`v${m.on}${m.title}`} aria-hidden className="absolute top-0 h-full border-l border-dashed" style={{ left: xOf(r, m.on) + r.px / 2, borderColor: cardToneVar(m.tone) }} />
               ))}
+              {/* mũi tên "chờ việc trước" LUÔN vẽ (nhìn là biết việc nào chờ việc nào), xám vừa đủ thấy; rê chuột vào một việc ⇒ mũi tên của nó tô xanh, vẽ sau cùng */}
               {lines.length ? (
                 <svg className="pointer-events-none absolute inset-0" width={r.width} height={height} aria-hidden>
                   <defs>
-                    <marker id="tlarrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+                    <marker id="tlarrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
                       <path d="M0,0 L8,4 L0,8 z" fill="var(--muted-foreground)" />
                     </marker>
+                    <marker id="tlarrowhot" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+                      <path d="M0,0 L8,4 L0,8 z" fill="var(--primary)" />
+                    </marker>
                   </defs>
-                  {lines.map((a, i) => (
-                    <path key={i} d={arrowPath(a)} fill="none" stroke="var(--muted-foreground)" strokeWidth="1.25" strokeOpacity="0.7" markerEnd="url(#tlarrow)" />
+                  {lines.filter((a) => a.pre !== hot && a.next !== hot).map((a) => (
+                    <path key={`${a.pre}>${a.next}`} d={arrowPath(a)} fill="none" stroke="var(--muted-foreground)" strokeOpacity="0.5" strokeWidth="1.25" markerEnd="url(#tlarrow)" />
                   ))}
+                  {hot ? lines.filter((a) => a.pre === hot || a.next === hot).map((a) => (
+                    <path key={`hot${a.pre}>${a.next}`} d={arrowPath(a)} fill="none" stroke="var(--primary)" strokeWidth="1.75" markerEnd="url(#tlarrowhot)" />
+                  )) : null}
                 </svg>
               ) : null}
             </div>
@@ -79,19 +88,24 @@ export function TimelineBlock({ data, onOpen }: { data: TimelineData; onOpen: (o
         <span className="flex items-center gap-1.5"><span aria-hidden className="inline-block h-3 w-px bg-bad" />Hôm nay</span>
         <span className="flex items-center gap-1.5"><span aria-hidden className="inline-block h-3 w-4 rounded-sm bg-surface2 ring-1 ring-hairline" />Ngày nghỉ</span>
         <span className="flex items-center gap-1.5"><span aria-hidden className="inline-block size-2.5 rotate-45 bg-[var(--cold)]" />Mốc</span>
-        <span className="flex items-center gap-1.5"><span aria-hidden className="inline-block h-0 w-4 border-t border-muted-foreground" />Chờ việc trước</span>
+        {lines.length ? <span className="flex items-center gap-1.5"><span aria-hidden className="inline-block h-0 w-4 border-t border-muted-foreground" />Chờ việc trước (rê chuột vào một việc để tô rõ)</span> : null}
         {data.note ? <span>{data.note}</span> : null}
       </figcaption>
     </figure>
   );
 }
 
-/** Mũi tên: đủ chỗ ⇒ cong mềm; việc sau bắt đầu TRƯỚC khi việc trước hết ⇒ đi vòng qua ranh giới hàng (không cắt ngược qua các thanh). */
+/** Mũi tên "chờ việc trước" (anh Anh chọn 27/11 — gọn hơn kiểu MS Project đi vòng):
+ *  * việc sau bắt đầu NGAY sau / chồng lên việc trước (hai đầu trùng nhau theo chiều ngang — hay gặp nhất) ⇒ đi thẳng xuống MÉP TRÊN thanh việc sau, ngay sau
+ *    đầu thanh;
+ *  * việc sau ở xa ⇒ ra khỏi cuối thanh một chút, đi xuống (lên) hàng việc sau, rẽ ngang vào đầu thanh. */
 function arrowPath(a: Arrow): string {
   const { from, to } = a;
-  if (to.x >= from.x + 18) return `M${from.x},${from.y} C${from.x + 14},${from.y} ${to.x - 14},${to.y} ${to.x},${to.y}`;
-  const mid = (to.y > from.y ? from.y + ROW_H / 2 : from.y - ROW_H / 2);
-  return `M${from.x},${from.y} H${from.x + 6} V${mid} H${to.x - 8} V${to.y} H${to.x}`;
+  const down = to.y >= from.y ? 1 : -1;
+  if (to.x >= from.x + 16) return `M${from.x},${from.y} H${from.x + 8} V${to.y} H${to.x}`;
+  const x = to.x + 6;
+  const edge = to.y - down * (BAR_H / 2 + 1);
+  return x > from.x ? `M${from.x},${from.y} H${x} V${edge}` : `M${x},${from.y + down * (BAR_H / 2 + 1)} V${edge}`;
 }
 
 function GroupLabel({ row, onToggle, onOpen }: { row: Extract<FlatRow, { kind: "group" }>; onToggle: (key: string, open: boolean) => void; onOpen: (o: OpenRef) => void }) {
@@ -112,7 +126,7 @@ function GroupLabel({ row, onToggle, onOpen }: { row: Extract<FlatRow, { kind: "
   );
 }
 
-function ItemLabel({ item, onOpen }: { item: TimelineItem; onOpen: (o: OpenRef) => void }) {
+function ItemLabel({ item, onOpen, onHot }: { item: TimelineItem; onOpen: (o: OpenRef) => void; onHot: (id: string) => void }) {
   const inner = (
     <>
       <span className="t12 min-w-0 flex-1 truncate">{item.title}</span>
@@ -120,7 +134,7 @@ function ItemLabel({ item, onOpen }: { item: TimelineItem; onOpen: (o: OpenRef) 
     </>
   );
   return (
-    <li className="border-b border-hairline" style={{ height: ROW_H }}>
+    <li className="border-b border-hairline" style={{ height: ROW_H }} onMouseEnter={() => onHot(item.id)} onMouseLeave={() => onHot("")}>
       {item.open ? (
         <button type="button" onClick={() => onOpen(item.open!)} aria-label={itemLabel(item)} title={itemLabel(item)}
                 className="flex h-full w-full items-center gap-1.5 pl-8 pr-2 text-left hover:bg-accent/60 focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60">
@@ -158,13 +172,14 @@ function GroupTrack({ row, r }: { row: Extract<FlatRow, { kind: "group" }>; r: R
   );
 }
 
-function ItemTrack({ item, y, r, onOpen }: { item: TimelineItem; y: number; r: Range; onOpen: (o: OpenRef) => void }) {
+function ItemTrack({ item, y, r, onOpen, onHot }: { item: TimelineItem; y: number; r: Range; onOpen: (o: OpenRef) => void; onHot: (id: string) => void }) {
   const color = cardToneVar(item.tone);
   const noEnd = item.end === null;
   const box = barBox(r, item.start, item.end);
-  const text = [item.who, item.dates].filter(Boolean).join(" · ");
+  const text = barText(item);
   return (
-    <div className="absolute inset-x-0 border-b border-hairline" style={{ top: y, height: ROW_H }} aria-hidden>
+    <div className="absolute inset-x-0 border-b border-hairline" style={{ top: y, height: ROW_H }} aria-hidden title={itemLabel(item)}
+         onMouseEnter={() => onHot(item.id)} onMouseLeave={() => onHot("")}>
       {item.kind === "milestone" ? (
         <Diamond x={box.left + box.width / 2} y={ROW_H / 2 - 6} tone={item.tone} title={itemLabel(item)} />
       ) : (
@@ -172,7 +187,7 @@ function ItemTrack({ item, y, r, onOpen }: { item: TimelineItem; y: number; r: R
           <button type="button" tabIndex={-1} disabled={!item.open} onClick={() => item.open && onOpen(item.open)} title={itemLabel(item)}
                   className={cn("absolute top-1/2 h-5 -translate-y-1/2 rounded-md disabled:cursor-default", noEnd && "border border-dashed bg-transparent")}
                   style={{ left: box.left, width: box.width, ...(noEnd ? { borderColor: color } : { backgroundColor: color, opacity: item.tone === "muted" ? 0.45 : 0.9 }) }} />
-          <span className="t12 absolute top-1/2 -translate-y-1/2 whitespace-nowrap text-muted-foreground" style={{ left: box.left + box.width + 6 }}>{text}</span>
+          <span className="t12 absolute top-1/2 -translate-y-1/2 whitespace-nowrap text-muted-foreground" style={{ left: box.left + box.width + 14 }}>{text}</span>
         </>
       )}
     </div>

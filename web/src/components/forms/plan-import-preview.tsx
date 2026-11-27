@@ -74,22 +74,7 @@ export function PlanImportPreview({
           </span>
         ) : null}
       </div>
-      <p
-        className="t14 select-text rounded-lg border border-border bg-accent px-3 py-2"
-        data-testid="plan-summary"
-      >
-        {view.summary}
-      </p>
-      {report.notes?.length ? (
-        <ul className="t12 flex list-disc flex-col gap-0.5 pl-5 text-muted-foreground">
-          {report.notes.map((n) => (
-            <li key={n} className="select-text">
-              {n}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
+      {/* NHÌN LÀ HIỂU (27/11): tên kế hoạch · số việc · Gantt rồi nút Nhập. Câu tóm tắt + ghi chú cách máy tính ngày gấp vào "Máy đã làm gì" — cần mới mở */}
       {gantt ? (
         <div
           className="max-h-[360px] overflow-auto rounded-xl"
@@ -98,6 +83,19 @@ export function PlanImportPreview({
           <TimelineBlock data={gantt} onOpen={() => undefined} />
         </div>
       ) : null}
+      <details className="t12 rounded-lg border border-border px-3 py-2 text-muted-foreground">
+        <summary className="t12m cursor-pointer text-foreground">Máy đã làm gì</summary>
+        <p className="t14 mt-2 select-text text-foreground" data-testid="plan-summary">{view.summary}</p>
+        {report.notes?.length ? (
+          <ul className="mt-1 flex list-disc flex-col gap-0.5 pl-5">
+            {report.notes.map((n) => (
+              <li key={n} className="select-text">
+                {n}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </details>
 
       {view.missing.length ? (
         <p className="t12 rounded-lg border border-border px-3 py-2">

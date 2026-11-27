@@ -8,18 +8,21 @@ kiểm quyền, GHI (kế hoạch mới nếu chưa chọn kế hoạch, việc 
 * Ngày trong file giữ nguyên (kể cả đã qua — kế hoạch đang chạy có việc quá hạn là thật), KHÔNG dời theo ngày nghỉ; ngày thiếu mới tính, theo lịch làm việc công ty.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from uuid import UUID
 
-from barista.api import Ctx, ImportTable, Input, Invalid, NotFound, business_calendar, field, today, ui
-from barista.modules.flow import TASK_STATUS, _plan_open, m
+from barista.api import Ctx, ImportTable, Input, Invalid, NotFound, business_calendar, field, today, ui, zone
+from barista.kernel import imports as kernel_imports
+from barista.modules.flow import TASK_STATUS, _plan_open, m, plan_template
 from barista.modules.flow.plan_logic import Built, Item, Row, WorkDays, build, match_existing, parse_iso
 from barista.modules.flow.schedule_rules import find_cycle
 from barista.modules.flow.tasks import _calendar_of, _candidates, _lock_plan
 from barista.modules.flow.timeline import _frame, _off
 
 MAX_IMPORT_TASKS = 500
+# "Tải mẫu Excel" ở màn nhập: kế hoạch mẫu trọn vẹn (giai đoạn, WBS, việc trước, số ngày, mốc) thay mẫu tự sinh một dòng — người và trợ lý AI đọc là hiểu cách điền
+kernel_imports.TEMPLATES["flow.import_plan"] = plan_template.build
 
 
 class PlanImportRow(Input):
@@ -45,6 +48,13 @@ class ImportPlan(Input):
     plan_id: UUID | None = field("Kế hoạch", None, hidden=True, placeholder="Tạo kế hoạch mới từ file")
     plan_title: str = field("Tên kế hoạch", "", hidden=True, max_length=200)
     tasks: list[PlanImportRow] = field("Các việc")
+
+
+def _done_at(due: Any) -> datetime | None:
+    """Giờ xong của việc file ghi ĐÃ XONG: cuối ngày hạn nếu hạn đã qua (việc xong từ trước, không phải lúc nhập — tính tốc độ / dự báo của kế hoạch theo
+    ngày làm thật); hạn hôm nay / tương lai / không có ⇒ None (= lúc nhập)."""
+    d = due if isinstance(due, date) else parse_iso(due) if isinstance(due, str) else None
+    return datetime.combine(d, time(17, 0), tzinfo=zone()) if d and d < today() else None
 
 
 def _fmt(d: date | None) -> str:
@@ -147,9 +157,9 @@ async def import_plan(ctx: Ctx, inp: ImportPlan) -> dict[str, Any]:
         homes = [await ctx.home_team(people[t.row.assignee]["id"]) for t in ok_tasks if t.row.assignee]
         top = max(set(homes), key=homes.count) if homes else None
         team = top or await ctx.home_team(ctx.p.user_id)
-        lead = await ctx.val("""SELECT tm.user_id FROM core.team_members tm JOIN core.memberships mb ON mb.tenant_id = tm.tenant_id AND mb.user_id = tm.user_id
-                                WHERE tm.team_id = %s AND tm.is_lead AND mb.active ORDER BY tm.user_id LIMIT 1""", (team,)) if team else None
-        owner = lead if lead in {r["id"] for r in allowed.values()} else ctx.p.user_id
+        # người phụ trách = NGƯỜI NHẬP file (họ cầm kế hoạch này — vd quản lý dự án nhập kế hoạch nhiều phòng), không phải trưởng nhóm của phòng
+        # có nhiều việc nhất (27/11: nhập kế hoạch triển khai, cột "Phụ trách" ra một trưởng nhóm không liên quan). Đổi người phụ trách sau: sửa kế hoạch.
+        owner = ctx.p.user_id
         title = inp.plan_title.strip() or "Kế hoạch nhập từ Excel"
         pid = await ctx.val("INSERT INTO flow.plans (title, goal, owner_id, team_id, due_on, created_by) VALUES (%s, '', %s, %s, %s, %s) RETURNING id",
                             (title[:200], owner, team, max(due_all) if due_all else None, ctx.p.user_id))
@@ -181,9 +191,9 @@ async def import_plan(ctx: Ctx, inp: ImportPlan) -> dict[str, Any]:
                 who = ctx.p.user_id   # chưa giao + kế hoạch không thuộc đội ⇒ người nhập giữ (ràng buộc: việc cần người hoặc đội)
         tid = await ctx.val(
             """INSERT INTO flow.tasks (title, notes, assignee_id, team_id, due_on, start_on, plan_id, origin, created_by, phase, plan_ref, status, done_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s = 'done' THEN now() END) RETURNING id""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s = 'done' THEN coalesce(%s, now()) END) RETURNING id""",
             (c["title"], c.get("notes", ""), who, team_id, c.get("due_on"), c.get("start_on"), pid, origin, ctx.p.user_id, c.get("phase", ""),
-             c.get("plan_ref"), c.get("status", "todo"), c.get("status", "todo")))
+             c.get("plan_ref"), c.get("status", "todo"), c.get("status", "todo"), _done_at(c.get("due_on"))))
         new_ids[id(t)] = tid
         op["id"] = tid
     for op in plan_ops:
@@ -198,8 +208,8 @@ async def import_plan(ctx: Ctx, inp: ImportPlan) -> dict[str, Any]:
                     homes_cache[who] = await ctx.home_team(who)
                 args += [who, homes_cache[who]]
             elif col == "status":
-                sets += ["status = %s", "done_at = CASE WHEN %s = 'done' THEN coalesce(done_at, now()) ELSE NULL END"]
-                args += [val, val]
+                sets += ["status = %s", "done_at = CASE WHEN %s = 'done' THEN coalesce(done_at, %s, now()) ELSE NULL END"]
+                args += [val, val, _done_at(op["set"].get("due_on") or (op.get("existing") or {}).get("due_on"))]
             else:
                 sets.append(f"{col} = %s")
                 args.append(val)
@@ -331,7 +341,8 @@ async def _preview_gantt(ctx: Ctx, built: Built, by_item: dict[int, dict[str, An
     ends = [date.fromisoformat(i["end"]) for g in groups.values() for i in g if i["end"]]
     mile = [ui.tl_milestone(plan["due_on"], "Mốc kế hoạch")] if plan.get("due_on") else []
     lo, hi, note = _frame(dated, [*ends, *([plan["due_on"]] if plan.get("due_on") else [])], t0)
-    gs = [ui.tl_group(f"g{i}", name, sorted(items, key=lambda x: (x["start"], x["end"] or "9999")), subtitle="giai đoạn" if not name.startswith("Chưa xếp") else "")
+    # giữ THỨ TỰ CỦA FILE (cột tên có mã WBS: 2.1 trước 2.2), không xếp lại theo ngày — xếp theo ngày làm 2.2 nhảy lên trước 2.1, trông như nhập lộn
+    gs = [ui.tl_group(f"g{i}", name, items, subtitle="giai đoạn" if not name.startswith("Chưa xếp") else "")
           for i, (name, items) in enumerate(groups.items())]
     return ui.b_timeline(gs, today=t0, start=lo, end=hi, title="Kế hoạch sau khi nhập", milestones=mile, off=await _off(ctx, lo, hi), note=note)
 

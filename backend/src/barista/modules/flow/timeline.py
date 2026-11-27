@@ -116,10 +116,17 @@ def _row(t: dict[str, Any], ids: set[str], by_id: dict[str, dict[str, Any]], t0:
                       who=(t.get("who") or "") if t["seen"] else "", dates=dates, flag=flag, open=_task_open(t["id"]) if t["seen"] else None, after=after)
 
 
+def _wbs(ref: str | None) -> tuple[int, tuple[int, ...]]:
+    """Khoá xếp theo mã WBS ("1.2", "2.10"): việc có mã đứng trước theo số từng cấp; không mã ⇒ sau, rồi xếp theo ngày như cũ."""
+    parts = tuple(int(x) for x in (ref or "").split(".") if x.strip().isdigit())
+    return (0, parts) if parts else (1, ())
+
+
 def _groups_of(rows: list[tuple[dict[str, Any], dict[str, Any]]]) -> list[dict[str, Any]]:
     """Nhóm trong MỘT kế hoạch: theo giai đoạn nếu có việc nào có, không thì theo người làm. Việc phòng khác (không thấy) gom riêng. Nhóm xếp theo
     ngày bắt đầu sớm nhất."""
     phased = any(t["seen"] and t.get("phase") for t, _ in rows)
+    refs = {r["id"]: t.get("plan_ref") for t, r in rows}   # mã WBS của file kế hoạch (nhập từ Excel) ⇒ giữ đúng thứ tự file: 2.1 trước 2.2
     buckets: dict[str, list[dict[str, Any]]] = {}
     for t, r in rows:
         if not t["seen"]:
@@ -130,7 +137,7 @@ def _groups_of(rows: list[tuple[dict[str, Any], dict[str, Any]]]) -> list[dict[s
             key = t.get("who") or "Chưa ai nhận"
         buckets.setdefault(key, []).append(r)
     ordered = sorted(buckets.items(), key=lambda kv: (kv[0].startswith(("Chưa xếp", "Việc phòng khác")), min(x["start"] for x in kv[1])))
-    return [ui.tl_group(f"g{i}", name, sorted(items, key=lambda x: (x["start"], x["end"] or "9999")),
+    return [ui.tl_group(f"g{i}", name, sorted(items, key=lambda x: (_wbs(refs.get(x["id"])), x["start"], x["end"] or "9999")),
                         subtitle="giai đoạn" if phased and not name.startswith(("Chưa xếp", "Việc phòng")) else "")
             for i, (name, items) in enumerate(ordered)]
 

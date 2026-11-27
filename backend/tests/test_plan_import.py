@@ -179,6 +179,8 @@ async def test_messy_plan_maps_previews_and_imports(who: Who) -> None:
     assert tl["type"] == "timeline" and [g["title"] for g in tl["groups"]] == ["Chuẩn bị", "Triển khai"]
     items = {i["title"].split(" ", 1)[1]: i for g in tl["groups"] for i in g["items"]}
     assert items["Nghiệm thu"]["kind"] == "milestone" and items["Dựng landing page"]["after"] and items["Chốt ngân sách"]["status"] == "Thêm mới"
+    codes = [i["title"].split(" ", 1)[0] for g in tl["groups"] for i in g["items"]]
+    assert codes == sorted(codes, key=lambda c: [int(x) for x in c.split(".") if x.isdigit()])   # đúng thứ tự WBS của file, không xếp lại theo ngày
     assert await q(lead, "flow.plans") is not None
     n_plans = await _count_plans(a["heading"])
     assert n_plans == 0                                                         # chạy thử không ghi gì
@@ -186,9 +188,17 @@ async def test_messy_plan_maps_previews_and_imports(who: Who) -> None:
     real = await imports.run_plan(lead, "flow.import_plan", imports.read_all(data), plan, dry_run=False, file_name="ke-hoach-ra-mat.xlsx", file_sha256="b" * 64)
     assert real.status == "ok", real.error
     pid = await _plan_id(a["heading"])
+    async with db.owner.connection() as conn:
+        owner = (await (await conn.execute("SELECT owner_id FROM flow.plans WHERE id = %s", (pid,))).fetchone() or {})["owner_id"]
+    assert owner == lead.user_id                                                # người phụ trách = người nhập file, không phải trưởng nhóm của phòng nhiều việc
     tasks = await _tasks(pid)
     assert set(tasks) == {"Chốt ngân sách", "Thiết kế key visual", "Viết nội dung bài", "Dựng landing page", "Chạy quảng cáo", "Nghiệm thu"}   # nhóm không thành việc
     assert tasks["Chốt ngân sách"]["status"] == "done" and tasks["Thiết kế key visual"]["status"] == "doing" and tasks["Thiết kế key visual"]["phase"] == "Chuẩn bị"
+    from barista.kernel.clock import today as _today
+    from barista.kernel.clock import zone as _zone
+    done = tasks["Chốt ngân sách"]
+    if done["due_on"] and done["due_on"] < _today():                         # việc file ghi xong: giờ xong = ngày hạn (đã làm từ trước), không phải lúc nhập
+        assert done["done_at"].astimezone(_zone()).date() == done["due_on"]
     assert tasks["Dựng landing page"]["depends_on"] == [tasks["Thiết kế key visual"]["id"], tasks["Viết nội dung bài"]["id"]]
     assert tasks["Thiết kế key visual"]["plan_ref"] == "1.2" and tasks["Thiết kế key visual"]["start_on"] is not None
     assert tasks["Nghiệm thu"]["start_on"] == tasks["Nghiệm thu"]["due_on"]      # mốc 0 ngày
@@ -360,3 +370,64 @@ async def test_importing_the_same_file_twice_never_makes_two_plans_nor_replays_a
         await conn.execute("DELETE FROM flow.tasks WHERE plan_id = %s", (pid,))
     third = await imports.run_plan(lead, "flow.import_plan", imports.read_all(data), plan, dry_run=False)
     assert third.output["summary"]["create"] == 6 and len(await _tasks(pid)) == 6
+
+
+def test_heading_from_a_slug_file_name_reads_as_words() -> None:
+    """Tên kế hoạch đoán từ tên file: "Ke-hoach-trien-khai.xlsx" ⇒ dấu cách; tên vốn có dấu cách giữ gạch nối ("Q4-2026")."""
+    from barista.kernel.imports import _heading
+    assert _heading([], 0, "Ke-hoach-trien-khai-Barista.xlsx") == "Ke hoach trien khai Barista"
+    assert _heading([], 0, "Kế hoạch Q4-2026.xlsx") == "Kế hoạch Q4-2026"
+    assert _heading([], 0, "ke_hoach_ra_mat.csv") == "ke hoach ra mat"
+
+
+def test_plan_timeline_keeps_the_file_wbs_order_not_dates() -> None:
+    """Thẻ kế hoạch nhập từ file: việc trong một giai đoạn theo mã WBS (2.1 trước 2.2, 2.10 sau 2.9) dù 2.2 bắt đầu / xong sớm hơn; việc không mã xếp theo ngày, sau."""
+    from barista.modules.flow.timeline import _groups_of
+    def row(i: str, ref: str | None, start: str, end: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        return ({"seen": True, "phase": "Cấu hình", "plan_ref": ref}, {"id": i, "start": start, "end": end})
+    rows = [row("a", "2.2", "2026-11-13", "2026-11-16"), row("b", "2.10", "2026-11-10", "2026-11-11"), row("c", "2.1", "2026-11-13", "2026-11-18"),
+            row("d", None, "2026-11-01", "2026-11-02"), row("e", "2.9", "2026-11-20", "2026-11-21")]
+    assert [i["id"] for i in _groups_of(rows)[0]["items"]] == ["c", "a", "e", "b", "d"]
+
+
+def test_forecast_of_a_plan_imported_mid_flight_is_not_absurdly_early() -> None:
+    """Kế hoạch nhập hôm nay mà việc đã chạy từ 3 tuần trước, 3 việc xong trong file: tốc độ tính từ việc SỚM NHẤT (không từ ngày tạo kế hoạch), và dự báo
+    không sớm hơn việc còn mở có hạn muộn nhất (cũ: 3 việc / 1 ngày ⇒ dự báo xong 2 ngày nữa khi còn việc tới tận mốc)."""
+    from datetime import datetime, time
+
+    from barista.kernel.clock import today, zone
+    from barista.modules.flow.plans import _progress
+    t0 = today()
+    def task(status: str, start: int, due: int) -> dict[str, Any]:
+        d = t0 + timedelta(days=due)
+        return {"status": status, "start_on": t0 + timedelta(days=start), "due_on": d, "title": "x", "done_by": None, "checked": False,
+                "done_at": datetime.combine(d, time(17), tzinfo=zone()) if status == "done" else None}
+    tasks = [task("done", -18, -18), task("done", -17, -15), task("done", -14, -9), task("doing", -14, -11), task("todo", -6, -2),
+             task("todo", 2, 12), task("todo", 13, 13)]
+    plan = {"status": "open", "due_on": t0 + timedelta(days=13), "created_at": datetime.now(zone())}
+    g = _progress(plan, tasks)
+    assert g["forecast"] >= t0 + timedelta(days=13)                       # không sớm hơn việc còn mở muộn nhất (mốc)
+    assert g["risk"] == "late" and g["overdue"] == 2
+
+
+async def test_downloadable_template_is_a_whole_sample_plan_that_maps_itself(who: Who) -> None:
+    """"Tải mẫu Excel": kế hoạch mẫu trọn vẹn (dòng 1 = tên dự án, 3 giai đoạn, WBS, việc trước, số ngày, mốc) — nhập lại chính mẫu thì máy khớp đủ cột chắc chắn,
+    nhận giai đoạn / việc trước / mốc; tên người là giả ⇒ chờ chọn người (không tự gán bừa)."""
+    from barista.kernel import registry
+    lead = await who("mkt")
+    data = imports.template_xlsx(registry.OPS["flow.import_plan"])
+    a = await _analyze(lead, data)
+    got = {m["field"]: a["columns"][m["column"]]["header"] for m in a["mapping"]}
+    assert got == {"code": "STT", "title": "Công việc", "assignee_email": "Người phụ trách", "start_on": "Bắt đầu", "duration": "Số ngày",
+                   "due_on": "Kết thúc / Hạn", "after": "Việc trước", "percent": "% hoàn thành", "notes": "Ghi chú"}
+    assert a["heading"].startswith("Dự án mẫu") and a["unmapped_required"] == []
+    res = await imports.run_plan(lead, "flow.import_plan", imports.read_all(data), _plan_json(a, preset={"plan_title": a["heading"]}), dry_run=True)
+    assert res.status == "ok", res.error
+    assert {v["raw"] for u in res.output["unresolved"] for v in u["values"]} == {"Nguyễn Văn A", "Trần Thị B", "Lê Văn C"}
+    picked = {**_plan_json(a, preset={"plan_title": a["heading"]}), "resolutions": {"assignee_email": {"nguyenvana": "", "tranthib": "", "levanc": ""}}}
+    res = await imports.run_plan(lead, "flow.import_plan", imports.read_all(data), picked, dry_run=True)
+    assert res.status == "ok", res.error
+    view = res.output["plan_view"]
+    assert [p["title"] for p in view["phases"]] == ["Khởi động", "Thực hiện", "Bàn giao"]                     # dòng nhóm thành giai đoạn
+    by = {t["title"]: t for t in view["tasks"]}
+    assert len(by) == 7 and len(by["Kiểm tra cùng người dùng"]["after"]) == 2 and by["Nghiệm thu"]["start"] == by["Nghiệm thu"]["end"]   # chờ 2 việc · mốc

@@ -1,5 +1,6 @@
 "use client";
 
+import { compactCount } from "@/lib/compact";
 import { ArrowUpRight, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
@@ -53,7 +54,8 @@ export function CompactCard({ title, query, input, initial, onOpen }: { title: s
   };
 
   const c = page && page.kind !== "detail" ? page.compact : undefined;
-  const count = !c || !c.shown ? "" : c.total != null ? (c.total > c.shown ? `${c.shown}/${c.total}` : `${c.total}`) : `${c.shown} dòng đầu`;
+  // tổng của thẻ gọn có thể cộng lẫn nhiều loại (cảnh báo + thẻ phòng + việc) ⇒ "3/14" vô nghĩa với người đọc; chỉ nói còn bao nhiêu mục chưa hiện (nút "Mở" xem đủ)
+  const count = compactCount(c);
   return (
     <div className="flex flex-col overflow-hidden rounded-[14px] border border-border bg-surface">
       <div className="flex items-center gap-2 border-b border-hairline px-3 py-2">

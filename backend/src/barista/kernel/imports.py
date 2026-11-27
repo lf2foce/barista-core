@@ -20,7 +20,7 @@ import unicodedata
 import zipfile
 import zlib
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from io import BytesIO
@@ -263,7 +263,14 @@ _THIN = Side(style="thin", color="999999")
 _BOX = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 
 
+# MẪU RIÊNG của một lệnh nhập (thay mẫu tự sinh từ trường): module của lõi đăng ký khi mẫu chung không đủ để người — và trợ lý AI đọc file — hiểu cách
+# điền (kế hoạch: dòng nhóm = giai đoạn, mã WBS, việc trước, số ngày ⇒ cần một bộ ví dụ TRỌN VẸN, không phải một dòng). Lõi không biết lệnh nào có mẫu riêng.
+TEMPLATES: dict[str, Callable[[], bytes]] = {}
+
+
 def template_xlsx(op: registry.Op, terms: Mapping[str, str] | None = None) -> bytes:
+    if (own := TEMPLATES.get(op.name)) is not None:
+        return own()
     specs = [s for s in import_specs(op, terms) if not s["hidden"]]
     wb = Workbook()
     ws = wb.active
@@ -538,7 +545,8 @@ def _heading(grid: list[list[Any]], header_row: int, file_name: str) -> str:
             if isinstance(v, str) and 3 <= len(v.strip()) <= 120 and not im.blank(v):
                 return re.sub(r"\s+", " ", v).strip()
     base = re.sub(r"\.(xlsx|xlsm|csv)$", "", file_name.strip(), flags=re.I)
-    return re.sub(r"[_]+", " ", base).strip()
+    # tên file kiểu "Ke-hoach-trien-khai" (không dấu cách) ⇒ gạch nối / gạch dưới là dấu cách; tên có dấu cách thì giữ gạch nối ("Kế hoạch Q4-2026")
+    return re.sub(r"[_]+" if " " in base else r"[-_]+", " ", base).strip()
 
 
 def _key_info(op: registry.Op) -> dict[str, Any] | None:

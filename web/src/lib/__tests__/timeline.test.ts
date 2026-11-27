@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decodeBlock, decodeTable, decodeTimeline } from "@/lib/decode";
-import { arrows, barBox, flatten, itemLabel, rangeOf, ROW_H, weekTicks, xOf } from "@/lib/timeline";
+import { arrows, barBox, barText, flatten, itemLabel, rangeOf, ROW_H, weekTicks, xOf } from "@/lib/timeline";
 
 const raw = {
   type: "timeline",
@@ -61,6 +61,7 @@ describe("dòng thời gian (0222)", () => {
     const closed = flatten(t.groups, {});
     expect(closed.map((x) => x.kind)).toEqual(["group", "item", "item", "item", "group"]);
     expect(arrows(closed, r)).toHaveLength(1);   // a → b; d chờ b nhưng nhóm Chạy đang gấp
+    expect(arrows(closed, r)[0]).toMatchObject({ pre: "a", next: "b" });   // biết mũi tên của việc nào — rê chuột vào việc đó thì tô đậm
     const open = flatten(t.groups, { g1: true });
     expect(arrows(open, r)).toHaveLength(2);
     expect(open.at(-1)!.y).toBe((open.length - 1) * ROW_H);
@@ -70,5 +71,13 @@ describe("dòng thời gian (0222)", () => {
     expect(weekTicks(rangeOf(decodeTimeline(raw)!))[0].label).toBe("9/11");
     const b = decodeTimeline(raw)!.groups[0].items[1];
     expect(itemLabel(b)).toBe("Landing page, Bảo, 16/11 – 20/11, Cần làm, Bắt đầu sớm");
+  });
+});
+
+describe("chữ cạnh thanh", () => {
+  it("chỉ người làm (trục đã nói ngày); chưa giao ⇒ ngày", () => {
+    const base = { id: "x", title: "Việc", start: "2026-11-09", end: "2026-11-10", tone: "accent", status: "", flag: "", after: [], kind: "task" } as const;
+    expect(barText({ ...base, who: "Lý Thu Trang", dates: "09/11 – 10/11 · ngày tính từ số ngày / việc trước" } as never)).toBe("Lý Thu Trang");
+    expect(barText({ ...base, who: "", dates: "09/11 – 10/11" } as never)).toBe("09/11 – 10/11");
   });
 });

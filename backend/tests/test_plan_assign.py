@@ -155,13 +155,18 @@ async def test_late_plan_card_offers_remind_reassign_and_add_and_they_follow_the
     late_id = await owner_val("UPDATE flow.tasks SET due_on = %s WHERE plan_id = %s AND title = 'Việc chậm A' RETURNING id", (t0 - timedelta(days=2), pid))
     card = await q(lead, "flow.plan", plan_id=pid)
     acts = next(b for b in card["blocks"] if b.get("type") == "callout")["actions"]
-    assert [x["command"] for x in acts] == ["flow.remind_plan", "flow.adjust_task"]                  # chỉ việc chậm mới có nút giao lại
-    assert acts[1]["preset"] == {"task_id": str(late_id)}
+    assert [x["command"] for x in acts] == ["flow.remind_plan"]                                       # MỘT nút nhắc; giao lại / dời hạn ở thẻ của từng việc
+    assert card["blocks"][0]["type"] == "callout"                                                     # câu trạng thái đứng đầu thẻ
+    task_card = await q(lead, "flow.task", task_id=str(late_id))
+    assert "flow.adjust_task" in str(task_card)                                                       # việc trễ: giao lại / dời hạn ngay trên thẻ việc
     assert card["actions"][0]["command"] == "flow.create_task" and card["ask"]["prompt"].startswith("Kế hoạch")
 
     r = await ok(lead, "flow.remind_plan", plan_id=pid)
     assert (r["people"], r["tasks"]) == (1, 1)                                                      # chỉ người có việc chậm
     assert await owner_val("SELECT count(*) FROM core.notifications WHERE user_id = %s AND title LIKE 'Nhắc:%%Kế hoạch chậm%%'", (a.user_id,)) == 1
+    said = await owner_val("""SELECT m.body FROM talk.messages m JOIN talk.threads t ON t.id = m.thread_id
+                              WHERE t.subject_kind = 'flow.plan' AND t.subject_id = %s ORDER BY m.id DESC LIMIT 1""", (pid,))
+    assert said == "Đã nhắc 1 người đang chậm (1 việc)"                                           # lịch sử ở Trao đổi: chỉ con số, không tên việc / người
 
     too_late = (t0 + timedelta(days=30)).isoformat()
     assert (await executor.run(lead, "flow.adjust_task", {"task_id": late_id, "due_on": too_late})).status == "invalid"   # quá mốc

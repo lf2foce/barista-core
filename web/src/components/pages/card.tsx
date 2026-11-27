@@ -233,7 +233,7 @@ export function CardView({ page: raw, onClose, onChanged, head }: { page: CardPa
             </button>
           ) : null}
           {tools ? null : askButton}
-          {page.actions.map((a) => (
+          {page.actions.filter((a) => a.style !== "destructive").map((a) => (
             <button key={a.command + a.title} type="button" className={actionClass(a.style)} onClick={() => desk.openForm(a, { onDone: onChanged })}>
               {a.title}
             </button>
@@ -241,6 +241,13 @@ export function CardView({ page: raw, onClose, onChanged, head }: { page: CardPa
           {page.open.map((o, i) => (
             <button key={i} type="button" className={actionClass("default")} onClick={() => desk.openPage(o.query, o.input, o.title)}>
               {o.title ?? o.query}
+            </button>
+          ))}
+          {/* nút huỷ / xoá: CUỐI hàng, chữ nhỏ mờ (đỏ khi rê) — không là nút nổi nhất đầu thẻ (27/11: "Huỷ kế hoạch" đỏ đứng ngay hàng đầu); vẫn hỏi lại trước khi chạy */}
+          {page.actions.filter((a) => a.style === "destructive").map((a) => (
+            <button key={a.command + a.title} type="button" onClick={() => desk.openForm(a, { onDone: onChanged })}
+                    className="t12 ml-auto rounded-md px-2 py-1 text-muted-foreground outline-none hover:bg-bad/10 hover:text-bad focus-visible:ring-2 focus-visible:ring-ring">
+              {a.title}
             </button>
           ))}
         </div>
