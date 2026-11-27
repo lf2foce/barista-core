@@ -1,6 +1,8 @@
 // Văn bản Word sửa trong app (0227): giải mã khối `word` server gửi + phần THUẦN đổi "bản đã sửa trên màn" thành danh sách thay đổi gửi về máy chủ.
 // Web chỉ vẽ và thu lại chữ người gõ; máy chủ áp thay đổi vào file gốc (không đổi Word → HTML → Word).
 
+import type { StudioData } from "./types";
+
 export type WordFormat = { b: boolean; i: boolean; u: boolean; s: boolean; sz: number | null; color: string; font: string; hl: string; va: string };
 export type WordRun = WordFormat & { src: number; text: string; img: string | null; w: number; h: number };
 export type WordParaStyle = {
@@ -24,7 +26,9 @@ export type WordData = {
   /** Gửi vào phòng: nơi gửi do máy chủ liệt kê (null = công ty chưa bật Tin nhắn / người này không dùng được ⇒ không vẽ nút). */
   share: { targets: { value: string; label: string }[] } | null;
   /** Cuộc trò chuyện với agent của văn bản (màn Soạn thảo) — server lưu, mở lại văn bản là thấy lại. */
-  chat: { role: "user" | "agent"; text: string; note?: string }[];
+  chat: { role: "user" | "agent"; text: string; note?: string; sources?: AssistSource[] }[];
+  /** Mô tả màn Soạn thảo gửi kèm văn bản (``word.view``): có ⇒ mở văn bản là vào màn Soạn thảo (agent bên trái) — một giao diện soạn. */
+  studio?: StudioData | null;
 };
 
 const obj = (x: unknown): Record<string, unknown> => (x && typeof x === "object" && !Array.isArray(x) ? (x as Record<string, unknown>) : {});
@@ -93,7 +97,10 @@ export function decodeWord(x: unknown): WordData {
     blocks: arr(o.blocks).map((b) => block(b, 0)).filter((b): b is WordBlock => b !== null),
     notes: arr(o.notes).map(str).filter(Boolean), docxUrl: str(o.docx_url), pdfUrl: str(o.pdf_url),
     chat: arr(o.chat).map(obj).filter((t) => (t.role === "user" || t.role === "agent") && str(t.text))
-      .map((t) => ({ role: t.role as "user" | "agent", text: str(t.text), ...(str(t.note) ? { note: str(t.note) } : {}) })),
+      .map((t) => {
+        const sources = decodeSources(t.sources);
+        return { role: t.role as "user" | "agent", text: str(t.text), ...(str(t.note) ? { note: str(t.note) } : {}), ...(sources.length ? { sources } : {}) };
+      }),
     ops: { home: op(ops.home), view: op(ops.view), save: op(ops.save), versions: op(ops.versions), restore: op(ops.restore), archive: op(ops.archive), rename: op(ops.rename), assist: op(ops.assist), create: op(ops.create), send: op(ops.send) },
     uploadUrl: /^\/v1\/[a-z0-9_/-]+$/.test(str(o.upload_url)) ? str(o.upload_url) : "",
     share: o.share && typeof o.share === "object" ? {
@@ -246,9 +253,20 @@ export function buildOps(paras: Map<string, WordPara>, segments: Segment[]): Wor
 /** `why`: khi RÀ SOÁT — một câu nêu lỗi đã sửa (trợ lý soạn thường để trống). */
 export type AssistEdit = { id: string; before: string; text: string; why: string };
 export type AssistAddition = { after: string; text: string };
-/** Chỗ RÀ SOÁT nghi sai mà trợ lý không tự sửa (không biết giá trị nào đúng): người viết tự kiểm. ``quote`` = cụm chữ nghi sai trong đoạn ("" ⇒ cả đoạn). */
-export type AssistCheck = { id: string; why: string; quote: string };
-export type AssistResult = { reply: string; edits: AssistEdit[]; additions: AssistAddition[]; checks: AssistCheck[] };
+/** Chỗ RÀ SOÁT nghi sai mà trợ lý không tự sửa (không biết giá trị nào đúng): người viết tự kiểm. ``quote`` = cụm chữ nghi sai trong đoạn ("" ⇒ cả đoạn). ``source`` = tên tài liệu tham chiếu
+ *  mà văn bản ghi lệch ("" ⇒ lỗi trong chính văn bản). */
+export type AssistCheck = { id: string; why: string; quote: string; source: string };
+/** Trợ lý dựa vào đâu (0227 §2.13): tài liệu người TÍCH (luôn có; ``complete`` = đọc đủ, không thì ``percent`` đã đọc) và tài liệu TỰ TÌM trong kho mà
+ *  trợ lý đã dùng (``kind: "found"``). */
+export type AssistSource = { title: string; kind: "picked" | "found"; documentId: string; complete: boolean; percent: number; used: boolean };
+export type AssistResult = { reply: string; edits: AssistEdit[]; additions: AssistAddition[]; checks: AssistCheck[]; sources: AssistSource[] };
+
+export function decodeSources(x: unknown): AssistSource[] {
+  return arr(x).map(obj).map((o): AssistSource => ({
+    title: str(o.title), kind: o.kind === "found" ? "found" : "picked", documentId: str(o.document_id), complete: o.complete !== false,
+    percent: typeof o.percent === "number" ? Math.max(0, Math.min(100, Math.round(o.percent))) : 100, used: o.used === true,
+  })).filter((o) => o.title);
+}
 
 /** Giải mã kết quả `assist` (phòng thủ: mục thiếu mã / chữ bị bỏ). */
 export function decodeAssist(x: unknown): AssistResult {
@@ -257,12 +275,20 @@ export function decodeAssist(x: unknown): AssistResult {
     reply: str(o.reply),
     edits: arr(o.edits).map((e) => ({ id: str(obj(e).id), before: str(obj(e).before), text: str(obj(e).text), why: str(obj(e).why) })).filter((e) => e.id && e.text),
     additions: arr(o.additions).map((a) => ({ after: str(obj(a).after), text: str(obj(a).text) })).filter((a) => a.after && a.text),
-    checks: arr(o.checks).map((c) => ({ id: str(obj(c).id), why: str(obj(c).why), quote: str(obj(c).quote) })).filter((c) => c.id && c.why),
+    checks: arr(o.checks).map((c) => ({ id: str(obj(c).id), why: str(obj(c).why), quote: str(obj(c).quote), source: str(obj(c).source) })).filter((c) => c.id && c.why),
+    sources: decodeSources(o.sources),
   };
 }
 
 /** Chữ trợ lý trả về có nhiều dòng ⇒ mỗi dòng (bỏ dòng trống, cắt khoảng trắng hai đầu) là một ĐOẠN riêng trên trang giấy — không dồn thành xuống dòng
  *  trong một đoạn (Word hiểu là một đoạn có ngắt dòng, khác hẳn khi in / đánh số). Chữ một dòng ⇒ một đoạn. */
+/** Câu nói trợ lý đã viết gì vào văn bản — đếm theo ĐOẠN trên trang ("Sửa 2 đoạn, thêm 18 đoạn"), không phải "20 chỗ" khó hiểu. "" ⇒ không đổi gì. */
+export function writtenSummary(result: Pick<AssistResult, "edits" | "additions">): string {
+  const added = result.additions.reduce((n, a) => n + splitParagraphs(a.text).length, 0);
+  const parts = [result.edits.length ? `sửa ${result.edits.length} đoạn` : "", added ? `thêm ${added} đoạn` : ""].filter(Boolean).join(", ");
+  return parts ? parts[0].toUpperCase() + parts.slice(1) : "";
+}
+
 export function splitParagraphs(text: string): string[] {
   const parts = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   return parts.length ? parts : [text.trim()];

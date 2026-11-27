@@ -2,6 +2,7 @@ import { CHART_KINDS } from "./chart";
 import { decodeBrief } from "./brief";
 import { decodeWord } from "./word";
 import type {
+  StudioData,
   ComposerData,
   ComposerKind,
   ComposerItem,
@@ -740,20 +741,11 @@ function decodeBlockBody(raw: unknown): Block {
       case "composer":
         return { type: "composer", ...decodeComposer(o) };
       case "word":
-        return { type: "word", ...decodeWord(o) };
+        // văn bản kèm mô tả màn Soạn thảo (``studio``) ⇒ web vẽ màn Soạn thảo với văn bản này — một giao diện soạn
+        return { type: "word", ...decodeWord(o), studio: isObj(o.studio) ? decodeStudio(o.studio) : null };
       case "studio": {
-        const d = obj(o.doc);
-        if (!str(d.create) || !str(d.view) || !str(d.assist)) return { type: "unknown" };
-        return {
-          type: "studio", title: str(o.title), subtitle: str(o.subtitle), examples: arr(o.examples).filter((x): x is string => typeof x === "string"),
-          doc: { create: str(d.create), view: str(d.view), assist: str(d.assist), home: str(d.home), label: str(d.label, "Văn bản mới"),
-                 ...(str(d.kb_documents) ? { kb_documents: str(d.kb_documents) } : {}) },
-          forms: arr(o.forms).map(obj).filter((f) => str(f.key) && str(f.label)).map((f) => ({ key: str(f.key), label: str(f.label) })),
-          kinds: arr(o.kinds).map(obj).filter((k) => str(k.label)).map((k) => ({
-            label: str(k.label), ...(str(k.subtitle) ? { subtitle: str(k.subtitle) } : {}), ...(k.current === true ? { current: true } : {}),
-            ...(isObj(k.open) && str(k.open.query) ? { open: { query: str(k.open.query), input: obj(k.open.input) as Input } } : {}),
-          })),
-        };
+        const s = decodeStudio(o);
+        return s ? { type: "studio", ...s } : { type: "unknown" };
       }
       case "later":
         return typeof o.query === "string" && o.query
@@ -971,4 +963,20 @@ export function decodePage(raw: unknown): Page {
   if (kind === "detail") return decodeDetail(raw);
   if (kind === "card") return decodeCard(raw);
   return decodeTable(raw);
+}
+
+/** Mô tả màn Soạn thảo (khối ``studio``, hoặc ``studio`` kèm khối ``word``); thiếu thao tác bắt buộc ⇒ null. */
+export function decodeStudio(o: Record<string, unknown>): StudioData | null {
+  const d = obj(o.doc);
+  if (!str(d.create) || !str(d.view) || !str(d.assist)) return null;
+  return {
+    title: str(o.title), subtitle: str(o.subtitle), examples: arr(o.examples).filter((x): x is string => typeof x === "string"),
+    doc: { create: str(d.create), view: str(d.view), assist: str(d.assist), home: str(d.home), label: str(d.label, "Văn bản mới"),
+           ...(str(d.kb_documents) ? { kb_documents: str(d.kb_documents) } : {}) },
+    forms: arr(o.forms).map(obj).filter((f) => str(f.key) && str(f.label)).map((f) => ({ key: str(f.key), label: str(f.label) })),
+    kinds: arr(o.kinds).map(obj).filter((k) => str(k.label)).map((k) => ({
+      label: str(k.label), ...(str(k.subtitle) ? { subtitle: str(k.subtitle) } : {}), ...(k.current === true ? { current: true } : {}),
+      ...(isObj(k.open) && str(k.open.query) ? { open: { query: str(k.open.query), input: obj(k.open.input) as Input } } : {}),
+    })),
+  };
 }

@@ -191,3 +191,17 @@ describe("nguồn gốc của số trên khối (0220)", () => {
     expect(c.why).toBe("Vì sao?");
   });
 });
+
+describe("khối word kèm mô tả màn Soạn thảo", () => {
+  const studio = { title: "Bạn cần soạn gì?", doc: { create: "word.create", view: "word.view", assist: "word.assist", home: "word.home" }, forms: [{ key: "thu", label: "Thư" }] };
+  it("có ``studio`` ⇒ mở văn bản là vào màn Soạn thảo; thiếu thao tác bắt buộc / máy chủ cũ ⇒ null (chỉ trang giấy)", () => {
+    const b = decodeBlock({ type: "word", document_id: "d1", title: "Thư", studio });
+    expect(b.type === "word" && b.studio?.doc.assist).toBe("word.assist");
+    expect(b.type === "word" && b.studio?.forms).toEqual([{ key: "thu", label: "Thư" }]);
+    const bad = decodeBlock({ type: "word", document_id: "d1", studio: { doc: { view: "word.view" } } });
+    expect(bad.type === "word" && bad.studio).toBeNull();
+    const old = decodeBlock({ type: "word", document_id: "d1" });
+    expect(old.type === "word" && old.studio).toBeNull();
+    expect(decodeBlock({ type: "studio", ...studio }).type).toBe("studio");
+  });
+});

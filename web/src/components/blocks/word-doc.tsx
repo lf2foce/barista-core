@@ -2,13 +2,12 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlignCenter, AlignJustify, AlignLeft, AlignRight, Baseline, Bold, Download, ExternalLink, FileText, FilePlus, History, IndentDecrease, IndentIncrease, Italic, Minus, Plus,
-  ListChecks, Printer, Redo2, RefreshCw, Save, Send, Sparkles, Underline, Undo2, Upload,
+  AlignCenter, AlignJustify, AlignLeft, AlignRight, Baseline, Bold, BookOpen, Download, FileText, FilePlus, History, IndentDecrease, IndentIncrease, Italic, Maximize2, Minimize2,
+  ListChecks, Printer, Redo2, RefreshCw, Save, Send, Underline, Undo2, Upload,
 } from "lucide-react";
-import { AssistPanel } from "@/components/blocks/word-assist";
+import { StudioBlock } from "@/components/blocks/studio";
 import { api } from "@/lib/api";
 import { saveBlob } from "@/lib/download";
-import { standaloneHref } from "@/lib/standalone";
 import { datetime } from "@/lib/format";
 import { newKey } from "@/lib/idempotency";
 import {
@@ -29,9 +28,12 @@ export function WordDocBlock({ block }: { block: WordData }) {
   return block.documentId ? <DeskEditor initial={block} /> : <Library initial={block} />;
 }
 
+/** Một giao diện soạn: văn bản mở trong bàn làm việc là MÀN SOẠN THẢO với văn bản đó (agent bên trái, văn bản bên phải — máy chủ gửi mô tả ``studio``).
+ *  Máy chủ cũ không gửi ⇒ chỉ trang giấy (không có trợ lý). */
 function DeskEditor({ initial }: { initial: WordData }) {
   const desk = useDesk();
-  return <WordEditor initial={initial} notify={desk.show} />;
+  if (initial.studio) return <StudioBlock block={initial.studio} initial={initial} />;
+  return <div className="flex min-h-[min(75vh,680px)] flex-col overflow-hidden rounded-xl border border-hairline"><WordEditor initial={initial} notify={desk.show} /></div>;
 }
 
 /** Chạy một truy vấn và lấy khối `word` của trang trả về (không có ⇒ null). */
@@ -165,22 +167,19 @@ const pick = "t14 h-8 shrink-0 rounded-md border border-border bg-surface px-1.5
 
 const countWords = (el: HTMLElement | null): number => (el?.innerText.match(/\S+/g) ?? []).length;
 
-/**
- * Trình sửa. `full` = trang riêng ở tab mới: thanh tiêu đề + dải công cụ + vùng giấy cuộn riêng + thanh trạng thái (thu phóng, số từ);
- * không `full` = nằm trong hộp của bàn làm việc, cùng dải công cụ, thêm nút mở tab mới. `notify` = cách báo ngắn của nơi chứa.
- */
 /** Điều khiển trình soạn từ BÊN NGOÀI (màn "Soạn" — agent bên trái): trang giấy, vùng chọn gần nhất, đánh dấu đã sửa, lưu thành phiên bản. */
 export type WordHandle = { sheet: () => HTMLDivElement | null; range: () => Range | null; markDirty: () => void; save: () => Promise<void> };
 
-export function WordEditor({ initial, notify, full = false, handleRef, agentOutside = false, pane = false, lead, onReview }: {
-  initial: WordData; notify: Notify; full?: boolean; handleRef?: React.RefObject<WordHandle | null>; agentOutside?: boolean;
-  /** Ngăn văn bản của màn "Soạn": nút "Rà soát" ở đầu ngăn — nơi chứa chạy rà soát (kết quả hiện ở cột trò chuyện). */
+export function WordEditor({ initial, notify, handleRef, lead, onReview, reviewRefs = 0, maximize }: {
+  initial: WordData; notify: Notify; handleRef?: React.RefObject<WordHandle | null>;
+  /** Nút "Rà soát" ở đầu ngăn — nơi chứa chạy rà soát (kết quả hiện ở cột trò chuyện). */
   onReview?: () => void;
-  /** `pane`: nút đặt ĐẦU hàng nút (vd chọn "Trò chuyện / Bản xem" khi màn hẹp). */
+  /** Số tài liệu tham chiếu đang tích ở cột trò chuyện: > 0 ⇒ nút "Rà soát" kèm số đó (rà soát kiêm đối chiếu với các tài liệu ấy). */
+  reviewRefs?: number;
+  /** Màn phóng to được (màn Soạn thảo trọn khung): nút đầu dãy là PHÓNG TO / THU NHỎ cả màn (giữ nguyên giao diện, chỉ ẩn thanh bên và cột menu). */
+  maximize?: { on: boolean; toggle: () => void };
+  /** Nút đặt ĐẦU hàng nút (vd chọn "Trò chuyện / Bản xem" khi màn hẹp). */
   lead?: React.ReactNode;
-  /** Ngăn bên phải của màn "Soạn" (agent bên trái): đầu ngăn một hàng (Lưu · trạng thái · viên nút biểu tượng), dải định dạng một hàng cuộn ngang, trang
-   *  giấy đặt thẳng trên nền ngăn (không hộp xám bọc ngoài). */
-  pane?: boolean;
 }) {
   const [data, setData] = useState(initial);
   const [nonce, setNonce] = useState(0);        // đổi ⇒ vẽ lại trang giấy từ mô hình (sau lưu / tải lại / khôi phục)
@@ -189,9 +188,6 @@ export function WordEditor({ initial, notify, full = false, handleRef, agentOuts
   const [error, setError] = useState("");
   const [caret, setCaret] = useState({ font: "", sz: 0 });   // phông / cỡ tại con trỏ — hiện trên dải công cụ
   const [words, setWords] = useState(0);
-  const [zoom, setZoom] = useState<number | null>(null);     // null = vừa khung
-  const [assist, setAssist] = useState(full);                 // khung trợ lý soạn thảo: tab riêng mở sẵn, hộp thoại mở khi bấm
-  const [review, setReview] = useState(0);                    // > 0 ⇒ khung trợ lý mở để RÀ SOÁT ngay (mỗi lần bấm "Rà soát" một số mới ⇒ rà lại)
   const sheet = useRef<HTMLDivElement>(null);
   const range = useRef<Range | null>(null);                  // vùng chọn gần nhất trong trang giấy (ô chọn phông / cỡ lấy mất tiêu điểm)
   const paras = useMemo(() => indexParas(data.blocks), [data]);
@@ -334,19 +330,6 @@ export function WordEditor({ initial, notify, full = false, handleRef, agentOuts
     }
   }
 
-  async function rename(title: string) {
-    const next = title.trim();
-    if (!next || next === data.title || !data.ops.rename) return;
-    const r = await api.command(data.ops.rename, { document_id: data.documentId, title: next }, newKey());
-    if (r.status !== "ok") {
-      notify(r.error || "Không đổi tên được", true);
-      return;
-    }
-    setData((d) => ({ ...d, title: next }));
-    document.title = next;
-    notify("Đã đổi tên");
-  }
-
   const keep = (e: React.MouseEvent) => e.preventDefault();   // nút bấm không lấy tiêu điểm khỏi trang giấy
   const sep = <span className="mx-1 h-5 w-px shrink-0 bg-hairline" />;
   const fonts = caret.font && !FONTS.includes(caret.font) ? [caret.font, ...FONTS] : FONTS;
@@ -392,53 +375,9 @@ export function WordEditor({ initial, notify, full = false, handleRef, agentOuts
       </select>
       <button type="button" title="Giảm thụt lề" aria-label="Giảm thụt lề" className={tool} onMouseDown={keep} onClick={() => indent(-INDENT_STEP)}><IndentDecrease className="size-4" /></button>
       <button type="button" title="Tăng thụt lề" aria-label="Tăng thụt lề" className={tool} onMouseDown={keep} onClick={() => indent(INDENT_STEP)}><IndentIncrease className="size-4" /></button>
-      {data.ops.assist && !agentOutside && data.editable && (
-        <>
-          {sep}
-          <button type="button" title="Rà soát cả văn bản (hoặc đoạn đang bôi đen): chính tả, câu chữ, số liệu lệch nhau — gạch ngay trên trang, nhận từng chỗ"
-            onMouseDown={keep} onClick={() => { setReview((n) => n + 1); setAssist(true); }}
-            className="t14m inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-2.5 text-primary-foreground outline-none hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring">
-            <ListChecks className="size-4" />
-            Rà soát
-          </button>
-          <button type="button" aria-pressed={assist} title="Trợ lý soạn thảo: sửa chính tả, viết lại, viết tiếp…" onMouseDown={keep}
-            onClick={() => { if (assist) setReview(0); setAssist(!assist); }}
-            className={`t14m inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 outline-none ${assist ? "bg-primary/10 text-primary" : "text-primary hover:bg-primary/10"}`}>
-            <Sparkles className="size-4" />
-            Trợ lý AI
-          </button>
-        </>
-      )}
     </>
-  );
-  const helper = data.editable && data.ops.assist && assist && (
-    <AssistPanel key={review} startReview={review > 0} op={data.ops.assist} documentId={data.documentId} sheet={sheet} range={range} onChanged={markDirty} notify={notify}
-      onClose={() => { setAssist(false); setReview(0); }} />
-  );
-
-  const saveButton = data.editable && (
-    <button type="button" className={actionClass(dirty ? "primary" : "default")} disabled={!dirty || saving} onClick={() => void save()} title="Lưu thành phiên bản mới (Ctrl+S)">
-      <Save className="size-4" />
-      <span className={full ? "max-lg:hidden" : ""}>{saving ? "Đang lưu…" : "Lưu"}</span>
-    </button>
   );
   const status = saving ? "Đang lưu…" : dirty ? "Có thay đổi chưa lưu" : data.editable ? `Đã lưu · phiên bản ${data.version}` : `Phiên bản ${data.version} · đã cất, chỉ xem`;
-  const actions = (
-    <>
-      {data.share && data.ops.send && (
-        <SendButton op={data.ops.send} documentId={data.documentId} version={data.version} targets={data.share.targets} dirty={dirty} notify={notify} compact={full} />
-      )}
-      <VersionsButton documentId={data.documentId} ops={data.ops} disabled={dirty} onRestored={reload} notify={notify} compact={full ? "narrow" : "always"} />
-      <a className={actionClass("default")} href={`/api/core${data.pdfUrl}`} target="_blank" rel="noreferrer" title="Bản in đúng từng trang (PDF)">
-        <Printer className="size-4" />
-        <span className={full ? "max-lg:hidden" : "sr-only"}>Bản in</span>
-      </a>
-      <button type="button" className={actionClass("default")} onClick={() => void download()} title="Tải file Word của phiên bản đã lưu">
-        <Download className="size-4" />
-        <span className={full ? "max-lg:hidden" : "sr-only"}>Tải Word</span>
-      </button>
-    </>
-  );
   const problem = error && (
     <div className="t14 flex items-center gap-3 rounded-lg bg-bad/10 px-3 py-2 text-bad">
       <span className="min-w-0 flex-1">{error}</span>
@@ -447,7 +386,6 @@ export function WordEditor({ initial, notify, full = false, handleRef, agentOuts
   );
   const paper = <Sheet key={`${data.version}:${nonce}`} data={data} sheetRef={sheet} onDirty={markDirty} onSave={saveNow} />;
 
-  if (pane) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         {/* MỘT khối đầu ngăn (nền trắng, cùng lề): hàng nút + dải định dạng — không ba lớp rời nhau */}
@@ -460,24 +398,31 @@ export function WordEditor({ initial, notify, full = false, handleRef, agentOuts
             </button>
           ) : null}
           <span className="t12 min-w-0 flex-1 truncate text-muted-foreground"><span className="@max-md:hidden">{status} · {words.toLocaleString("vi-VN")} từ</span></span>
-          {/* đang xem văn bản (kể cả màn hẹp chỉ thấy "Bản xem") vẫn rà được ngay: nút nhạt có chữ, cạnh nút Gửi */}
+          {/* "Rà soát" = nút chính của ngăn (kể cả màn hẹp chỉ thấy "Bản xem"); một nút đặc mỗi lúc: đang sửa ⇒ "Lưu" đặc, "Rà soát" nhạt.
+              Đang tích tài liệu tham chiếu ⇒ kèm số tài liệu sẽ đối chiếu (cùng tông nút, không thêm màu) */}
           {onReview && data.editable ? (
-            <button type="button" onClick={onReview} title="Rà soát văn bản (hoặc đoạn đang bôi đen): chính tả, câu chữ, số liệu lệch nhau"
-                    className="t14m inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-primary/10 px-3 text-primary outline-none hover:bg-primary/15 focus-visible:ring-2 focus-visible:ring-ring">
+            <button type="button" onClick={onReview}
+                    title={`Rà soát văn bản (hoặc đoạn đang bôi đen): chính tả, câu chữ, số liệu lệch nhau${reviewRefs ? ` — và đối chiếu với ${reviewRefs} tài liệu tham chiếu đang tích` : ""}`}
+                    className={cn(dirty ? "bg-primary/10 text-primary hover:bg-primary/15" : "bg-primary text-primary-foreground hover:bg-primary/90",
+                                  "t14m inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 outline-none focus-visible:ring-2 focus-visible:ring-ring")}>
               <ListChecks className="size-4" />Rà soát
+              {reviewRefs ? (
+                <span className={cn("t12m inline-flex items-center gap-0.5 rounded-full px-1.5 py-px", dirty ? "bg-primary/15" : "bg-primary-foreground/20")}
+                      aria-label={`đối chiếu ${reviewRefs} tài liệu`}>
+                  <BookOpen className="size-3" aria-hidden />{reviewRefs}
+                </span>
+              ) : null}
             </button>
           ) : null}
-          {/* đã lưu ⇒ việc tiếp theo là gửi: nút xanh đặc ra ngoài dãy biểu tượng; đang sửa ⇒ "Lưu" xanh ở đầu hàng, "Gửi" về lại dãy (khoá tới khi lưu) */}
-          {data.share && data.ops.send && !dirty && (
-            <SendButton op={data.ops.send} documentId={data.documentId} version={data.version} targets={data.share.targets} dirty={dirty} notify={notify} compact primary />
-          )}
           <span className="inline-flex h-8 shrink-0 items-center overflow-hidden rounded-full border border-border bg-surface">
-            {data.ops.view && (
-              <a className={PILL} href={standaloneHref(data.ops.view, { document_id: data.documentId })} target="_blank" rel="noreferrer" title="Mở trình soạn toàn màn hình ở tab mới" aria-label="Mở tab mới">
-                <ExternalLink className="size-4" />
-              </a>
-            )}
-            {data.share && data.ops.send && dirty && (
+            {maximize ? (
+              <button type="button" className={PILL} onClick={maximize.toggle} aria-pressed={maximize.on} aria-label={maximize.on ? "Thu nhỏ" : "Phóng to"}
+                      title={maximize.on ? "Thu nhỏ (Esc)" : "Phóng to — giữ nguyên màn, ẩn thanh bên và cột menu"}>
+                {maximize.on ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+              </button>
+            ) : null}
+            {/* Gửi: biểu tượng trong dãy (khoá khi còn thay đổi chưa lưu — gửi đúng bản người khác sẽ thấy) */}
+            {data.share && data.ops.send && (
               <SendButton op={data.ops.send} documentId={data.documentId} version={data.version} targets={data.share.targets} dirty={dirty} notify={notify} compact pill />
             )}
             <VersionsButton documentId={data.documentId} ops={data.ops} disabled={dirty} onRestored={reload} notify={notify} compact="always" pill />
@@ -500,72 +445,7 @@ export function WordEditor({ initial, notify, full = false, handleRef, agentOuts
         </div>
       </div>
     );
-  }
 
-  if (!full) {
-    return (
-      <div className="flex min-h-0 flex-col gap-3">
-        <div className="sticky top-0 z-10 flex flex-col gap-1.5 rounded-xl border border-border bg-surface px-2 py-1.5">
-          <div className="flex flex-wrap items-center gap-2">
-            {saveButton}
-            <span className="t12 min-w-0 flex-1 truncate px-1 text-muted-foreground">{status}</span>
-            {data.ops.view && (
-              <a className={actionClass("default")} href={standaloneHref(data.ops.view, { document_id: data.documentId })} target="_blank" rel="noreferrer" title="Mở trình soạn toàn màn hình ở tab mới">
-                <ExternalLink className="size-4" />
-                Mở tab mới
-              </a>
-            )}
-            {actions}
-          </div>
-          {ribbon && <div className="flex flex-wrap items-center gap-1 border-t border-hairline pt-1.5">{ribbon}</div>}
-        </div>
-        {problem}
-        <div className="@container flex min-h-0 flex-1 flex-col gap-3">
-          <div className="flex min-h-0 flex-col gap-3 @3xl:flex-row">
-            {helper && <aside aria-label="Trợ lý soạn văn bản" className="flex max-h-[65vh] min-h-0 shrink-0 flex-col rounded-xl border border-border bg-surface p-3 @3xl:w-[320px]">{helper}</aside>}
-            <div className="min-w-0 flex-1"><FitWidth width={data.page.w} fixed={null}>{paper}</FitWidth></div>
-          </div>
-        </div>
-        {data.notes.map((n, i) => <p key={i} className="t12 text-muted-foreground">{n}</p>)}
-      </div>
-    );
-  }
-
-  const shown = zoom ?? 100;
-  return (
-    <div className="flex h-dvh flex-col">
-      <header className="flex items-center gap-3 border-b border-border bg-surface px-4 py-2">
-        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary max-sm:hidden"><FileText className="size-5" /></span>
-        <div className="min-w-0 flex-1">
-          <input key={data.title} aria-label="Tên văn bản" defaultValue={data.title} readOnly={!data.editable || !data.ops.rename} maxLength={200}
-            className="t16 w-full truncate rounded-md bg-transparent px-1 outline-none hover:bg-foreground/5 focus:bg-foreground/5"
-            onBlur={(e) => void rename(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
-          <p className="t12 truncate px-1 text-muted-foreground">{status}</p>
-        </div>
-        {saveButton}
-        {actions}
-      </header>
-      {ribbon && <div className="flex flex-wrap items-center gap-1 border-b border-border bg-surface px-3 py-1.5">{ribbon}</div>}
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {helper && <aside aria-label="Trợ lý soạn văn bản" className="flex max-h-[45vh] shrink-0 flex-col overflow-y-auto border-b border-border bg-surface p-4 md:max-h-none md:w-[340px] md:border-r md:border-b-0">{helper}</aside>}
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto bg-foreground/5">
-          {problem && <div className="mx-auto max-w-3xl px-4 pt-4">{problem}</div>}
-          <FitWidth width={data.page.w} fixed={zoom === null ? null : zoom / 100} bare>{paper}</FitWidth>
-        </div>
-      </div>
-      <footer className="t12 flex items-center gap-3 border-t border-border bg-surface px-4 py-1.5 text-muted-foreground">
-        <span>{words.toLocaleString("vi-VN")} từ</span>
-        {data.notes.length > 0 && <span className="min-w-0 flex-1 truncate" title={data.notes.join(" ")}>{data.notes[0]}</span>}
-        <span className="ml-auto flex items-center gap-1">
-          <button type="button" className={tool} aria-label="Thu nhỏ" title="Thu nhỏ" onClick={() => setZoom(Math.max(50, shown - 10))}><Minus className="size-4" /></button>
-          <button type="button" className="t12m w-20 rounded-md py-1 text-center outline-none hover:bg-foreground/5" title="Bấm để về vừa khung" onClick={() => setZoom(null)}>
-            {zoom === null ? "Vừa khung" : `${zoom}%`}
-          </button>
-          <button type="button" className={tool} aria-label="Phóng to" title="Phóng to" onClick={() => setZoom(Math.min(200, shown + 10))}><Plus className="size-4" /></button>
-        </span>
-      </footer>
-    </div>
-  );
 }
 
 /**
@@ -601,10 +481,8 @@ function FitWidth({ width, fixed, bare = false, edge = false, children }: { widt
  * Gửi PHIÊN BẢN ĐANG LƯU vào một phòng / cuộc nhắn riêng (máy chủ liệt kê nơi gửi theo quyền người xem): thành một tin kèm tệp .docx — người
  * trong phòng xem / tải về; bản của mình vẫn ở khu vực riêng, sửa tiếp được. Còn thay đổi chưa lưu ⇒ phải lưu trước (gửi đúng thứ người khác sẽ thấy).
  */
-function SendButton({ op, documentId, version, targets, dirty, notify, compact, pill = false, primary = false }: {
+function SendButton({ op, documentId, version, targets, dirty, notify, compact, pill = false }: {
   op: string; documentId: string; version: number; targets: { value: string; label: string }[]; dirty: boolean; notify: Notify; compact: boolean; pill?: boolean;
-  /** bước tiếp theo sau khi lưu ⇒ nút xanh đặc có chữ (rà 26/11: dãy biểu tượng một màu, không thấy việc tiếp theo) */
-  primary?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [target, setTarget] = useState("");
@@ -635,9 +513,9 @@ function SendButton({ op, documentId, version, targets, dirty, notify, compact, 
 
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o && !target && targets.length === 1) setTarget(targets[0].value); }}>
-      <PopoverTrigger className={primary ? cn(actionClass("primary"), "h-8 rounded-full px-3.5") : pill ? PILL : actionClass("default")} title={dirty ? "Lưu thay đổi trước khi gửi" : "Gửi phiên bản đang lưu vào một phòng"} disabled={dirty}>
+      <PopoverTrigger className={pill ? PILL : actionClass("default")} title={dirty ? "Lưu thay đổi trước khi gửi" : "Gửi phiên bản đang lưu vào một phòng"} disabled={dirty}>
         <Send className="size-4" />
-        <span className={pill && !primary ? "sr-only" : compact && !primary ? "max-lg:hidden" : ""}>{primary ? "Gửi" : "Gửi vào phòng"}</span>
+        <span className={pill ? "sr-only" : compact ? "max-lg:hidden" : ""}>Gửi vào phòng</span>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 gap-3 p-3">
         <p className="t14m">Gửi phiên bản {version} vào phòng</p>

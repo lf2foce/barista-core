@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PAGE, buildOps, changedSpans, clipSame, decodeAssist, decodeWord, diffWords, splitParagraphs, indexParas, normalize, originalRuns, type EditedPara, type EditedRun, type WordPara } from "@/lib/word";
+import { PAGE, buildOps, changedSpans, clipSame, decodeAssist, decodeWord, diffWords, splitParagraphs, indexParas, normalize, originalRuns, type EditedPara, type EditedRun, type WordPara, writtenSummary } from "@/lib/word";
 
 const RAW = {
   type: "word", document_id: "d1", title: "Hợp đồng", version: 2, editable: true, page: { w: 612, ml: 90 },
@@ -148,8 +148,22 @@ describe("rà soát: so chữ theo từ", () => {
   it("giải mã giữ lý do của từng đề xuất", () => {
     expect(decodeAssist({ edits: [{ id: "b1", before: "a", text: "b", why: "Sai chính tả" }, { id: "b2", text: "c" }] }).edits)
       .toEqual([{ id: "b1", before: "a", text: "b", why: "Sai chính tả" }, { id: "b2", before: "", text: "c", why: "" }]);
-    expect(decodeAssist({ checks: [{ id: "b3", why: "Số tiền bằng chữ lệch", quote: "Năm mươi bốn triệu" }, { id: "b4" }] }).checks)
-      .toEqual([{ id: "b3", why: "Số tiền bằng chữ lệch", quote: "Năm mươi bốn triệu" }]);   // thiếu lý do ⇒ bỏ
+    expect(decodeAssist({ checks: [{ id: "b3", why: "Số tiền bằng chữ lệch", quote: "Năm mươi bốn triệu" }, { id: "b4" },
+                                   { id: "b5", why: "Văn bản ghi 3%, biểu phí ghi 2%", quote: "3%", source: "Biểu phí môi giới" }] }).checks)
+      .toEqual([{ id: "b3", why: "Số tiền bằng chữ lệch", quote: "Năm mươi bốn triệu", source: "" },   // thiếu lý do ⇒ bỏ
+                { id: "b5", why: "Văn bản ghi 3%, biểu phí ghi 2%", quote: "3%", source: "Biểu phí môi giới" }]);   // lệch tài liệu tham chiếu ⇒ tên tài liệu
     expect(decodeAssist({}).checks).toEqual([]);   // máy chủ cũ / trợ lý soạn thường: không có mục ⇒ rỗng
+    expect(decodeAssist({ sources: [{ title: "Sổ tay", kind: "picked", document_id: "d1", complete: false, percent: 42.4 },
+                                    { title: "Biểu phí", kind: "found", document_id: "d2", complete: true, percent: 100, used: true }, { kind: "found" }] }).sources)
+      .toEqual([{ title: "Sổ tay", kind: "picked", documentId: "d1", complete: false, percent: 42, used: false },
+                { title: "Biểu phí", kind: "found", documentId: "d2", complete: true, percent: 100, used: true }]);   // thiếu tên ⇒ bỏ
+  });
+});
+
+describe("writtenSummary", () => {
+  it("đếm theo đoạn trên trang, một mục thêm nhiều dòng = nhiều đoạn", () => {
+    expect(writtenSummary({ edits: [{ id: "b1", before: "a", text: "b", why: "" }], additions: [{ after: "b1", text: "x\ny" }] })).toBe("Sửa 1 đoạn, thêm 2 đoạn");
+    expect(writtenSummary({ edits: [], additions: [{ after: "b1", text: "x" }] })).toBe("Thêm 1 đoạn");
+    expect(writtenSummary({ edits: [], additions: [] })).toBe("");
   });
 });

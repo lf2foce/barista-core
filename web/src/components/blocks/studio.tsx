@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, FileText, History, ListChecks, MessageSquarePlus } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, FileText, History, MessageSquarePlus, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { applyAll } from "@/components/blocks/word-apply";
-import { collect } from "@/components/blocks/word-assist";
+import { collect, SourcesLine } from "@/components/blocks/word-assist";
 import { ReviewList } from "@/components/blocks/word-review";
 import { loadWord, WordEditor, type WordHandle } from "@/components/blocks/word-doc";
 import { CopyButton, Failed, KbMultiPicker, UserBubble, Working, type KbRef } from "@/components/blocks/composer";
@@ -22,13 +22,14 @@ import { datetime } from "@/lib/format";
 import { newKey } from "@/lib/idempotency";
 import type { StudioData } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { decodeAssist, type AssistResult, type WordData } from "@/lib/word";
+import { decodeAssist, writtenSummary, type AssistResult, type AssistSource, type WordData } from "@/lib/word";
 
 /** ``review``: lượt RÀ SOÁT — các chỗ trợ lý thấy sai, người Nhận / Bỏ từng chỗ ngay dưới câu trả lời (chỉ lượt rà gần nhất còn bấm được). */
-type Msg = { role: "user" | "agent"; text: string; note?: string; error?: boolean; review?: Pick<AssistResult, "edits" | "checks"> };
+type Msg = { role: "user" | "agent"; text: string; note?: string; error?: boolean; review?: Pick<AssistResult, "edits" | "checks">; sources?: AssistSource[] };
 type DocRef = WordData["documents"][number];
 
 const RING = "outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const chatMsg = (t: WordData["chat"][number]): Msg => ({ role: t.role, text: t.text, ...(t.note ? { note: t.note } : {}), ...(t.sources ? { sources: t.sources } : {}) });
 
 /** Chờ trình soạn vừa mở xong (trang giấy đã vẽ, tay cầm đã gắn) — tối đa ~3 giây. */
 async function ready(handle: React.RefObject<WordHandle | null>): Promise<WordHandle | null> {
@@ -45,17 +46,19 @@ async function ready(handle: React.RefObject<WordHandle | null>): Promise<WordHa
  * trượt ra khi có (kéo / bấm tab ở màn hẹp). Câu đầu tiên tạo văn bản (`doc.create` server gửi), agent viết thẳng vào trang giấy (`doc.assist` — model chỉ
  * đề xuất chữ cho các đoạn, web áp lên trang) rồi LƯU THÀNH PHIÊN BẢN (hoàn tác = khôi phục phiên bản cũ). Bôi đen một đoạn rồi nhắn ⇒ sửa đúng đoạn đó.
  */
-export function StudioBlock({ block }: { block: StudioData }) {
+/** ``initial``: văn bản mở sẵn (mở từ danh sách "File Word đã mở", vừa tải lên…) — vào thẳng màn này với văn bản đó và cuộc trò chuyện đã lưu của nó. */
+export function StudioBlock({ block, initial }: { block: StudioData; initial?: WordData }) {
   const desk = useDesk();
   const full = useFullFrame();
   const fullScreen = useFullScreen();
   const solo = useSolo();
   const frameActions = useFrameActions();
   const tabsId = useId();
-  const [word, setWord] = useState<WordData | null>(null);
-  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [word, setWord] = useState<WordData | null>(initial ?? null);
+  const [msgs, setMsgs] = useState<Msg[]>(() => (initial?.chat ?? []).map(chatMsg));
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<"chat" | "draft">("chat");
+  const [view, setView] = useState<"chat" | "draft">(initial ? "draft" : "chat");
+  const [agentHidden, setAgentHidden] = useState(false);   // màn rộng: ẩn cột agent ⇒ văn bản chiếm trọn bề ngang (như tắt khung trợ lý ở trình sửa cũ)
   const [docs, setDocs] = useState<DocRef[]>([]);
   const [fresh, setFresh] = useState(false);
   const handle = useRef<WordHandle | null>(null);
@@ -86,7 +89,7 @@ export function StudioBlock({ block }: { block: StudioData }) {
     if (data) {
       setView("draft");
       setFresh(false);
-      if (restore) setMsgs(data.chat.map((t) => ({ role: t.role, text: t.text, ...(t.note ? { note: t.note } : {}) })));   // cuộc trò chuyện đã lưu của văn bản này
+      if (restore) setMsgs(data.chat.map(chatMsg));   // cuộc trò chuyện đã lưu của văn bản này
     }
     return data;
   }
@@ -137,7 +140,9 @@ export function StudioBlock({ block }: { block: StudioData }) {
       say({
         role: "agent",
         text: result.reply || (n ? "Đã viết vào văn bản." : "Không có gì cần đổi."),
-        note: n ? `${scope === "selection" ? "Sửa đoạn đang chọn" : "Cập nhật văn bản"} · ${n} chỗ · đã lưu thành phiên bản mới (khôi phục được)` : undefined,
+        // nói rõ: trợ lý đã VIẾT THẲNG vào văn bản và tự lưu thành một phiên bản — muốn bản trước thì mở danh sách phiên bản
+        note: n ? `${writtenSummary(result)}${scope === "selection" ? " ở phần đang chọn" : ""} · đã tự lưu thành phiên bản mới — muốn quay lại bản trước: nút đồng hồ ở đầu văn bản` : undefined,
+        sources: result.sources,
       });
     } catch (e) {
       say({ role: "agent", text: e instanceof Error ? e.message : "Agent chưa trả lời được", error: true });
@@ -153,7 +158,9 @@ export function StudioBlock({ block }: { block: StudioData }) {
     if (!word || busy) return;
     setBusy(true);
     setView("chat");   // màn hẹp đang ở "Bản xem" ⇒ sang trò chuyện để thấy tiến độ + thẻ nhận / bỏ (vệt gạch vẫn ở trang khi quay lại)
-    say({ role: "user", text: "Rà soát văn bản" });
+    setAgentHidden(false);   // màn rộng đang ẩn agent ⇒ hiện lại: thẻ rà soát nằm ở cột agent
+    // tích tài liệu tham chiếu ⇒ rà soát kiêm ĐỐI CHIẾU: nói rõ ngay ở lời nhắn (cùng chữ máy chủ lưu vào cuộc trò chuyện)
+    say({ role: "user", text: sources.length ? `Rà soát văn bản · đối chiếu ${sources.length} tài liệu` : "Rà soát văn bản" });
     try {
       const h = await ready(handle);
       const root = h?.sheet();
@@ -171,8 +178,8 @@ export function StudioBlock({ block }: { block: StudioData }) {
       const result = decodeAssist(r.output);
       const n = result.edits.length + result.checks.length;
       say({ role: "agent", text: result.reply || (n ? `Có ${n} chỗ cần xem.` : "Không thấy lỗi cần sửa."),
-            note: n ? `Rà soát ${scope === "selection" ? "đoạn đang chọn" : "cả văn bản"} · chỗ nào Nhận thì chữ đổi trên văn bản, rồi Lưu` : undefined,
-            review: { edits: result.edits, checks: result.checks } });
+            note: n ? `Rà soát ${scope === "selection" ? "đoạn đang chọn" : "cả văn bản"}${sources.length ? ` · đối chiếu ${sources.length} tài liệu` : ""} · chỗ nào Nhận thì chữ đổi trên văn bản, rồi Lưu` : undefined,
+            review: { edits: result.edits, checks: result.checks }, sources: result.sources });
     } catch (e) {
       say({ role: "agent", text: e instanceof Error ? e.message : "Agent chưa rà soát được", error: true });
     } finally {
@@ -199,7 +206,8 @@ export function StudioBlock({ block }: { block: StudioData }) {
     <div ref={row} className={cn("@container relative flex min-h-0 flex-1", full ? "" : "min-h-[min(75vh,680px)] overflow-hidden rounded-xl border border-hairline")}
          style={{ "--chat": `${pct}%` } as React.CSSProperties}>
       <section id={`${tabsId}-panel-chat`} role="region"
-               className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", hasDraft && "@3xl:flex-none @3xl:basis-(--chat)", hasDraft && view === "draft" && "@max-3xl:hidden")}
+               className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", hasDraft && "@3xl:flex-none @3xl:basis-(--chat)", hasDraft && view === "draft" && "@max-3xl:hidden",
+                         hasDraft && agentHidden && "@3xl:hidden")}
                aria-label="Trò chuyện với agent soạn thảo">
         <header className={cn(PANE_HEADER, "px-3")}>
           {/* màn trọn khung trong phân hệ nhiều màn: màn rộng đã có cột danh sách (kèm nút ẩn thanh bên) ⇒ không lặp nút */}
@@ -229,12 +237,8 @@ export function StudioBlock({ block }: { block: StudioData }) {
                 // đang mở một văn bản (chưa nhắn gì): KHÔNG mời "soạn mới" — câu nhắn lúc này sửa chính văn bản này
                 <div className="flex flex-col gap-3 pt-6 @3xl:pt-10">
                   <h2 className="t20">Sửa “{word.title}”</h2>
-                  <p className="t14 text-muted-foreground">Nhắn agent việc cần sửa — cả văn bản, hoặc bôi đen một đoạn bên phải để sửa riêng đoạn đó. Mỗi lần sửa lưu thành một phiên bản, khôi phục được.</p>
+                  <p className="t14 text-muted-foreground">Nhắn agent việc cần sửa — cả văn bản, hoặc bôi đen một đoạn bên phải để sửa riêng đoạn đó. Muốn soát lỗi: bấm “Rà soát” ở đầu văn bản. Mỗi lần sửa lưu thành một phiên bản, khôi phục được.</p>
                   <div className="flex flex-wrap gap-1.5">
-                    <button type="button" onClick={() => void review()}
-                            className={cn("t12m inline-flex items-center gap-1 rounded-full bg-primary px-2.5 py-1.5 text-primary-foreground hover:bg-primary/90", RING)}>
-                      <ListChecks className="size-3.5" aria-hidden />Rà soát văn bản
-                    </button>
                     {["Viết trang trọng hơn", "Viết ngắn gọn hơn", "Điền các chỗ còn “……” nếu đã rõ"].map((x) => (
                       <button key={x} type="button" onClick={() => void send(x)}
                               className={cn("t12 rounded-full border border-hairline bg-surface px-2.5 py-1.5 hover:bg-accent", RING)}>{x}</button>
@@ -285,6 +289,7 @@ export function StudioBlock({ block }: { block: StudioData }) {
                       <span className="whitespace-pre-wrap">{m.text}</span>
                     </p>
                     {m.note ? <p className="t12 ml-6 text-muted-foreground">{m.note}</p> : null}
+                    {m.sources?.length ? <SourcesLine sources={m.sources} className="ml-6" /> : null}
                     {m.review && m.review.edits.length + m.review.checks.length > 0 ? (
                       i === lastReview
                         ? <div className="ml-6"><ReviewList edits={m.review.edits} checks={m.review.checks} sheet={getSheet} onChanged={() => handle.current?.markDirty()} /></div>
@@ -298,8 +303,7 @@ export function StudioBlock({ block }: { block: StudioData }) {
             </div>
           </div>
         </div>
-        <StudioInput block={block} hasDraft={hasDraft} busy={busy} form={form} setForm={setForm} sources={sources} setSources={setSources} onSend={(t) => void send(t)}
-                     onReview={() => void review()} />
+        <StudioInput block={block} hasDraft={hasDraft} busy={busy} form={form} setForm={setForm} sources={sources} setSources={setSources} onSend={(t) => void send(t)} />
       </section>
 
       {hasDraft && word ? (
@@ -314,14 +318,23 @@ export function StudioBlock({ block }: { block: StudioData }) {
                  else return;
                  e.preventDefault();
                }}
-               className="group relative z-10 -mx-1 hidden w-2 shrink-0 cursor-col-resize justify-center outline-none @3xl:flex">
+               className={cn("group relative z-10 -mx-1 hidden w-2 shrink-0 cursor-col-resize justify-center outline-none", !agentHidden && "@3xl:flex")}>
             <span className="w-px bg-hairline transition-colors group-hover:bg-primary group-focus-visible:w-0.5 group-focus-visible:bg-primary" />
           </div>
           <section id={`${tabsId}-panel-draft`} role="region"
                    className={cn("min-h-0 min-w-0 flex-1 flex-col bg-canvas", view === "draft" ? "flex" : "hidden", "@3xl:flex")}
                    aria-label="Khung làm việc — văn bản">
-            <WordEditor key={word.documentId} initial={word} notify={desk.show} handleRef={handle} agentOutside pane onReview={() => void review()}
-                        lead={<ViewSwitch view={view} onView={setView} fresh={fresh} />} />
+            <WordEditor key={word.documentId} initial={word} notify={desk.show} handleRef={handle} onReview={() => void review()} reviewRefs={sources.length}
+                        maximize={full ? { on: desk.canvasMax, toggle: desk.toggleCanvasMax } : undefined}
+                        lead={<>
+                          <ViewSwitch view={view} onView={setView} fresh={fresh} />
+                          {/* màn rộng: ẩn / hiện cột agent — chỉ còn văn bản khi cần tập trung sửa tay; màn hẹp đã một ngăn một lúc (nút trên) */}
+                          <button type="button" onClick={() => setAgentHidden((x) => !x)} aria-pressed={agentHidden}
+                                  aria-label={agentHidden ? "Hiện agent" : "Ẩn agent"} title={agentHidden ? "Hiện cột agent" : "Ẩn cột agent — văn bản chiếm trọn bề ngang"}
+                                  className={cn("hidden size-8 shrink-0 place-items-center rounded-full border border-border bg-surface text-foreground/80 hover:bg-accent hover:text-foreground @3xl:grid", RING)}>
+                            {agentHidden ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+                          </button>
+                        </>} />
           </section>
         </>
       ) : null}
@@ -392,9 +405,9 @@ function DocsMenu({ docs, currentId, disabled, onOpen, onNew }: { docs: DocRef[]
 }
 
 /** Ô nhập — cùng hàng chip + ô viên (mic · gửi) với Soạn với AI. Chip "Loại" nói đang soạn loại nào và mở các cách soạn khác. */
-function StudioInput({ block, hasDraft, busy, form, setForm, sources, setSources, onSend, onReview }: {
+function StudioInput({ block, hasDraft, busy, form, setForm, sources, setSources, onSend }: {
   block: StudioData; hasDraft: boolean; busy: boolean; form: string; setForm: (f: string) => void;
-  sources: KbRef[]; setSources: (s: KbRef[]) => void; onSend: (t: string) => void; onReview: () => void;
+  sources: KbRef[]; setSources: (s: KbRef[]) => void; onSend: (t: string) => void;
 }) {
   const desk = useDesk();
   const [draft, setDraft] = useState("");
@@ -406,8 +419,8 @@ function StudioInput({ block, hasDraft, busy, form, setForm, sources, setSources
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [draft]);
-  // chưa chọn ⇒ máy chủ nhận khung theo lời mô tả — nói rõ trên chip thay vì hiện một loại có thể không phải
-  const current = form ? block.forms.find((f) => f.key === form)?.label ?? form : "tự nhận";
+  // chưa chọn ⇒ máy chủ nhận khung theo lời mô tả ("Auto") — không hiện một loại có thể không phải
+  const current = form ? block.forms.find((f) => f.key === form)?.label ?? form : "Auto";
   const has = draft.trim().length > 0;
   const submit = () => {
     if (!has || busy) return;
@@ -418,21 +431,17 @@ function StudioInput({ block, hasDraft, busy, form, setForm, sources, setSources
     <div className="flex flex-col gap-1.5 px-3 pt-1 pb-3">
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-2">
         <div className="flex flex-wrap items-center gap-1.5 px-1">
-        {hasDraft ? (
-          // đã có văn bản ⇒ việc hay làm nhất trước khi gửi: rà soát — nút đặc, đứng đầu hàng chip
-          <button type="button" onClick={onReview} disabled={busy}
-                  className={cn("t12m inline-flex h-7 items-center gap-1 rounded-full bg-primary px-2.5 text-primary-foreground hover:bg-primary/90 disabled:opacity-50", RING)}>
-            <ListChecks className="size-3.5" aria-hidden />Rà soát
-          </button>
-        ) : <>
+        {/* đã mở văn bản ⇒ không chip "Rà soát" ở đây: nút nằm ở đầu ngăn văn bản — rà đúng văn bản đang mở, không lẫn với tài liệu tham chiếu */}
+        {hasDraft ? null : <>
           <Popover open={kindOpen} onOpenChange={setKindOpen}>
-            <PopoverTrigger className={cn("t12m inline-flex h-7 items-center gap-1 rounded-full border border-hairline bg-surface px-2.5 text-foreground hover:bg-accent", RING)}>
+            <PopoverTrigger title="Loại văn bản" aria-label={`Loại văn bản: ${current}`}
+                            className={cn("t12m inline-flex h-7 items-center gap-1 rounded-full border border-hairline bg-surface px-2.5 text-foreground hover:bg-accent", RING)}>
               <FileText className="size-3.5 text-primary" aria-hidden />
-              Loại: {current}
+              {current}
               <ChevronDown className="size-3 text-muted-foreground" aria-hidden />
             </PopoverTrigger>
             <PopoverContent align="start" className="w-72 gap-1 p-1.5">
-              {[{ key: "", label: "Tự nhận theo lời mô tả" }, ...block.forms].map((f) => {
+              {[{ key: "", label: "Auto — nhận theo lời mô tả" }, ...block.forms].map((f) => {
                 const on = form === f.key;
                 return (
                   <button key={f.key || "_auto"} type="button" aria-current={on ? "true" : undefined} onClick={() => { setForm(f.key); setKindOpen(false); }}

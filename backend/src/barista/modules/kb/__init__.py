@@ -567,17 +567,24 @@ async def quote(ctx: Ctx, inp: QuoteIn) -> dict[str, Any]:
             "cite": d["title"] + (f" — {hit['heading']}" if hit["heading"] else "") + (f" — trang {hit['page']}" if hit["page"] else "")}
 
 
+READ_CHARS = 8000
+READ_CHARS_MAX = 60_000
+
+
 class ReadIn(Input):
     document_id: UUID = field("Tài liệu")
     page_from: int | None = field("Từ trang", None, ge=1)
     page_to: int | None = field("Đến trang", None, ge=1)
     heading: str = field("Mục (chứa chữ)", "", max_length=200)
     include_history: bool = field("Cho phép bản cũ / chưa hiệu lực", False, help="Chỉ khi người dùng hỏi về bản trước / bản sắp áp dụng")
+    # nơi gọi cần đọc dài hơn một lượt (trợ lý soạn thảo đọc TRỌN tài liệu người chọn — 0227 §2.13); trợ lý chat giữ mặc định
+    max_chars: int = field("Số ký tự tối đa", READ_CHARS, ge=1000, le=READ_CHARS_MAX, hidden=True, agent=False)
 
 
 @m.query("read", resource="kb.common", title="Đọc một phần tài liệu (theo trang / mục)")
 async def read(ctx: Ctx, inp: ReadIn) -> dict[str, Any]:
-    """Đọc liền mạch một mục / vài trang của MỘT tài liệu (tối đa ~8.000 ký tự) — khi cần tóm tắt / so sánh / đọc hết điều khoản."""
+    """Đọc liền mạch một mục / vài trang của MỘT tài liệu (tối đa ~8.000 ký tự) — khi cần tóm tắt / so sánh / đọc hết điều khoản. ``complete`` / ``chars``:
+    đọc hết phần đã chọn chưa, phần đó dài bao nhiêu ký tự — nơi gọi báo người dùng khi chưa đọc hết."""
     d = await ctx.one(f"SELECT d.title, d.effective_from, d.effective_to, {STATE_SQL} AS state FROM kb.documents d WHERE d.id = %s",
                       (inp.document_id,))
     if d is None:
@@ -589,17 +596,19 @@ async def read(ctx: Ctx, inp: ReadIn) -> dict[str, Any]:
                                AND (%s::int IS NULL OR page >= %s) AND (%s::int IS NULL OR page <= %s)
                                AND (%s = '' OR heading ILIKE '%%' || %s || '%%') ORDER BY seq""",
                           (inp.document_id, inp.page_from, inp.page_from, inp.page_to, inp.page_to, inp.heading, inp.heading))
-    text, last = "", None
+    text, last, cut = "", None, False
     for c in parts:
         mark = " ".join(x for x in (f"[trang {c['page']}]" if c["page"] else "", c["heading"]) if x)
         if mark and mark != last:
             text += f"\n\n{mark}\n"
             last = mark
         text += c["text"] + "\n"
-        if len(text) > 8000:
-            text = text[:8000] + "\n…(còn nữa — đọc tiếp bằng trang sau)"
+        if len(text) > inp.max_chars:
+            text = text[:inp.max_chars] + "\n…(còn nữa — đọc tiếp bằng trang sau)"
+            cut = True
             break
-    return {"title": d["title"], "state": STATES[d["state"]], "effective_from": d["effective_from"], "effective_to": d["effective_to"],
+    return {"complete": not cut, "chars": sum(len(c["text"]) for c in parts),
+            "title": d["title"], "state": STATES[d["state"]], "effective_from": d["effective_from"], "effective_to": d["effective_to"],
             "text": text.strip() or "(không có đoạn nào khớp trang / mục này)"}
 
 

@@ -342,6 +342,9 @@ async def test_the_editor_assistant_only_proposes_text_for_the_paragraphs_sent_a
     assert out["edits"] == [{"id": "b1", "before": "Bên A: Công ty Mẫu (sau đây gọi là Bên A)", "text": "Bên A: Công ty Cổ phần Mẫu"}]
     assert out["additions"] == [{"after": "b1", "text": "Đại diện: Giám đốc"}] and out["reply"].startswith("Đã viết lại")
     assert (await q(an, "word.versions", document_id=up["document_id"]))["rows"][0]["version"] == 1   # không ghi gì: vẫn phiên bản 1
+    chat = _word(await q(an, "word.view", document_id=up["document_id"]))["chat"]
+    assert chat[-1]["note"] == "Sửa 1 đoạn, thêm 1 đoạn ở phần đang chọn"                                       # đếm theo đoạn, không "2 chỗ" khó hiểu
+    assert word._written([], [{"after": "b1", "text": "Dòng một\nDòng hai\n"}]) == "Thêm 2 đoạn"   # một mục nhiều dòng = nhiều đoạn
 
 
 async def test_review_mode_only_fixes_real_mistakes_with_a_reason_and_never_adds_paragraphs() -> None:
@@ -371,6 +374,9 @@ async def test_review_mode_only_fixes_real_mistakes_with_a_reason_and_never_adds
         out = await ok(an, "word.assist", document_id=up["document_id"], instruction="", paragraphs_json=paras, scope="document", mode="review")
         r = await executor.run(an, "word.assist", {"document_id": up["document_id"], "instruction": "", "paragraphs_json": paras})
         assert r.status == "invalid"                                                   # cách làm thường vẫn bắt nhập yêu cầu
+        blank = json.dumps([{"id": "b1", "text": "  "}])
+        r = await executor.run(an, "word.assist", {"document_id": up["document_id"], "instruction": "", "paragraphs_json": blank, "mode": "review"})
+        assert r.status == "invalid" and "chưa có chữ" in (r.error or "")              # trang trắng: báo ngay, không gọi model
     finally:
         word.ASSIST_MODEL = None
     assert len(seen) == 1 and "RÀ SOÁT" in seen[0] and "[b1] Đề nghị thanh tóan" in seen[0]
@@ -520,3 +526,90 @@ async def test_studio_sources_are_read_with_the_writers_rights_and_fenced_as_dat
     assert [(t["role"], t["text"]) for t in chat] == [("user", "Viết công văn lịch làm việc"), ("agent", "Đã viết.")]   # mở lại là thấy lại
     other = await executor.query(people["an"], "word.view", {"document_id": made["document_id"]})
     assert other.status == "not_found"                                                          # cuộc trò chuyện riêng của chủ văn bản
+
+
+async def test_writer_reads_ticked_documents_whole_searches_the_library_and_says_what_it_could_not_read() -> None:
+    """0227 §2.13: tài liệu người TÍCH đọc trọn (trần lớn; dài hơn ⇒ báo phần trăm đã đọc), đồng thời TỰ TÌM trong kho theo yêu cầu (quyền người soạn);
+    tài liệu tự tìm chỉ báo khi model ghi đã dùng; rà soát không tự tìm. ``kb.read`` mặc định vẫn 8.000 ký tự cho trợ lý chat."""
+    from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from barista.modules import word
+
+    people = await _company()
+    chu = people["chu"]
+    long_body = "# Chính sách\n" + "\n\n".join(f"Điều {i}. Quy định số {i} về hồ sơ giao dịch, kèm diễn giải đủ dài để tài liệu vượt trần đọc của một lượt soạn."
+                                               for i in range(1, 900))
+    big = str((await ok(chu, "kb.add_document", title="Sổ tay chính sách dài", kind="policy", body=long_body))["document_id"])
+    fee = str((await ok(chu, "kb.add_document", title="Biểu phí môi giới", kind="policy",
+                         body="# Phí môi giới\nPhí môi giới căn hộ là 2% giá trị hợp đồng, thanh toán trong 15 ngày."))["document_id"])
+    read = await q(chu, "kb.read", document_id=big)
+    assert read["complete"] is False and read["chars"] > 60_000 and len(read["text"]) < 8_200          # trợ lý chat: vẫn 8.000 ký tự
+    made = await ok(chu, "word.create", title="Đề nghị thanh toán phí", form="")
+    seen: list[str] = []
+    used: list[str] = ["c1", "k1"]
+
+    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append("".join(str(getattr(x, "content", "")) for x in messages[-1].parts))   # str() của thư viện cắt ngắn lời nhắc dài
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"reply": "Đã viết.", "edits": [], "additions": [], "used": used})])
+
+    paras = json.dumps([{"id": "b0", "text": ""}])
+    word.ASSIST_MODEL = FunctionModel(reply, model_name="word-fake")
+    try:
+        out = await ok(chu, "word.assist", document_id=made["document_id"], instruction="Đề nghị thanh toán phí môi giới căn hộ", paragraphs_json=paras,
+                       sources_json=json.dumps([big]), scope="document")
+        used[:] = ["c1"]
+        quiet = await ok(chu, "word.assist", document_id=made["document_id"], instruction="Đề nghị thanh toán phí môi giới căn hộ", paragraphs_json=paras,
+                         sources_json=json.dumps([big]), scope="document")
+        await ok(chu, "word.assist", document_id=made["document_id"], instruction="", paragraphs_json=json.dumps([{"id": "b0", "text": "Phí môi giới 3%"}]),
+                 scope="document", mode="review")
+    finally:
+        word.ASSIST_MODEL = None
+    assert '<tai_lieu ma="c1"' in seen[0] and "Điều 250." in seen[0] and "Điều 400." not in seen[0]   # đọc tới ~40.000 ký tự (cũ: 8.000), quá thì dừng
+    assert '<doan ma="k1"' in seen[0] and "2% giá trị hợp đồng" in seen[0]                             # tự tìm trong kho theo yêu cầu
+    assert "<doan" not in seen[2]                                                                      # rà soát: không tự tìm
+    picked, found = out["sources"]
+    assert picked["title"] == "Sổ tay chính sách dài" and picked["kind"] == "picked" and picked["complete"] is False and 0 < picked["percent"] < 100
+    assert found == {"title": "Biểu phí môi giới", "kind": "found", "document_id": fee, "complete": True, "percent": 100, "used": True}
+    assert [s["kind"] for s in quiet["sources"]] == ["picked"]                                         # tìm được mà không dùng ⇒ không báo
+    chat = _word(await q(chu, "word.view", document_id=made["document_id"]))["chat"]
+    assert chat[1]["sources"] == out["sources"]                                                        # mở lại văn bản vẫn thấy dựa vào đâu
+
+
+async def test_review_against_ticked_documents_names_the_document_each_mismatch_comes_from() -> None:
+    """0227 §2.12: rà soát có tài liệu tích ⇒ đối chiếu từng tài liệu; thẻ "cần kiểm tra" ghi TÊN tài liệu lệch (mã model ghi lạ ⇒ không gắn tên);
+    tài liệu nào có chỗ lệch thì tính là đã dùng."""
+    from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from barista.modules import word
+
+    people = await _company()
+    chu = people["chu"]
+    fee = str((await ok(chu, "kb.add_document", title="Biểu phí môi giới", kind="policy", body="# Phí\nPhí môi giới căn hộ là 2% giá trị hợp đồng."))["document_id"])
+    due = str((await ok(chu, "kb.add_document", title="Quy định thanh toán", kind="policy", body="# Hạn\nThanh toán trong 15 ngày kể từ ngày ký."))["document_id"])
+    made = await ok(chu, "word.create", title="Đề nghị thanh toán phí", form="")
+    seen: list[str] = []
+
+    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append("".join(str(getattr(x, "content", "")) for x in messages[-1].parts))
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"reply": "Có 2 chỗ cần kiểm tra.", "edits": [], "additions": [], "checks": [
+            {"id": "b1", "quote": "3%", "why": "Văn bản ghi 3%, biểu phí ghi 2%", "source": "c1"},
+            {"id": "b1", "quote": "30 ngày", "why": "Văn bản ghi 30 ngày, quy định ghi 15 ngày", "source": "c2"},
+            {"id": "b1", "why": "Mã nguồn lạ", "source": "c9"}]})])
+
+    word.ASSIST_MODEL = FunctionModel(reply, model_name="word-fake")
+    try:
+        out = await ok(chu, "word.assist", document_id=made["document_id"], instruction="", scope="document", mode="review",
+                       paragraphs_json=json.dumps([{"id": "b1", "text": "Phí môi giới 3%, thanh toán trong 30 ngày."}]), sources_json=json.dumps([fee, due]))
+    finally:
+        word.ASSIST_MODEL = None
+    assert '<tai_lieu ma="c1"' in seen[0] and '<tai_lieu ma="c2"' in seen[0] and "2% giá trị hợp đồng" in seen[0]
+    assert [c.get("source") for c in out["checks"]] == ["Biểu phí môi giới", "Quy định thanh toán", None]
+    assert [(s["title"], s["used"]) for s in out["sources"]] == [("Biểu phí môi giới", True), ("Quy định thanh toán", True)]
+    opened = _word(await q(chu, "word.view", document_id=made["document_id"]))
+    chat = opened["chat"]
+    assert chat[0]["text"] == "Rà soát văn bản · đối chiếu 2 tài liệu"
+    # một giao diện soạn: văn bản mở từ đâu cũng kèm mô tả màn Soạn thảo (cùng thao tác với màn Soạn thảo của Giấy tờ)
+    assert opened["studio"]["doc"] == {k: v for k, v in word._studio_spec().items() if isinstance(v, str) and k not in ("title", "module")}
+    assert opened["studio"]["doc"]["assist"] == "word.assist" and opened["studio"]["forms"]                              # đọc lại vẫn biết lần rà đó so với mấy tài liệu

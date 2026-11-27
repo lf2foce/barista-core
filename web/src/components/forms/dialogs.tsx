@@ -90,7 +90,8 @@ function FormDialog({ req }: { req: FormRequest }) {
 function PageDialog({ req }: { req: PageRequest }) {
   const { closePage } = useDesk();
   const { page, error, errorAt, loading, reload } = usePage(req.query, req.input);
-  const wide = page?.kind === "card" && page.blocks.some((b) => b.type === "composer");   // Soạn với AI: hai cột cần chỗ
+  // Soạn với AI / văn bản mở vào màn Soạn thảo (agent bên trái + văn bản bên phải): hai cột cần chỗ
+  const wide = page?.kind === "card" && page.blocks.some((b) => b.type === "composer" || (b.type === "word" && !!b.studio && !!b.documentId));
   const guard = useOpenGuard(() => closePage(req.id));
   return (
     <Dialog open onOpenChange={guard.onOpenChange}>

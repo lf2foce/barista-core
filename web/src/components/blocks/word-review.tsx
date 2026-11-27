@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, CircleAlert, Undo2, X } from "lucide-react";
+import { BookOpen, Check, CircleAlert, Undo2, X } from "lucide-react";
 import { applyAll } from "@/components/blocks/word-apply";
 import { actionClass } from "@/components/primitives";
 import { changedSpans, clipSame, diffWords, type AssistCheck, type AssistEdit } from "@/lib/word";
@@ -19,7 +19,7 @@ const ACTIVE = "word-review-active";
 
 type State = "ok" | "skip" | "stale";
 type Snap = { el: HTMLElement; html: string; added: HTMLElement[]; key: string };
-type Item = { key: string; id: string; why: string } & ({ kind: "fix"; edit: AssistEdit } | { kind: "check"; quote: string });
+type Item = { key: string; id: string; why: string } & ({ kind: "fix"; edit: AssistEdit } | { kind: "check"; quote: string; source: string });
 
 const NO_CHECKS: AssistCheck[] = [];
 const paraOf = (root: HTMLElement, id: string) => root.querySelector<HTMLElement>(`[data-seg] > p[data-id="${CSS.escape(id)}"]`);
@@ -74,7 +74,7 @@ export function ReviewList({ edits, checks = NO_CHECKS, sheet, onChanged }: {
   const box = useRef<HTMLDivElement>(null);
   const items = useMemo<Item[]>(() => [
     ...edits.map((e): Item => ({ key: e.id, id: e.id, why: e.why, kind: "fix", edit: e })),
-    ...checks.map((c, i): Item => ({ key: `?${i}`, id: c.id, why: c.why, kind: "check", quote: c.quote })),
+    ...checks.map((c, i): Item => ({ key: `?${i}`, id: c.id, why: c.why, kind: "check", quote: c.quote, source: c.source })),
   ], [edits, checks]);
   const fixes = items.filter((x) => x.kind === "fix" && !state[x.key]).map((x) => x.key);
   const open = items.filter((x) => !state[x.key]);
@@ -186,6 +186,10 @@ export function ReviewList({ edits, checks = NO_CHECKS, sheet, onChanged }: {
             <button type="button" className="flex w-full flex-col gap-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => show(it)}
                     title="Xem chỗ này trên văn bản">
               {check ? <span className="t12m inline-flex items-center gap-1 text-warn"><CircleAlert className="size-3.5" aria-hidden />Cần anh/chị kiểm tra</span> : null}
+              {/* lệch với tài liệu tham chiếu nào — tích nhiều tài liệu vẫn biết ngay phải mở tài liệu nào để so */}
+              {it.kind === "check" && it.source ? (
+                <span className="t12 inline-flex min-w-0 items-center gap-1 text-muted-foreground"><BookOpen className="size-3.5 shrink-0" aria-hidden /><span className="truncate">Theo: {it.source}</span></span>
+              ) : null}
               {it.why ? <span className="t12m">{it.why}</span> : null}
               {it.kind === "fix" ? (
                 <span className="t14 break-words">

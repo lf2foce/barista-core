@@ -1,22 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Check, ListChecks, Sparkles, Undo2, X } from "lucide-react";
-import { api } from "@/lib/api";
-import { newKey } from "@/lib/idempotency";
-import { decodeAssist, splitParagraphs, type AssistResult } from "@/lib/word";
-import { flash, newParaAfter, setText } from "@/components/blocks/word-apply";
-import { ReviewList } from "@/components/blocks/word-review";
-import { actionClass } from "@/components/primitives";
+import { FileCheck, Search, TriangleAlert } from "lucide-react";
+import type { AssistSource } from "@/lib/word";
 
-// Trợ lý soạn thảo trong trình sửa Word (0227 §2.8). Model chỉ ĐỀ XUẤT chữ cho các đoạn gửi lên; người xem từng đề xuất, bấm áp dụng (đổi chữ trên trang
-// giấy, chưa ghi file), rồi tự bấm Lưu như mọi lần sửa ⇒ thành một phiên bản mới, khôi phục được.
+// Phần dùng chung của trợ lý soạn thảo ở màn Soạn thảo (0227 §2.8, 0251): gom các đoạn gửi cho trợ lý, và dòng "dựa vào đâu" dưới câu trả lời.
+// Khung trợ lý riêng trong trình sửa (kiểu cũ) đã bỏ 27/11 — chỉ còn MỘT giao diện soạn là màn Soạn thảo.
 
-const QUICK = ["Viết trang trọng hơn", "Viết ngắn gọn hơn", "Viết rõ ràng, dễ hiểu hơn", "Viết tiếp đoạn sau"];
 const MAX_WHOLE = 400;
 
 type Para = { id: string; text: string };
-type Undo = { edits: { el: HTMLElement; html: string }[]; added: HTMLElement[] };
 
 /** Các đoạn sửa được (mã gốc, lần gặp đầu) — trong vùng chọn nếu có, không thì cả văn bản. */
 export function collect(sheet: HTMLElement, range: Range | null): { paras: Para[]; scope: "selection" | "document" } {
@@ -31,177 +23,22 @@ export function collect(sheet: HTMLElement, range: Range | null): { paras: Para[
   return { paras: filled.length ? filled : paras.slice(0, 1), scope: picked.length ? "selection" : "document" };
 }
 
-/** ``startReview``: mở khung là RÀ SOÁT ngay (nút "Rà soát" trên dải công cụ) — chạy một lần lúc mở. */
-export function AssistPanel({ op, documentId, sheet, range, onChanged, notify, onClose, startReview = false }: {
-  op: string; documentId: string; sheet: React.RefObject<HTMLDivElement | null>; range: React.RefObject<Range | null>;
-  onChanged: () => void; notify: (text: string, isError?: boolean) => void; onClose: () => void; startReview?: boolean;
-}) {
-  const [ask, setAsk] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<AssistResult | null>(null);
-  const [done, setDone] = useState<Set<string>>(new Set());
-  const [undo, setUndo] = useState<Undo | null>(null);
-  const [scope, setScope] = useState("");
-  const [mode, setMode] = useState<"write" | "review">("write");
-  const getSheet = () => sheet.current;
-
-  async function run(instruction: string, how: "write" | "review" = "write") {
-    if (!sheet.current || (how === "write" && !instruction.trim()) || busy) return;
-    const { paras, scope: s } = collect(sheet.current, range.current);
-    if (!paras.length) {
-      notify("Không có đoạn nào sửa được", true);
-      return;
-    }
-    setBusy(true);
-    setResult(null);
-    setDone(new Set());
-    setUndo(null);
-    setScope(s === "selection" ? `${paras.length} đoạn đang chọn` : "cả văn bản");
-    setMode(how);
-    try {
-      const r = await api.command(op, { document_id: documentId, instruction, paragraphs_json: JSON.stringify(paras), scope: s, mode: how }, newKey());
-      if (r.status !== "ok") notify(r.error || "Trợ lý chưa trả lời được", true);
-      else setResult(decodeAssist(r.output));
-    } catch (e) {
-      notify(e instanceof Error ? e.message : "Trợ lý chưa trả lời được", true);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /** Áp dụng các đề xuất có khoá trong `keys` (mã đoạn hoặc `+i` cho đoạn thêm thứ i). */
-  function apply(keys: string[]) {
-    const root = sheet.current;
-    if (!root || !result) return;
-    const next: Undo = { edits: [...(undo?.edits ?? [])], added: [...(undo?.added ?? [])] };
-    const find = (id: string) => root.querySelector<HTMLElement>(`[data-seg] > p[data-id="${CSS.escape(id)}"]`);
-    let n = 0;
-    for (const e of result.edits) {
-      const p = find(e.id);
-      if (!keys.includes(e.id) || done.has(e.id) || !p) continue;
-      next.edits.push({ el: p, html: p.innerHTML });
-      const [head, ...rest] = splitParagraphs(e.text);
-      setText(p, head);
-      flash(p);
-      let tail = p;
-      for (const line of rest) {
-        tail = newParaAfter(tail, p, line);
-        next.added.push(tail);
-        flash(tail);
-      }
-      n += 1;
-    }
-    const tail = new Map<string, HTMLElement>();   // nhiều đoạn thêm sau cùng một mốc giữ đúng thứ tự
-    result.additions.forEach((a, i) => {
-      const key = `+${i}`;
-      const ref = tail.get(a.after) ?? find(a.after);
-      const model = find(a.after) ?? ref;
-      if (!keys.includes(key) || done.has(key) || !ref || !model) return;
-      let last = ref;
-      for (const line of splitParagraphs(a.text)) {   // chép định dạng đoạn của đoạn mốc; bỏ mã ⇒ lúc lưu là đoạn MỚI
-        last = newParaAfter(last, model, line);
-        next.added.push(last);
-        flash(last);
-      }
-      tail.set(a.after, last);
-      n += 1;
-    });
-    if (!n) return;
-    setDone((d) => new Set([...d, ...keys]));
-    setUndo(next);
-    onChanged();
-  }
-
-  function revert() {
-    if (!undo) return;
-    for (const { el, html } of [...undo.edits].reverse()) el.innerHTML = html;
-    for (const el of undo.added) el.remove();
-    setUndo(null);
-    setDone(new Set());
-    onChanged();
-  }
-
-  // mở bằng nút "Rà soát" ⇒ rà ngay, một lần (khung mở lại bằng "Trợ lý AI" không rà lại — nơi gọi đổi ``key``)
-  const started = useRef(false);
-  useEffect(() => {
-    if (!startReview || started.current) return;
-    started.current = true;
-    void run("", "review");
-  });
-
-  const keys = result ? [...result.edits.map((e) => e.id), ...result.additions.map((_, i) => `+${i}`)] : [];
-  const left = keys.filter((k) => !done.has(k));
-
+/** Trợ lý DỰA VÀO ĐÂU (dưới câu trả lời): tài liệu người tích (đọc đủ — hoặc báo rõ mới đọc được bao nhiêu), tài liệu tự tìm trong kho đã dùng. */
+export function SourcesLine({ sources, className }: { sources: AssistSource[]; className?: string }) {
+  if (!sources.length) return null;
   return (
-    <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto" aria-label="Trợ lý soạn thảo">
-      <div className="flex items-center gap-2">
-        <Sparkles className="size-4 text-primary" />
-        <span className="t14m flex-1">Trợ lý soạn thảo</span>
-        <button type="button" aria-label="Đóng trợ lý" className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-foreground/5" onClick={onClose}><X className="size-4" /></button>
-      </div>
-      <button type="button" disabled={busy} onMouseDown={(e) => e.preventDefault()} onClick={() => void run(ask, "review")}
-              className="flex items-start gap-2.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5 text-left outline-none hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-        <ListChecks className="mt-0.5 size-4 shrink-0 text-primary" />
-        <span className="flex flex-col gap-0.5">
-          <span className="t14m text-primary">{busy && mode === "review" ? "Đang rà soát…" : "Rà soát văn bản"}</span>
-          <span className="t12 text-muted-foreground">Chính tả, câu chữ, số liệu / ngày / tên ghi lệch nhau, thể thức — gạch ngay trên trang, nhận từng chỗ</span>
-        </span>
-      </button>
-      <p className="t12 text-muted-foreground">Hoặc bôi đen đoạn cần sửa rồi chọn việc; không chọn gì thì trợ lý làm trên cả văn bản. Đề xuất chỉ đổi chữ trên trang — bấm Lưu mới thành phiên bản mới.</p>
-      <div className="flex flex-wrap gap-1.5">
-        {QUICK.map((qk) => (
-          <button key={qk} type="button" disabled={busy} className="t12 rounded-full border border-border px-2.5 py-1 hover:bg-foreground/5 disabled:opacity-40"
-            onMouseDown={(e) => e.preventDefault()} onClick={() => void run(qk)}>{qk}</button>
-        ))}
-      </div>
-      <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); void run(ask); }}>
-        <textarea value={ask} onChange={(e) => setAsk(e.target.value)} rows={3} maxLength={2000} placeholder="Hoặc nhập yêu cầu, vd: thêm điều khoản phạt chậm thanh toán 0,05%/ngày"
-          className="t14 resize-none rounded-lg border border-border bg-surface px-2.5 py-2 outline-none focus:border-primary"
-          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void run(ask); } }} />
-        <button type="submit" className={actionClass("primary")} disabled={busy || !ask.trim()}>
-          <Sparkles className="size-4" />
-          {busy && mode === "write" ? "Trợ lý đang viết…" : "Gửi cho trợ lý"}
-        </button>
-      </form>
-      {result && mode === "review" && (
-        <div className="flex flex-col gap-2">
-          <p className="t12 text-muted-foreground">Rà soát: {scope}</p>
-          {result.reply && <p className="t14 rounded-lg bg-foreground/5 px-3 py-2">{result.reply}</p>}
-          <ReviewList edits={result.edits} checks={result.checks} sheet={getSheet} onChanged={onChanged} />
-        </div>
-      )}
-      {result && mode === "write" && (
-        <div className="flex flex-col gap-2">
-          <p className="t12 text-muted-foreground">Phạm vi: {scope}</p>
-          {result.reply && <p className="t14 rounded-lg bg-foreground/5 px-3 py-2">{result.reply}</p>}
-          {keys.length > 0 && (
-            <div className="flex items-center gap-2">
-              <button type="button" className={actionClass("primary")} disabled={!left.length} onClick={() => apply(left)}><Check className="size-4" />Áp dụng tất cả ({left.length})</button>
-              {undo && <button type="button" className={actionClass("default")} onClick={revert}><Undo2 className="size-4" />Hoàn tác</button>}
-            </div>
-          )}
-          {result.edits.map((e) => (
-            <div key={e.id} className="rounded-lg border border-border p-2.5">
-              <p className="t12 text-muted-foreground line-through">{e.before}</p>
-              <p className="t14 mt-1">{e.text}</p>
-              <Choice applied={done.has(e.id)} onApply={() => apply([e.id])} />
-            </div>
-          ))}
-          {result.additions.map((a, i) => (
-            <div key={`+${i}`} className="rounded-lg border border-dashed border-border p-2.5">
-              <p className="t12 text-muted-foreground">Đoạn mới</p>
-              <p className="t14 mt-1">{a.text}</p>
-              <Choice applied={done.has(`+${i}`)} onApply={() => apply([`+${i}`])} />
-            </div>
-          ))}
-        </div>
-      )}
-    </aside>
-  );
-}
-
-function Choice({ applied, onApply }: { applied: boolean; onApply: () => void }) {
-  return applied ? <p className="t12m mt-2 text-ok">Đã áp dụng</p> : (
-    <button type="button" className="t12m mt-2 text-primary" onClick={onApply}>Áp dụng</button>
+    <ul className={`t12 flex flex-col gap-1 text-muted-foreground ${className ?? ""}`} aria-label="Nguồn trợ lý đã dựa vào">
+      {sources.map((s) => (
+        <li key={`${s.kind}:${s.documentId}`} className={`flex items-start gap-1.5 ${s.kind === "picked" && !s.complete ? "text-warn" : ""}`}>
+          {s.kind === "found" ? <Search className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            : s.complete ? <FileCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden /> : <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />}
+          <span className="min-w-0">
+            <span className="t12m">{s.title}</span>
+            {s.kind === "found" ? " — tự tìm trong kho"
+              : s.complete ? " — đã đọc hết" : ` — tài liệu dài, mới đọc khoảng ${s.percent}% đầu; phần sau trợ lý chưa thấy (tích ít tài liệu hơn để đọc được nhiều hơn)`}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
