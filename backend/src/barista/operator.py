@@ -16,6 +16,8 @@ hai), qua CÙNG executor bằng quyền hệ thống (một cửa — bất bi�
   uv run python -m barista.operator --tenant "Sàn mẫu" pending
   uv run python -m barista.operator --tenant "Sàn mẫu" decide <mã phiếu> approve --by "Anh" --why "khách yêu cầu qua email 12/11"
   uv run python -m barista.operator --tenant "Sàn mẫu" log
+  uv run python -m barista.operator create-company --name "Công ty Mẫu" --admin-email quantri@congty.vn --admin-name "Quản trị" \\
+      --packs crm,finance --by "Anh" --why "HĐ 12/2026 — đưa vào dùng (runbook 23)"
 """
 
 import argparse
@@ -33,7 +35,7 @@ from barista.db import db
 from barista.kernel import executor
 from barista.kernel.principal import system_principal
 
-WRITES = ("set-grant", "set-setting", "create-role", "role-tools-defaults", "skills-defaults", "install-defaults", "install-app", "rotate-app", "revoke-app", "app-shadow", "decide")
+WRITES = ("create-company", "set-grant", "set-setting", "create-role", "role-tools-defaults", "skills-defaults", "install-defaults", "install-app", "rotate-app", "revoke-app", "app-shadow", "decide")
 NO_ACTIONS = ("", "-", "none")
 
 
@@ -131,11 +133,68 @@ async def pending(tid: UUID) -> None:
               f"bước: {r['step']}" + ("" if r["operator"] else "  (phiếu nghiệp vụ — nhà vận hành không quyết)"))
 
 
+def company_packs(raw: str) -> list[str]:
+    """``"crm,finance"`` ⇒ gói bật cho công ty (kèm gói chúng bắt buộc, bỏ gói luôn bật — không có dòng ``tenant_packs``). Gói lạ ⇒ từ chối."""
+    from barista.kernel import registry
+
+    asked = [x.strip() for x in re.split(r"[,\s]+", raw) if x.strip()]
+    if bad := [x for x in asked if x not in registry.PACKS]:
+        raise Refused(f"Gói lạ: {', '.join(bad)} — gói cài trên bản này: {', '.join(sorted(registry.PACKS))}")
+    return sorted(registry.pack_closure(set(asked)) - registry.always_on())
+
+
+async def create_company(a: argparse.Namespace) -> None:
+    """TẠO CÔNG TY THẬT (ADR 0263 mục D, đóng 0194 Còn mở 3) trên bản cài ``production`` — hoặc bất kỳ bản cài nào — KHÔNG nạp dữ liệu mẫu: công ty + gói
+    (kèm quyền dùng gói) + hồ sơ, cài mặc định của các gói qua ``admin.install_defaults``, mời quản trị đầu tiên (đăng nhập thật bằng email đó) qua
+    ``admin.invite_user``, giao chủ tài khoản (``admin.ensure_owner``). Mọi bước nghiệp vụ qua executor bằng quyền hệ thống của công ty mới. Trợ lý AI
+    mặc định TẮT (bật bằng ``--ai`` khi khách đã đồng ý). Lần trước lỗi giữa chừng (công ty cùng tên chưa có ai) ⇒ chạy lại làm tiếp, không tạo công ty thứ hai."""
+    from barista.kernel import clock
+
+    name, email = a.name.strip(), a.admin_email.strip().lower()
+    if not name or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise Refused("Cần --name và --admin-email hợp lệ")
+    packs = company_packs(a.packs)
+    if a.dry_run:
+        print(f"[chạy thử — không ghi gì] Tạo “{name}”, gói: {', '.join(packs) or '(chỉ nền)'}; mời {email} vai {a.admin_role}; trợ lý AI "
+              f"{'bật' if a.ai else 'tắt'}")
+        return
+    async with db.owner_tx() as c:
+        rows = await (await c.execute("""SELECT t.id, (SELECT count(*) FROM core.memberships m WHERE m.tenant_id = t.id) AS members
+                                         FROM core.tenants t WHERE t.name = %s""", (name,))).fetchall()
+        if len(rows) > 1 or (rows and rows[0]["members"]):
+            raise Refused(f"Đã có công ty “{name}” đang dùng — đổi tên, hoặc cài thêm bằng install-defaults / mời người trong app")
+        if rows:
+            tid = rows[0]["id"]
+            print(f"Làm tiếp công ty “{name}” tạo dở ({tid})")
+        else:
+            got = await (await c.execute("INSERT INTO core.tenants (name, timezone) VALUES (%s, %s) RETURNING id",
+                                         (name, clock.default_zone().key))).fetchone()
+            assert got is not None
+            tid = got["id"]
+            await c.execute("INSERT INTO core.tenant_profile (tenant_id, about, ai_enabled) VALUES (%s, %s, %s)", (tid, a.about.strip()[:600], a.ai))
+        for pack in packs:
+            await c.execute("INSERT INTO core.tenant_packs (tenant_id, pack) VALUES (%s, %s) ON CONFLICT DO NOTHING", (tid, pack))
+            await c.execute("""INSERT INTO core.tenant_entitlements (tenant_id, pack, granted_by, note) VALUES (%s, %s, 'operator', %s)
+                               ON CONFLICT DO NOTHING""", (tid, pack, f"{a.by.strip()}: {a.why.strip()}"[:300]))
+    out = await run(tid, "admin.install_defaults", {"packs": ["base", *packs]}, dry_run=False)
+    print(f"{name}: {out.get('summary') or 'cài mặc định xong'}")
+    await run(tid, "admin.invite_user", {"email": email, "name": a.admin_name.strip() or email, "role": a.admin_role, "team_code": "", "is_lead": False},
+              dry_run=False)
+    await run(tid, "admin.ensure_owner", {}, dry_run=False)
+    print(f"OK: công ty “{name}” ({tid}) · gói {', '.join(packs) or '(chỉ nền)'} · quản trị đầu tiên {email} (vai {a.admin_role}, chủ tài khoản) — "
+          f"đăng nhập bằng Google với đúng email này. Bước tiếp: Quản trị › Đưa công ty vào dùng (runbook 23)")
+
+
 async def main(a: argparse.Namespace) -> None:
     if a.cmd in WRITES and not (a.by.strip() and a.why.strip()):
         raise Refused("Cần --by (người vận hành) và --why (lý do) — ghi vào nhật ký vận hành")
+    if a.cmd != "create-company" and not a.tenant.strip():
+        raise Refused("Cần --tenant (tên một phần hoặc id công ty)")
     await db.open(settings.database_url, settings.owner_database_url)
     try:
+        if a.cmd == "create-company":
+            await create_company(a)
+            return
         tid, name = await ai_policy.tenant_of(a.tenant)
         who = {"by": getattr(a, "by", ""), "why": getattr(a, "why", "")}
         dry = bool(getattr(a, "dry_run", False))
@@ -186,12 +245,20 @@ async def main(a: argparse.Namespace) -> None:
 
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="python -m barista.operator", description="Cửa nhà vận hành — đổi cấu hình một công ty (ADR 0206)")
-    ap.add_argument("--tenant", required=True, help="tên (một phần) hoặc id công ty — phải khớp đúng một công ty")
+    ap.add_argument("--tenant", default="", help="tên (một phần) hoặc id công ty — phải khớp đúng một công ty (mọi lệnh trừ create-company)")
     write = argparse.ArgumentParser(add_help=False)
     write.add_argument("--by", default="", help="người vận hành (bắt buộc)")
     write.add_argument("--why", default="", help="lý do (bắt buộc)")
     write.add_argument("--dry-run", action="store_true", help="kiểm + chạy thử rồi hoàn — không ghi gì, không sinh khoá")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    cc = sub.add_parser("create-company", parents=[write], help="tạo công ty THẬT (không dữ liệu mẫu): gói + cài mặc định + mời quản trị đầu tiên (0263)")
+    cc.add_argument("--name", required=True, help="tên công ty")
+    cc.add_argument("--admin-email", required=True, help="email đăng nhập (Google) của quản trị đầu tiên — thành chủ tài khoản")
+    cc.add_argument("--admin-name", default="", help="họ tên quản trị đầu tiên")
+    cc.add_argument("--admin-role", default="admin", help="vai của người đó (mặc định admin — Quản trị hệ thống; giám đốc: director)")
+    cc.add_argument("--packs", default="", help="gói bật cho công ty, cách nhau dấu phẩy (gói bắt buộc tự kèm), vd crm,finance")
+    cc.add_argument("--about", default="", help="một câu về công ty cho trợ lý (sửa sau ở Quản trị › Hồ sơ công ty)")
+    cc.add_argument("--ai", action="store_true", help="bật trợ lý AI ngay (mặc định tắt tới khi khách đồng ý)")
     g = sub.add_parser("set-grant", parents=[write], help="đặt quyền của một vai (cùng kiểm như Quản trị › Vai trò & quyền, không thành phiếu)")
     g.add_argument("role")
     g.add_argument("resource")

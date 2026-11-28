@@ -1,5 +1,8 @@
 """Nạp thử một dự án lên DB RIÊNG ở máy (ADR 0106 §6). Mọi ghi qua executor; lặp lại không tạo trùng (sổ ánh xạ nguồn → đích); ngoại lệ được đếm, không bịa.
 
+Mọi lệnh ghi chạy ``historical=True`` (bất biến 12 — dữ liệu hệ cũ là tham chiếu, không thông báo / việc theo dõi). Khung chung cho bản thật (sổ mã gốc
+trên DB của bản cài, đối chiếu có ngưỡng, ký, ngày chuyển): ``barista.api.onboard`` + runbook 23 — script này giữ lại làm nạp thử trên DB riêng.
+
 Đã làm: định danh + hồ sơ làm việc. CHƯA làm: giao dịch / quyền hưởng / chi, vì chưa có lệnh NHẬP LỊCH SỬ (ký lại bằng lệnh hiện tại sẽ phát lại phí, hoa hồng
 và việc theo dõi theo chính sách hôm nay — đúng thứ ADR cấm): bước đó dừng rõ ràng thay vì đi đường tắt.
 
@@ -70,7 +73,7 @@ async def load_people(admin: Principal, people: list[Person], ids: IdMap, *, as_
             continue
         if not p.name:
             continue
-        r = await executor.run(admin, "parties.create", {"display_name": p.name, "kind": "person"}, key=f"{SOURCE}:person:{p.source_id}")
+        r = await executor.run(admin, "parties.create", {"display_name": p.name, "kind": "person"}, key=f"{SOURCE}:person:{p.source_id}", historical=True)
         if r.status != "ok":
             out.issues[f"tạo định danh: {r.status}"] += 1
             continue
@@ -81,7 +84,7 @@ async def load_people(admin: Principal, people: list[Person], ids: IdMap, *, as_
         if party is None or not p.employee_code or not p.started_on or await ids.get("employment", p.source_id):
             continue
         r = await executor.run(admin, "hr.set_employment", {"party_id": str(party), "employee_code": p.employee_code, "title": p.title,
-                                                             "started_on": p.started_on.isoformat()}, key=f"{SOURCE}:employment:{p.source_id}")
+                                                             "started_on": p.started_on.isoformat()}, key=f"{SOURCE}:employment:{p.source_id}", historical=True)
         if r.status != "ok":
             out.issues[f"hồ sơ: {r.status}"] += 1
             continue
@@ -89,7 +92,7 @@ async def load_people(admin: Principal, people: list[Person], ids: IdMap, *, as_
         out.employments += 1
         if p.ended_on:
             ended = await executor.run(admin, "hr.end_employment", {"employment_id": str(r.output["employment_id"]), "ended_on": p.ended_on.isoformat()},
-                                       key=f"{SOURCE}:ended:{p.source_id}")
+                                       key=f"{SOURCE}:ended:{p.source_id}", historical=True)
             if ended.status != "ok":
                 out.issues[f"ngày nghỉ: {ended.status}"] += 1
     for p in people:
@@ -104,7 +107,7 @@ async def load_people(admin: Principal, people: list[Person], ids: IdMap, *, as_
         r = await executor.run(admin, "hr.set_assignment", {"party_id": str(party), "manager_party_id": str(boss), "valid_from": as_of.isoformat(),
                                                            # nạp hệ cũ luôn LÙI ngày (as_of là ngày chụp dữ liệu) — quá hạn mức lùi thì hr bắt ghi lý do
                                                            "reason": "Nạp từ hệ cũ — cơ cấu theo ngày chụp dữ liệu"},
-                               key=f"{SOURCE}:assignment:{p.source_id}")
+                               key=f"{SOURCE}:assignment:{p.source_id}", historical=True)
         if r.status != "ok":
             out.issues[f"phân công: {r.status}"] += 1
             continue

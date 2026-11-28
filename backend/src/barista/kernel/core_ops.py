@@ -34,7 +34,8 @@ Pack("base", "Nền",
                                ("papers", "all", "read write"), ("papers.office", "all", "read write manage"), ("papers.templates", "all", "read write manage"), ("flow", "all", "read write manage"),
                                ("flow.templates", "all", "read write manage"), ("flow.automations", "all", "read write manage"),
                                ("asks", "all", "read write"), ("connectors", "all", "read write manage"),
-                               ("work", "all", "read write"),),
+                               ("work", "all", "read write"),
+                               ("onboard", "all", "read write manage"),),   # đưa công ty vào dùng (0263): lượt chuyển, đối chiếu, danh sách việc
                        suggest=(("admin.deliveries", "Có sự kiện nào đang lỗi cần xử lý không?"),
                                 ("admin.permissions", "Vai trò nào đang xem được số liệu của cả công ty?", "core.admin"),
                                 ("admin.users", "Ai đang bị khoá tài khoản?"),
@@ -53,7 +54,8 @@ Pack("base", "Nền",
                                   ("papers", "all", "read write"), ("papers.office", "all", "read write manage"), ("papers.templates", "all", "read write manage"), ("flow", "all", "read write manage"),
                                   ("flow.templates", "all", "read write manage"), ("flow.automations", "all", "read write manage"),
                                ("asks", "all", "read write"), ("connectors", "all", "read"),
-                                  ("work", "all", "read"),),
+                                  ("work", "all", "read"),
+                                  ("onboard", "all", "read write manage"),),   # chủ công ty bấm ngày chuyển (0263) — chỉ chủ tài khoản, kiểm ở lệnh
                           suggest=(("core.approvals", "Có phiếu nào đang chờ tôi duyệt không?"),)),
          # Vai đặt theo VIỆC, không theo phòng (0073): phòng là đội — một phòng gộp chứa nhiều vai; trưởng phòng = is_lead (phạm vi "team").
          "office": Role("Hành chính", ai_tier="basic", tools=(*("flow.tasks", "flow.task", "flow.plans", "flow.plan", "flow.requests", "flow.adjust_task", "flow.set_task", "flow.request_team"), "papers.list", "papers.draft_letter"),
@@ -107,8 +109,13 @@ Pack("base", "Nền",
      # set_rule cũng nằm dưới chuỗi này ⇒ bỏ bảo vệ cũng phải duyệt. Sửa người dùng / đội chỉ phải duyệt ở lần gọi đổi quyền (``sensitive``).
      chains=(("outsource", "Thuê ngoài (cam kết chi)", ({"kind": "role", "role": "director"},)),
              ("task_override", "Đóng việc không cần bằng chứng", ({"kind": "team_lead"},)),
-             ("access_change", "Thay đổi quyền truy cập", ({"kind": "owner"},))),
+             ("access_change", "Thay đổi quyền truy cập", ({"kind": "owner"},)),
+             # đưa công ty vào dùng (0263): ký biên bản đối chiếu lượt chuyển + bấm ngày chuyển — mặc định chủ tài khoản; công ty đặt người ký thật
+             # (kế toán trưởng / giám đốc tài chính) bằng cách sửa chuỗi trong app
+             ("onboard_signoff", "Ký biên bản đối chiếu dữ liệu chuyển", ({"kind": "owner"},)),
+             ("onboard_go_live", "Ngày chuyển sang Barista", ({"kind": "owner"},))),
      approval_rules=(("flow.request_vendor", "outsource"),
+                     ("onboard.sign", "onboard_signoff"), ("onboard.go_live", "onboard_go_live"),
                      *((f"admin.{c}", "access_change") for c in ("set_grant", "set_info_access", "set_rule", "set_chain", "upsert_role", "update_member",
                                                                   "invite_user", "add_team", "remove_team", "upsert_team",
                                                                   "set_agent_policy", "set_agent_trust", "set_agent_preset")),   # nới tự chủ trợ lý (0143 / 0144) = cấp quyền

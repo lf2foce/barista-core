@@ -35,6 +35,7 @@ from barista.api import (
     links,
     metrics,
     notify,
+    onboard,
     ratelimit,
     record_files,
     regulations,
@@ -69,6 +70,7 @@ from barista.kernel.fields import (
 from barista.kernel.principal import Principal as _Principal
 from barista.kernel.registry import (
     CheckIn,
+    CutoverIn,
     DateIn,
     Event,
     Flow,
@@ -77,6 +79,7 @@ from barista.kernel.registry import (
     ImportTable,
     InfoGroup,
     Module,
+    OnboardStep,
     Pack,
     Question,
     Role,
@@ -100,7 +103,7 @@ type Ctx = _Ctx
 # gọi model NGOÀI giao dịch.
 type Prep = _Prep
 
-__version__ = "1.85.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
+__version__ = "1.86.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: business_calendar.holidays; Hours(off=…) ngày nghỉ trong đồng hồ giờ làm việc (0152)
 #                         1.7: gộp ba nhánh cùng mang 1.6 — regulations.declare / compare / known_codes (0154) · Module.inbound (webhook VÀO từ nhà cung cấp) · Pack(records=…) cấu hình mặc định qua lệnh của module sở hữu (0153)
 #                              · Module.consumes nhận thêm họ outreach / doc_read / paper_draft — dịch vụ lõi mở cho gói ngoài (0155)
 #                         1.8: NeedsConfirmation — lệnh tự biết việc trợ lý định làm chạm lịch / dữ liệu của NGƯỜI KHÁC ⇒ cả lệnh thành thẻ đề xuất (0158)
@@ -259,6 +262,10 @@ __version__ = "1.85.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                              công ty chọn bộ đọc bằng hồ sơ đọc theo mục đích (chuỗi), không đổi gói nghiệp vụ. Tên trùng bộ đã có ⇒ từ chối
 #                              + ``Module.command(upload="pdf,xml,jpg")``: lệnh NHẬN TỆP — nút chọn / thả nhiều tệp, mỗi tệp một lượt ``POST /v1/uploads/<lệnh>``
 #                              (nội dung ở ``ctx.files["file"]``, đầu vào có filename / size / sha256); thay route tệp riêng từng module
+#                         1.86 (CHỈ THÊM, ADR 0263): ĐƯA CÔNG TY VÀO DÙNG — ``onboard`` (hợp đồng bộ chuyển dữ liệu hệ cũ: ``Entity`` / ``Metric`` / ``Converter`` /
+#                              ``Problem`` + bộ chạy ``load`` — lệnh qua executor ``historical=True``, sổ mã gốc + dấu vân tay, đối chiếu có ngưỡng);
+#                              ``Module.cutover(step, label, order=, resource=, why=)`` + ``CutoverIn`` (bước ngày chuyển gói tự khai — ``onboard.go_live`` chạy theo thứ tự);
+#                              ``Pack(onboard_steps=…)`` + ``OnboardStep`` (việc của gói trong danh sách 7 chặng). Migration base/116 (schema onboard) — chỉ thêm
 
 __all__ = [
     "VN",
@@ -267,6 +274,7 @@ __all__ = [
     "CheckIn",
     "Conflict",
     "Ctx",
+    "CutoverIn",
     "DateIn",
     "Day",
     "Denied",
@@ -292,6 +300,7 @@ __all__ = [
     "NeedsConfirmation",
     "NoInput",
     "NotFound",
+    "OnboardStep",
     "OpError",
     "Open",
     "OptionalPhone",
@@ -347,6 +356,7 @@ __all__ = [
     "name_key",
     "notify",
     "num",
+    "onboard",
     "parse_money",
     "parse_phone",
     "phone_display",

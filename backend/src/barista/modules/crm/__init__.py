@@ -20,13 +20,16 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
-from barista.api import Ctx, Hints, InfoGroup, Module, NotFound, Pack, Role, vnd_text
+from barista.api import Ctx, Hints, InfoGroup, Module, NotFound, OnboardStep, Pack, Role, vnd_text
 
 # Gói 'crm' tự khai (0069, 0110): năng lực dùng chung — ngành nào cũng có khách, lead, chăm sóc, lịch hẹn. Phần ngành cắm vào qua điểm cắm ``crm.*``.
 Pack("crm", "Khách hàng",
      "Khách, lead, chăm sóc, lịch hẹn, chia lead và hạn xử lý — dùng được cho mọi ngành",
      kind="capability",
      requires=("directory", "schedule"),   # lịch hẹn nằm trên lịch chung (0158): giờ + người ở schedule, phần nghiệp vụ ở crm.appointments
+     # ngày chuyển (ADR 0263): lead nạp từ hệ cũ nằm ĐỖ (0185) — chưa có lệnh kích hoạt hàng loạt ⇒ việc tay trong danh sách, không bịa bước tự chạy
+     onboard_steps=(OnboardStep("parked_leads", 6, "Kích hoạt lead đỗ nạp từ hệ cũ theo đợt: giao lại từ hàng chờ / chuyển người giữ (Chia lead)",
+                                role="sales_admin", required=False, evidence="Đợt nào, bao nhiêu lead"),),
      # 0239 phần 3: tên + SĐT khách là quyền đọc Khách & lead; số ĐẾM lead (Marketing, báo cáo) không cần quyền này
      info_groups=(InfoGroup("customers", "Khách & lead (tên, SĐT, lịch sử chăm sóc)", "crm",
                             "Mọi màn khách / lead và tên khách nghi trùng ở Sức khoẻ dữ liệu; số đếm lead trên màn Marketing / báo cáo không cần quyền này"),),

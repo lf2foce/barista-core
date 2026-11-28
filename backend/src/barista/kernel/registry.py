@@ -362,6 +362,29 @@ DATE_SOURCES: dict[str, DateSource] = {}
 DATE_RESERVED = frozenset({"ref", "on", "owner_id", "team_id"})
 
 
+class CutoverIn(BaseModel):
+    """Đầu vào của BƯỚC NGÀY CHUYỂN (``Module.cutover``, ADR 0263): ngày cắt — ngày đầu tiên công ty làm việc trên Barista (dữ liệu trước ngày này là
+    của hệ cũ đã nạp)."""
+    model_config = ConfigDict(extra="forbid")
+    cut_date: date
+
+
+@dataclass(frozen=True)
+class Cutover:
+    """Một BƯỚC NGÀY CHUYỂN (ADR 0263 mục D) do module tự khai: lệnh NỘI BỘ ``<module>.cutover_<step>`` (đầu vào ``CutoverIn``) mà ``onboard.go_live`` gọi
+    theo ``order`` (nhỏ trước) bằng quyền hệ thống sau khi chủ công ty bấm + qua duyệt. Trả ``{summary, skipped?}``; lỗi ⇒ cả ngày chuyển không xảy ra."""
+    key: str          # <module>.<step>
+    label: str
+    module: str
+    order: int
+    command: str      # <module>.cutover_<step>
+
+
+CUTOVERS: dict[str, Cutover] = {}
+STAGES = {1: "Khảo sát theo chuẩn", 2: "Cấu hình", 3: "Chuyển dữ liệu thử", 4: "Kiểm thử chấp nhận", 5: "Đào tạo theo vai", 6: "Ngày chuyển",
+          7: "Trực sau chuyển"}   # 7 chặng onboard (ADR 0263 mục A) — chặng của việc trong danh sách (``OnboardStep.stage``)
+
+
 @dataclass(frozen=True)
 class Webhook:
     """Sự kiện CÔNG BỐ cho app từ xa (0140) — tên ổn định ngoài hệ (``lead.assigned``) ↔ sự kiện outbox của module (``crm.lead_assigned``).
@@ -597,6 +620,23 @@ def info_groups(on: frozenset[str] | set[str] | None = None) -> list[tuple[str, 
 
 
 @dataclass(frozen=True)
+class OnboardStep:
+    """Một VIỆC trong danh sách đưa công ty vào dùng (ADR 0263 mục D) — gói khai thêm bằng ``Pack(onboard_steps=…)``: khoá (trong gói), chặng 1–7
+    (``STAGES``), việc gì, vai chịu trách nhiệm (khoá vai, trống = quản trị), bắt buộc trước ngày chuyển hay không, bằng chứng cần có (câu cho người
+    xác nhận). Việc chỉ hiện khi công ty bật gói khai nó. Khoá đầy đủ = ``<gói>.<khoá>``."""
+    key: str
+    stage: int
+    title: str
+    role: str = ""
+    required: bool = True
+    evidence: str = ""
+
+    def __post_init__(self) -> None:
+        if not KEY.fullmatch(self.key) or self.stage not in STAGES or not self.title.strip() or (self.role and not KEY.fullmatch(self.role)):
+            raise ValueError(f"việc onboard {self.key!r}: khoá chữ thường_gạch_dưới, chặng 1–7, có tên việc, vai là khoá vai")
+
+
+@dataclass(frozen=True)
 class Flow:
     """Mẫu quy trình mặc định của gói (0043 / 0059): khoá, tên, loại đối tượng bám ("" = không bám), tự mở, nội dung; ``follow`` = trợ lý của người
     phụ trách cầm hồ sơ nhiều ngày (0142)."""
@@ -646,6 +686,9 @@ class Pack:
     # theo thứ tự. Là mặc định đọc thẳng từ mã (không cài vào dữ liệu ⇒ nâng gói không ghi đè chỗ công ty đã đổi — ``core.role_rail``); phân hệ người đó
     # không thấy (không quyền / gói tắt) tự bị bỏ qua. Vai không có khai báo ⇒ thanh bên vẽ hết phân hệ như trước. Tối đa ``RAIL_MAX`` phân hệ mỗi vai
     rail: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # VIỆC ĐƯA VÀO DÙNG của gói (ADR 0263 mục D, api 1.86): góp vào danh sách việc 7 chặng (``onboard.checklist``) khi công ty bật gói — vd "ghi số dư đầu
+    # kỳ khớp tổng kiểm" của gói Tài chính. Việc làm được bằng lệnh ở ngày chuyển thì khai ``Module.cutover`` thay vì ở đây
+    onboard_steps: tuple[OnboardStep, ...] = ()
 
     def __post_init__(self) -> None:
         if self.key in PACKS:
@@ -659,6 +702,8 @@ class Pack:
             raise ValueError(f"gói {self.key}: requires không hợp lệ")
         if self.always_on and (self.key == "base" or self.kind in ("industry", "company")):
             raise ValueError(f"gói {self.key}: luôn bật chỉ dành cho gói năng lực / lõi (không phải gói ngành / gói riêng công ty, không phải base)")
+        if len({s.key for s in self.onboard_steps}) != len(self.onboard_steps):
+            raise ValueError(f"gói {self.key}: khoá việc onboard trùng")
         if len({g.key for g in self.info_groups}) != len(self.info_groups):
             raise ValueError(f"gói {self.key}: khoá nhóm thông tin trùng")
         PACKS[self.key] = self
@@ -1245,6 +1290,20 @@ class Module:
         DATE_SOURCES[full] = DateSource(full, label, self.key, date_label, dict(fields), tuple(ids), open)
         return self.query(name, resource=resource, title=f"Nguồn ngày: {label}", internal=True, agent="deny", callers=("flow",), why=why)
 
+    def cutover(self, step: str, label: str, *, order: int, resource: str, why: str):
+        """Khai một BƯỚC NGÀY CHUYỂN (ADR 0263 mục D, api 1.86): khi chủ công ty bấm "Chuyển sang Barista" (``onboard.go_live``), các bước của mọi gói đang bật
+        chạy theo ``order`` (nhỏ trước; cùng số ⇒ theo khoá), trong CÙNG giao dịch — một bước lỗi ⇒ không bước nào ghi. Hàm được khai là lệnh NỘI BỘ
+        ``<module>.cutover_<step>`` (đầu vào ``CutoverIn``) chỉ ``onboard`` gọi bằng quyền hệ thống — ``why=`` nêu bước ghi gì (như mọi hợp đồng
+        ``callers=``, 0083). Bước phải chạy lại an toàn (đã làm ⇒ trả ``skipped``) và dùng đúng cơ chế sẵn có của module (vd mốc khoá kỳ của sổ cái), không
+        đường tắt. Trả ``{summary, skipped?}``. Việc chưa có lệnh ⇒ khai việc tay ở ``Pack(onboard_steps=…)``, không bịa bước."""
+        full = f"{self.key}.{step}"
+        if full in CUTOVERS:
+            raise ValueError(f"bước ngày chuyển {full} khai hai lần")
+        if not NAME.fullmatch(step):
+            raise ValueError(f"bước ngày chuyển {full}: khoá chữ thường_gạch_dưới")
+        CUTOVERS[full] = Cutover(full, label, self.key, order, f"{self.key}.cutover_{step}")
+        return self.command(f"cutover_{step}", resource=resource, title=f"Ngày chuyển: {label}", internal=True, agent="deny", callers=("onboard",), why=why)
+
     def webhook(self, name: str, event_type: str, *, ids: tuple[str, ...], resource: str, label: str) -> None:
         """Công bố sự kiện ``event_type`` của module này cho app từ xa dưới tên ``name`` (0140). Thân webhook chỉ mang các khoá ``ids`` (mã), loại,
         lúc xảy ra — không tên, không SĐT, không số tiền."""
@@ -1372,7 +1431,7 @@ class Module:
 
 
 # Module của GÓI NỀN (luôn bật, đi cùng lõi): danh sách đóng, nằm trong repo. Gói khác không tự nhận "base" (review 09/11).
-BASE_MODULES = frozenset({"core", "admin", "apps", "asks", "connect", "connectors", "flow", "health", "kb", "memory", "papers", "work"})
+BASE_MODULES = frozenset({"core", "admin", "apps", "asks", "connect", "connectors", "flow", "health", "kb", "memory", "onboard", "papers", "work"})
 KEY = re.compile(r"[a-z][a-z0-9_]*")      # khoá module / gói — không dấu chấm, không hoa, không rỗng
 WORKSPACE_KEY = re.compile(r"[a-z_]+")    # khoá phân hệ — khớp CHECK của ``core.user_pins.workspace`` (migration base/008)
 NAME = re.compile(r"[a-z_][a-z0-9_]*")     # phần tên của thao tác / bên nghe sau "<module>."

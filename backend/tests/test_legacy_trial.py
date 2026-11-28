@@ -2,8 +2,13 @@
 
 from datetime import date
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
+import pytest
+
+from barista.kernel import executor
+from scripts.legacy_trial import load as trial
 from scripts.legacy_trial.load import Report, load_people, reconcile
 from scripts.legacy_trial.tms_source import Person, person_of
 from tests.conftest import Who, owner_val
@@ -27,7 +32,7 @@ def test_missing_facts_become_issues_not_invented_values() -> None:
     assert set(p.issues) == {"thiếu mã nhân viên", "thiếu ngày vào"}
 
 
-async def test_load_is_repeatable_and_touches_no_money(who: Who) -> None:
+async def test_load_is_repeatable_and_touches_no_money(who: Who, monkeypatch: pytest.MonkeyPatch) -> None:
     admin = await who("admin")
     tag = str(id(admin))[-6:]
     people = [
@@ -37,6 +42,14 @@ async def test_load_is_repeatable_and_touches_no_money(who: Who) -> None:
         Person(source_id=f"x{tag}", name="Lạc giả", outside=True, manager_source_id="không-có"),
     ]
     ids = DictMap()
+    modes: list[bool] = []
+    real = executor.run
+
+    async def spy(p: Any, name: str, inp: Any, **kw: Any) -> Any:
+        modes.append(bool(kw.get("historical")))
+        return await real(p, name, inp, **kw)
+
+    monkeypatch.setattr(trial.executor, "run", spy)
     journals = await owner_val("SELECT count(*) FROM ledger.journals WHERE tenant_id=%s", (admin.tenant_id,))
     first = await load_people(admin, people, ids, as_of=date(2026, 11, 6))
     assert (first.parties_created, first.employments, first.assignments) == (4, 2, 1)
@@ -44,6 +57,7 @@ async def test_load_is_repeatable_and_touches_no_money(who: Who) -> None:
     again = await load_people(admin, people, ids, as_of=date(2026, 11, 6))
     assert (again.parties_created, again.parties_reused, again.employments, again.assignments) == (0, 4, 0, 0)
     assert await owner_val("SELECT count(*) FROM ledger.journals WHERE tenant_id=%s", (admin.tenant_id,)) == journals
+    assert modes and all(modes)   # bất biến 12: mọi lời gọi ghi của lớp nạp chạy historical=True (0185)
 
 
 def test_reconcile_names_what_was_not_loaded() -> None:

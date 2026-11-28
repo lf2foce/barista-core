@@ -28,6 +28,7 @@ from barista.api import Action as A
 from barista.api import (
     Conflict,
     Ctx,
+    CutoverIn,
     Day,
     Denied,
     Desk,
@@ -90,6 +91,28 @@ async def lock_period(ctx: Ctx, inp: LockPeriod) -> dict[str, Any]:
     old = await ledger.lock_through(ctx, entity=eid, through=through, reason=inp.reason)
     return {"entity_id": eid, "locked_through": through, "previous": old,
             "summary": f"Đã khoá kỳ tới hết {through:%d/%m/%Y}"}
+
+
+@m.cutover("lock_before_cut", "Khoá kỳ kế toán tới hết ngày trước ngày chuyển", order=20, resource="acct",
+           why="onboard.go_live (chủ tài khoản bấm, qua chuỗi duyệt onboard_go_live): tiến mốc khoá kỳ của MỌI pháp nhân đang dùng tới hết ngày trước ngày "
+               "chuyển bằng đúng cơ chế khoá kỳ của sổ cái (ledger.lock_through — chỉ tiến); pháp nhân đã khoá tới đó (vd lô đầu kỳ đã khoá) ⇒ giữ nguyên. "
+               "Trả câu tóm tắt, không số tiền")
+async def cutover_lock_before_cut(ctx: Ctx, inp: CutoverIn) -> dict[str, Any]:
+    """Ngày chuyển (ADR 0263): dữ liệu trước ngày cắt là của hệ cũ đã nạp ⇒ không ghi / sửa bút toán vào đó nữa (sửa = mở lại kỳ có duyệt)."""
+    through = inp.cut_date - timedelta(days=1)
+    if through > today():
+        raise Invalid(f"Ngày chuyển {inp.cut_date:%d/%m/%Y} sau hôm nay — chưa khoá trước được")
+    locked, kept = [], []
+    for e in await ctx.all("SELECT id, code FROM core.legal_entities WHERE active ORDER BY is_default DESC, code"):
+        old = await ledger.locked_through(ctx, e["id"])
+        if old is not None and old >= through:
+            kept.append(e["code"])
+            continue
+        await ledger.lock_through(ctx, entity=e["id"], through=through, reason="Ngày chuyển sang Barista — dữ liệu trước ngày này từ hệ cũ")
+        locked.append(e["code"])
+    if not locked:
+        return {"skipped": True, "summary": f"Kỳ đã khoá tới hết {through:%d/%m/%Y} trở đi — giữ nguyên" if kept else "Chưa có pháp nhân nào"}
+    return {"summary": f"Khoá kỳ tới hết {through:%d/%m/%Y}: {', '.join(locked)}" + (f" (giữ nguyên: {', '.join(kept)})" if kept else "")}
 
 
 class ReopenPeriod(Input):

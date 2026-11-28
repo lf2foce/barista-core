@@ -40,6 +40,8 @@ FAMILIES = {
     ("connectors", "connections"): "barista.api.connectors.connections (0244): connectors.of_kind khai family=\"connector\", owned_by theo module khai bộ nối",
     ("flow", "_dated_rows"): "registry.DATE_SOURCES (m.date_source, ADR 0246): nguồn ngày khai callers=(\"flow\",) + why= — động cơ luật theo ngày đọc bản "
                              "ghi còn mở có ngày trong khoảng (mã, ngày, người phụ trách, trường an toàn); hành động chạy bằng quyền người đặt luật",
+    ("onboard", "_run_step"): "registry.CUTOVERS (m.cutover, ADR 0263): bước ngày chuyển khai callers=(\"onboard\",) + why= — onboard.go_live (chủ tài khoản, "
+                              "qua chuỗi duyệt onboard_go_live, đủ điều kiện) chạy theo thứ tự; trả câu tóm tắt",
     ("admin", "_install_items"): "Pack(records=…) (0153): lệnh cài mặc định là thao tác nội bộ khai callers=(\"admin\",) — vd hạng trợ lý AI (0193, "
                                    "chính sách của nhà vận hành); dữ liệu do gói khai, chỉ thêm phần thiếu; lệnh không nội bộ chạy bằng quyền người cài",
 }

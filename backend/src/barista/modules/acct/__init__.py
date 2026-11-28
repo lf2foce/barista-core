@@ -12,7 +12,7 @@ thu, phí thu hộ) · ``reconcile`` (đối soát sao kê) · ``payouts`` (lệ
 """
 
 from barista.api import Action as A
-from barista.api import Desk, Hints, Module, Pack, Role, Screen, Workspace
+from barista.api import Desk, Hints, Module, OnboardStep, Pack, Role, Screen, Workspace
 from barista.kernel import ledger
 
 # Gói 'finance' tự khai (0069) — kernel không biết tên gói; vai / đội / mẫu mặc định xem presets, màn & "cần chú ý" khai ngay dưới.
@@ -40,6 +40,9 @@ Pack("finance", "Tài chính",
      },
      hints={"director": Hints(suggest=(("acct.cashflow", "Dòng tiền 4 tháng tới có tháng nào âm không?"),))},
      tools={"director": ("acct.cashflow", "acct.receivables", "acct.pnl")},   # 0218
+     # việc ngày chuyển của gói (ADR 0263): đầu kỳ cần tổng kiểm của sổ cũ + người ký — không tự chạy được ở ngày chuyển (khoá kỳ thì tự chạy: m.cutover)
+     onboard_steps=(OnboardStep("opening_balances", 6, "Ghi số dư đầu kỳ tại ngày cắt (Kế toán › Số dư đầu kỳ) khớp tổng kiểm của sổ cũ",
+                                role="accountant", evidence="Mã lô đầu kỳ đã ghi sổ"),),
      grants=(("director", "acct", "all", "read"),),   # việc theo dõi ("work") là năng lực nền — quyền của quản trị / giám đốc khai ở gói nền
      teams=(("KT", "Kế toán", "accounting"),),
      chains=(("settlement_payment", "Chi nghĩa vụ", ({"kind": "role", "role": "director"},)),

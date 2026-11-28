@@ -1,7 +1,7 @@
 # Runbook 16 · Nạp dữ liệu từ hệ cũ (migrate) — làm sao để dữ liệu cũ không "sống dậy"
 
 Người soạn: Claude (Anthropic), 12/11/2026. Quyết định nền: 0185. Đọc trước MỌI lần nạp dữ liệu hệ cũ
-vào một bản cài, kể cả nạp thử cho demo.
+vào một bản cài, kể cả nạp thử cho demo. Quy trình onboard đầy đủ (bộ chuyển, đối chiếu, ký, ngày chuyển): [runbook 23](23-onboard.md).
 
 ## Rủi ro (đã xảy ra thật, 12/11/2026)
 
@@ -97,7 +97,11 @@ Dữ liệu thật của khách chỉ ở máy / VPS của chủ sở hữu, tro
 | Phiếu duyệt của lệnh nạp bị đặt luật duyệt | báo người duyệt (đúng thiết kế: người phải bấm) | biết trước |
 | Vòng quét của gói ngoài lõi | tuỳ gói — test của gói phải có trường hợp nạp lịch sử | kiểm khi bật gói mới |
 
-## Ngày chuyển giao (cut-over) — chưa xây
+## Ngày chuyển giao (cut-over) — xây một phần, xem runbook 23
+
+**Từ 28/11/2026 (ADR 0263):** khung chung cho cả hành trình — bộ chuyển theo hợp đồng `barista.api.onboard` (sổ mã gốc + dấu vân tay trên DB của bản cài, đối
+chiếu có ngưỡng, ký), danh sách việc 7 chặng và lệnh ngày chuyển `onboard.go_live` (khoá kỳ kế toán tự chạy) — đọc
+[runbook 23](23-onboard.md). Phần dưới đây CHƯA có lệnh, vẫn là việc tay trong danh sách việc của gói:
 
 Lead nạp đang "đỗ": vòng quét bỏ qua cho tới khi có người giao tay. Khi khách chốt ngày chuyển hẳn sang Barista cần một lệnh **kích hoạt hàng loạt**: chọn tập lead
 nào thành lead sống, đồng hồ tính từ lúc kích hoạt, chia theo luật hay giữ người cũ. Kích hoạt 8.000 lead cùng lúc mà không thiết kế là lặp lại đúng sự cố trên (lần

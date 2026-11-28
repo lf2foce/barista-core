@@ -3,13 +3,13 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-17 gói · 29 module · 1026 thao tác (287 nội bộ) · 21 bên nghe sự kiện.
+17 gói · 30 module · 1040 thao tác (294 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
 | Gói | Tên | Loại | Bắt buộc | Module |
 |---|---|---|---|---|
-| `base` | Nền | lõi | — | `admin`, `apps`, `asks`, `connect`, `connectors`, `core`, `flow`, `health`, `kb`, `memory`, `papers`, `work` |
+| `base` | Nền | lõi | — | `admin`, `apps`, `asks`, `connect`, `connectors`, `core`, `flow`, `health`, `kb`, `memory`, `onboard`, `papers`, `work` |
 | `books` | Sổ sách & nghĩa vụ | năng lực | — | `books` |
 | `crm` | Khách hàng | năng lực | `directory`, `schedule` | `crm`, `leadflow` |
 | `directory` | Cá nhân & tổ chức | năng lực | — | `parties` |
@@ -31,7 +31,7 @@
 
 | Module | Tên | Gói | Schema | Mã | Lệnh | Truy vấn | Nội bộ |
 |---|---|---|---|---|---|---|---|
-| `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (20 file) | 68 | 85 | 57 |
+| `acct` | Kế toán | `finance` | `acct` | `modules/acct/` (20 file) | 69 | 85 | 58 |
 | `admin` | Quản trị | `base` | `admin` | `modules/admin.py` | 41 | 45 | 13 |
 | `apps` | App của tôi | `base` | `apps` | `modules/apps.py` | 11 | 20 | 2 |
 | `asks` | Yêu cầu gửi bên ngoài | `base` | `asks` | `modules/asks.py` | 10 | 3 | 4 |
@@ -51,6 +51,7 @@
 | `memory` | Trí nhớ | `base` | `memory` | `modules/memory.py` | 4 | 4 | 1 |
 | `mgmt` | Báo cáo quản trị | `mgmt` | `mgmt` | `modules/mgmt.py` | 2 | 3 | 0 |
 | `mkt` | Marketing | `marketing` | `mkt` | `modules/mkt/` (3 file) | 15 | 32 | 16 |
+| `onboard` | Đưa vào dùng | `base` | `onboard` | `modules/onboard.py` | 7 | 6 | 6 |
 | `papers` | Giấy tờ | `base` | `papers` | `modules/papers/` (3 file) | 12 | 16 | 3 |
 | `parties` | Cá nhân & tổ chức | `directory` | `parties` | `modules/parties.py` | 20 | 16 | 19 |
 | `pay` | Lương & thù lao | `pay` | `pay` | `modules/pay/` (7 file) | 15 | 17 | 7 |
@@ -70,6 +71,7 @@
 - **Hợp đồng quyền hệ thống** (thao tác ← module được gọi):
   - `acct.advances_left` ← `pay`
   - `acct.confidential_open` ← `acct`
+  - `acct.cutover_lock_before_cut` ← `onboard`
   - `acct.health_report` ← `health`
   - `acct.party_open_vnd` ← `parties`
   - `acct.payable_states` ← `pay`
@@ -383,6 +385,10 @@
 - **Nghe sự kiện:** `crm.lead_outcome_recorded` → `mkt.queue_ad_conversion`
 - **Tìm nhanh:** `mkt.search_campaigns`
 - **Vòng quét:** `mkt.dispatch_ad_changes`, `mkt.send_ad_conversions`, `mkt.watch_ads`
+
+### `onboard` — Đưa vào dùng
+
+- **Tài nguyên quyền:** `onboard`
 
 ### `papers` — Giấy tờ
 
