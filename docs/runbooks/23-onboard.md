@@ -164,7 +164,8 @@ Bộ chạy làm gì với từng bản ghi:
 | Lệnh phải qua duyệt, lượt có `approver_email` | người duyệt đó quyết phiếu ngay (đúng `core.decide`); lệnh chạy ⇒ ghi sổ như thường |
 | Lệnh phải qua duyệt, lượt không có người duyệt (hoặc người đó không có tên ở bước duyệt) | mã phiếu ghi vào sổ phiếu chờ; dòng là ngoại lệ "Lệnh đang chờ duyệt" |
 | Lượt sau, phiếu của dòng ĐÃ được duyệt và lệnh đã chạy | GHI NHẬN vào sổ mã gốc (tính là tạo / cập nhật của lượt này) — không chạy lại, không còn là ngoại lệ |
-| Lượt sau, phiếu bị từ chối (hoặc duyệt xong mà lệnh không chạy được) | ngoại lệ "Lệnh từ chối" kèm lý do; chỉ gửi phiếu mới khi nguồn / ánh xạ của dòng đổi (hoặc đổi `mapping_version`) |
+| Lượt sau, phiếu bị từ chối (hoặc duyệt xong mà lệnh không chạy được, lượt không có người duyệt) | ngoại lệ "Lệnh từ chối" kèm lý do; chỉ gửi phiếu mới khi nguồn / ánh xạ của dòng đổi (hoặc đổi `mapping_version`) |
+| Lượt sau, phiếu duyệt xong mà lệnh không chạy được, lượt CÓ `approver_email` | gửi phiếu MỚI (lần gửi tăng một), người duyệt quyết ngay — lệnh không chạy được vì thứ tự dữ liệu sẽ chạy khi dữ liệu đã đủ. Lỗi cố định (nguồn sai) vẫn là ngoại lệ "Lệnh từ chối", nhưng mỗi lượt để lại một phiếu "không chạy được" mang tên người duyệt — sửa nguồn trước lượt cuối |
 | Đã nạp ở lượt trước nhưng bản trích lần này không còn | ngoại lệ "Không còn ở nguồn" — KHÔNG tự xoá ở Barista, người xử lý tay |
 
 - Chạy lại **cùng nguồn bao nhiêu lần cũng không tạo trùng**: khoá chống lặp theo LẦN THAY ĐỔI — tạo một khoá cố định mỗi mã gốc, cập nhật mang số lần (`v1`, `v2`…). Chết giữa chừng chạy lại an toàn; giá trị đổi rồi quay về (A → B → A) vẫn được cập nhật đúng.
