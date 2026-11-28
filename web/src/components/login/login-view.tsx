@@ -202,7 +202,7 @@ export function LoginView() {
                 ))}
               </>
             ) : null}
-            {config && !config.google && !config.dev ? (
+            {config && !config.google && !config.dev && !config.email ? (
               <p className="t12 select-text text-muted-foreground">Core chưa cấu hình đăng nhập Google (BARISTA_GOOGLE_CLIENT_IDS, BARISTA_GOOGLE_APP_CLIENT_ID).</p>
             ) : null}
           </>
