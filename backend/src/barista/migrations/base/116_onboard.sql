@@ -4,6 +4,9 @@
 --  * runs: một LƯỢT chuyển (thử ``mock`` / cuối ``final``) của một nguồn — ai chạy, mốc dữ liệu nguồn, phiên bản ánh xạ, số đếm, trạng thái.
 --  * source_ids: sổ MÃ GỐC (nguồn × thực thể × mã ở hệ cũ → mã Barista) + dấu vân tay (băm bản ghi trung tính) — chạy lại cùng nguồn không tạo trùng; dấu
 --    đổi ⇒ cập nhật (nếu thực thể khai) hoặc thành ngoại lệ "đổi sau khi nạp". Dùng được trên bản thật (thay sổ ``legacy_map`` chỉ-DB-thử của 0106 §6).
+--    ``target_id`` trống = lệnh của thực thể chỉ GHI NHẬN trên bản ghi có sẵn (ký, ghi nhận thanh toán…), không sinh mã riêng — dòng vẫn chứng "đã nạp".
+--  * pending: lệnh của một bản ghi đang nằm ở PHIẾU DUYỆT (mã phiếu) — lượt sau hỏi trạng thái phiếu thay vì chạy lại: phiếu đã thực hiện ⇒ ghi sổ mã gốc,
+--    bị từ chối ⇒ ngoại lệ. ``attempt`` = số lần đã gửi lại (phiếu trước không chạy được) — nằm trong khoá chống lặp của lần gửi.
 --  * exceptions: dòng nguồn KHÔNG vào (dữ liệu sai / thiếu, tham chiếu thiếu, lệnh từ chối…) — ghi lại, không tự điền.
 --  * recon: đối chiếu từng chỉ số (theo tháng nếu khai) giữa nguồn và Barista sau mỗi lượt — khớp / lệch theo ngưỡng.
 --  * signoffs: người ký biên bản đối chiếu của một lượt (qua chuỗi duyệt — người duyệt ghi tên).
@@ -38,7 +41,7 @@ CREATE TABLE onboard.source_ids (
     source text NOT NULL CHECK (source ~ '^[a-z][a-z0-9_]{0,39}$'),
     entity text NOT NULL CHECK (entity ~ '^[a-z][a-z0-9_]{0,39}$'),
     source_id text NOT NULL CHECK (btrim(source_id) <> '' AND length(source_id) <= 200),
-    target_id uuid NOT NULL,
+    target_id uuid,                                          -- trống = thực thể không có mã đích (lệnh chỉ ghi nhận)
     fingerprint text NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{64}$'),
     version integer NOT NULL DEFAULT 0 CHECK (version >= 0),   -- số lần đã cập nhật từ nguồn (0 = mới tạo); khoá chống lặp của lần cập nhật kế tiếp mang số này + 1
     run_id uuid NOT NULL,
@@ -49,6 +52,24 @@ CREATE TABLE onboard.source_ids (
 );
 CALL core.secure_tenant('onboard.source_ids');
 GRANT SELECT, INSERT, UPDATE ON onboard.source_ids TO barista_app;
+
+CREATE TABLE onboard.pending (
+    tenant_id uuid NOT NULL DEFAULT core.tenant() REFERENCES core.tenants(id) ON DELETE CASCADE,
+    source text NOT NULL CHECK (source ~ '^[a-z][a-z0-9_]{0,39}$'),
+    entity text NOT NULL CHECK (entity ~ '^[a-z][a-z0-9_]{0,39}$'),
+    source_id text NOT NULL CHECK (btrim(source_id) <> '' AND length(source_id) <= 200),
+    approval_id uuid NOT NULL,                               -- phiếu duyệt của lõi (không khoá ngoại chéo module — trạng thái hỏi qua truy vấn của lõi)
+    fingerprint text NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{64}$'),
+    version integer NOT NULL DEFAULT 0 CHECK (version >= 0),
+    attempt integer NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+    state text NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'done')),   -- done = đã ghi sổ mã gốc
+    run_id uuid NOT NULL,
+    at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, source, entity, source_id),
+    FOREIGN KEY (tenant_id, run_id) REFERENCES onboard.runs (tenant_id, id)
+);
+CALL core.secure_tenant('onboard.pending');
+GRANT SELECT, INSERT, UPDATE ON onboard.pending TO barista_app;
 
 CREATE TABLE onboard.exceptions (
     id bigserial PRIMARY KEY,
@@ -61,7 +82,7 @@ CREATE TABLE onboard.exceptions (
     at timestamptz NOT NULL DEFAULT now(),
     FOREIGN KEY (tenant_id, run_id) REFERENCES onboard.runs (tenant_id, id)
 );
-CREATE INDEX idx_onboard_exceptions ON onboard.exceptions (tenant_id, run_id, entity);
+CREATE INDEX idx_onboard_exceptions ON onboard.exceptions (tenant_id, run_id, entity, id);
 CALL core.secure_tenant('onboard.exceptions');
 GRANT SELECT, INSERT ON onboard.exceptions TO barista_app;
 GRANT USAGE ON SEQUENCE onboard.exceptions_id_seq TO barista_app;
@@ -75,7 +96,8 @@ CREATE TABLE onboard.recon (
     source_value numeric NOT NULL,
     target_value numeric NOT NULL,
     tolerance_pct numeric NOT NULL DEFAULT 0 CHECK (tolerance_pct >= 0 AND tolerance_pct <= 100),
-    status text NOT NULL CHECK (status IN ('khop', 'lech')),
+    status text NOT NULL CHECK (status IN ('khop', 'lech', 'loi')),   -- loi = chỉ số không tính được ở lượt này (lý do ở note) — chưa đối chiếu, không coi là khớp
+    note text NOT NULL DEFAULT '' CHECK (length(note) <= 500),
     PRIMARY KEY (tenant_id, run_id, metric, period),
     FOREIGN KEY (tenant_id, run_id) REFERENCES onboard.runs (tenant_id, id)
 );

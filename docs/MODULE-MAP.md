@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-17 gói · 30 module · 1066 thao tác (297 nội bộ) · 21 bên nghe sự kiện.
+17 gói · 30 module · 1069 thao tác (300 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
@@ -38,7 +38,7 @@
 | `books` | Sổ sách & nghĩa vụ | `books` | `books` | `modules/books.py` | 9 | 14 | 6 |
 | `connect` | Ứng dụng kết nối | `base` | — | `modules/connect.py` | 9 | 3 | 4 |
 | `connectors` | Kết nối ngoài | `base` | `connectors` | `modules/connectors.py` | 10 | 6 | 6 |
-| `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/plugins.py`, `kernel/rail.py`, `kernel/record_files.py`, `kernel/screen_usage.py` | 37 | 42 | 10 |
+| `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/plugins.py`, `kernel/rail.py`, `kernel/record_files.py`, `kernel/screen_usage.py` | 37 | 43 | 11 |
 | `crm` | Khách hàng | `crm` | `crm` | `modules/crm/` (18 file) | 25 | 50 | 42 |
 | `findings` | Báo cáo chạy song song | `findings` | — | `modules/findings.py` | 0 | 7 | 1 |
 | `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (17 file) | 37 | 50 | 33 |
@@ -51,7 +51,7 @@
 | `memory` | Trí nhớ | `base` | `memory` | `modules/memory.py` | 4 | 4 | 1 |
 | `mgmt` | Báo cáo quản trị | `mgmt` | `mgmt` | `modules/mgmt.py` | 2 | 3 | 0 |
 | `mkt` | Marketing | `marketing` | `mkt` | `modules/mkt/` (3 file) | 15 | 32 | 16 |
-| `onboard` | Đưa vào dùng | `base` | `onboard` | `modules/onboard.py` | 7 | 6 | 6 |
+| `onboard` | Đưa vào dùng | `base` | `onboard` | `modules/onboard.py` | 8 | 7 | 8 |
 | `papers` | Giấy tờ | `base` | `papers` | `modules/papers/` (3 file) | 12 | 16 | 3 |
 | `parties` | Cá nhân & tổ chức | `directory` | `parties` | `modules/parties.py` | 20 | 16 | 19 |
 | `pay` | Lương & thù lao | `pay` | `pay` | `modules/pay/` (7 file) | 15 | 17 | 7 |

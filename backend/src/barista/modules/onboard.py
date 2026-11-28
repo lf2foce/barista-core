@@ -29,8 +29,9 @@ m = Module("onboard", "Đưa vào dùng", pack="base",
 
 KINDS = {"mock": "Chuyển thử", "final": "Lượt cuối"}
 RUN_STATUS = {"running": "Đang chạy", "done": "Xong", "failed": "Lỗi"}
+RECON_STATUS = {"khop": "Khớp", "lech": "Lệch", "loi": "Không tính được"}
 REASONS = {"bad_source": "Dữ liệu nguồn sai / thiếu", "missing_ref": "Thiếu bản ghi được tham chiếu", "duplicate": "Trùng mã nguồn trong lượt",
-           "rejected": "Lệnh từ chối", "needs_approval": "Lệnh cần duyệt — không nạp qua duyệt", "changed_after_load": "Nguồn đổi sau khi đã nạp",
+           "rejected": "Lệnh từ chối", "needs_approval": "Lệnh đang chờ duyệt", "changed_after_load": "Nguồn đổi sau khi đã nạp",
            "missing_at_source": "Không còn ở nguồn (đã nạp trước — không tự xoá)", "retry_conflict": "Chạy lại gặp nội dung khác lần trước — kiểm tay"}
 STEP_STATUS = {"todo": "Chưa xong", "done": "Đã xong", "skipped": "Bỏ qua"}
 MIN_MOCK_RUNS = 2   # ADR 0263 chặng 3: ít nhất hai lượt chuyển thử đạt (không lệch, hoặc lệch đã ký) trước lượt cuối
@@ -107,7 +108,7 @@ async def source_map(ctx: Ctx, inp: MapIn) -> dict[str, Any]:
 
 class IdRow(BaseModel):
     source_id: str
-    target_id: UUID
+    target_id: UUID | None = None   # trống = thực thể không có mã đích (lệnh chỉ ghi nhận — ``Entity(keyless=True)``)
     fingerprint: str
     version: int = 0
 
@@ -122,16 +123,57 @@ class PutIds(Input):
 @m.command("put_ids", resource="onboard", action="manage", title="Ghi sổ mã gốc", internal=True, agent="deny")
 async def put_ids(ctx: Ctx, inp: PutIds) -> dict[str, Any]:
     """Thêm mã gốc mới; mã đã có ⇒ cập nhật dấu vân tay + số lần cập nhật + lượt (sau lệnh cập nhật). Không đổi mã đích của mã gốc đã có (một mã gốc
-    một bản ghi); số lần cập nhật chỉ tăng."""
+    một bản ghi); số lần cập nhật chỉ tăng. Dòng vừa ghi sổ ⇒ phiếu duyệt đang theo của nó (nếu có) đóng: lệnh đã vào."""
     n = 0
     for r in inp.rows:
         n += await ctx.exec("""INSERT INTO onboard.source_ids (source, entity, source_id, target_id, fingerprint, version, run_id)
                                VALUES (%s, %s, %s, %s, %s, %s, %s)
                                ON CONFLICT (tenant_id, source, entity, source_id) DO UPDATE SET fingerprint = EXCLUDED.fingerprint, version = EXCLUDED.version,
                                    run_id = EXCLUDED.run_id, updated_at = now()
-                               WHERE onboard.source_ids.target_id = EXCLUDED.target_id AND EXCLUDED.version >= onboard.source_ids.version""",
+                               WHERE onboard.source_ids.target_id IS NOT DISTINCT FROM EXCLUDED.target_id AND EXCLUDED.version >= onboard.source_ids.version""",
                             (inp.source, inp.entity, r.source_id, r.target_id, r.fingerprint, r.version, inp.run_id))
+    await ctx.exec("UPDATE onboard.pending SET state = 'done' WHERE source = %s AND entity = %s AND source_id = ANY(%s) AND state = 'waiting'",
+                   (inp.source, inp.entity, [r.source_id for r in inp.rows]))
     return {"written": n}
+
+
+class PendingRow(BaseModel):
+    source_id: str
+    approval_id: UUID
+    fingerprint: str
+    version: int = 0
+    attempt: int = 0
+
+
+class PutPending(Input):
+    run_id: UUID = field("Lượt", hidden=True)
+    source: Key = field("Nguồn")
+    entity: Key = field("Thực thể")
+    rows: list[PendingRow] = field("Dòng", [])
+
+
+@m.command("put_pending", resource="onboard", action="manage", title="Ghi phiếu duyệt đang theo của lượt chuyển", internal=True, agent="deny")
+async def put_pending(ctx: Ctx, inp: PutPending) -> dict[str, Any]:
+    """Lệnh của một bản ghi thành PHIẾU DUYỆT ⇒ ghi mã phiếu; lượt sau hỏi trạng thái phiếu (đã thực hiện ⇒ ghi sổ mã gốc) thay vì chạy lại. Một mã gốc một
+    dòng: lần gửi lại (phiếu trước không chạy được) thay phiếu cũ, ``attempt`` tăng."""
+    for r in inp.rows:
+        await ctx.exec("""INSERT INTO onboard.pending (source, entity, source_id, approval_id, fingerprint, version, attempt, run_id)
+                          VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                          ON CONFLICT (tenant_id, source, entity, source_id) DO UPDATE SET approval_id = EXCLUDED.approval_id, fingerprint = EXCLUDED.fingerprint,
+                              version = EXCLUDED.version, attempt = EXCLUDED.attempt, run_id = EXCLUDED.run_id, state = 'waiting', at = now()""",
+                       (inp.source, inp.entity, r.source_id, r.approval_id, r.fingerprint, r.version, r.attempt, inp.run_id))
+    return {"written": len(inp.rows)}
+
+
+class SourceIn(Input):
+    source: Key = field("Nguồn")
+
+
+@m.query("pending_map", resource="onboard", title="Phiếu duyệt đang theo của một nguồn", internal=True, agent="deny")
+async def pending_map(ctx: Ctx, inp: SourceIn) -> dict[str, Any]:
+    rows = await ctx.all("SELECT entity, source_id, approval_id, fingerprint, version, attempt FROM onboard.pending WHERE source = %s AND state = 'waiting'",
+                         (inp.source,))
+    return {"rows": rows}
 
 
 class ExceptionRow(BaseModel):
@@ -171,7 +213,8 @@ class ReconRow(BaseModel):
     source_value: float
     target_value: float
     tolerance_pct: float = 0
-    status: Literal["khop", "lech"]
+    status: Literal["khop", "lech", "loi"]   # loi = chỉ số không tính được ở lượt này (lý do ở note)
+    note: str = ""
 
 
 class FinishRun(Input):
@@ -190,19 +233,19 @@ async def finish_run(ctx: Ctx, inp: FinishRun) -> dict[str, Any]:
     if row["status"] != "running":
         raise Conflict("Lượt chuyển này đã đóng")
     for r in inp.recon:
-        await ctx.exec("""INSERT INTO onboard.recon (run_id, metric, label, period, source_value, target_value, tolerance_pct, status)
-                          VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                       (inp.run_id, r.metric, r.label[:160], r.period, r.source_value, r.target_value, r.tolerance_pct, r.status))
+        await ctx.exec("""INSERT INTO onboard.recon (run_id, metric, label, period, source_value, target_value, tolerance_pct, status, note)
+                          VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                       (inp.run_id, r.metric, r.label[:160], r.period, r.source_value, r.target_value, r.tolerance_pct, r.status, r.note[:500]))
     await ctx.exec("UPDATE onboard.runs SET status = %s, error = %s, counts = %s, finished_at = now() WHERE id = %s",
                    (inp.status, inp.error, Jsonb(inp.counts), inp.run_id))
-    return {"run_id": inp.run_id, "mismatches": sum(1 for r in inp.recon if r.status == "lech")}
+    return {"run_id": inp.run_id, "mismatches": sum(1 for r in inp.recon if r.status != "khop")}
 
 
 # ── Đọc: lượt chuyển, đối chiếu, ngoại lệ ──
 
 RUN_ROWS = """SELECT r.id, r.source, r.kind, r.status, r.started_at, r.finished_at, r.counts, r.error, r.mapping_version, r.source_cut_at,
                      u.name AS by_name,
-                     (SELECT count(*) FROM onboard.recon c WHERE c.run_id = r.id AND c.status = 'lech') AS mismatches,
+                     (SELECT count(*) FROM onboard.recon c WHERE c.run_id = r.id AND c.status <> 'khop') AS mismatches,
                      (SELECT count(*) FROM onboard.exceptions e WHERE e.run_id = r.id) AS exceptions,
                      s.signed_at, su.name AS signed_name, au.name AS approved_name
               FROM onboard.runs r LEFT JOIN core.users u ON u.id = r.by_user
@@ -255,8 +298,8 @@ async def run(ctx: Ctx, inp: RunIn) -> dict[str, Any]:
     if r is None:
         raise NotFound("Không có lượt chuyển này")
     c = r["counts"] or {}
-    recon = await ctx.all("SELECT metric, label, period, source_value, target_value, tolerance_pct, status FROM onboard.recon WHERE run_id = %s"
-                          " ORDER BY status DESC, metric, period", (inp.run_id,))
+    recon = await ctx.all("SELECT metric, label, period, source_value, target_value, tolerance_pct, status, note FROM onboard.recon WHERE run_id = %s"
+                          " ORDER BY (status = 'khop'), metric, period", (inp.run_id,))
     reasons = await ctx.all("SELECT reason, count(*) AS n FROM onboard.exceptions WHERE run_id = %s GROUP BY reason ORDER BY n DESC", (inp.run_id,))
     blocks: list[dict[str, Any]] = [ui.b_kpis([
         ui.kpi("Tạo mới", c.get("created", 0)), ui.kpi("Cập nhật", c.get("updated", 0)), ui.kpi("Giữ nguyên", c.get("skipped", 0)),
@@ -274,14 +317,23 @@ async def run(ctx: Ctx, inp: RunIn) -> dict[str, Any]:
                                    "Xử lý ở nguồn rồi chạy lượt mới; chấp nhận thì ký biên bản kèm lý do (qua chuỗi duyệt của công ty)."))
     rows = [{"id": f"{x['metric']}|{x['period']}", "label": x["label"] or x["metric"], "period": x["period"] or "Cả lượt",
              "source_value": float(x["source_value"]), "target_value": float(x["target_value"]),
-             "diff": float(x["target_value"]) - float(x["source_value"]), "tolerance": f"± {float(x['tolerance_pct']):g} %", "status": x["status"]}
+             "diff": float(x["target_value"]) - float(x["source_value"]), "tolerance": f"± {float(x['tolerance_pct']):g} %", "status": x["status"],
+             "note": x["note"]}
             for x in recon]
-    blocks.append(ui.b_table(ui.table(rows, [ui.col("label", "Chỉ số", width=260), ui.col("period", "Kỳ"), ui.col("source_value", "Hệ cũ", "number"),
-                                             ui.col("target_value", "Barista", "number"), ui.col("diff", "Chênh", "number"), ui.col("tolerance", "Ngưỡng"),
-                                             ui.col("status", "Kết quả", "badge", labels={"khop": "Khớp", "lech": "Lệch"}, tones={"khop": "green", "lech": "red"})],
-                                      title="Đối chiếu nguồn ↔ Barista", empty="Lượt này chưa có chỉ số đối chiếu")))
+    cols = [ui.col("label", "Chỉ số", width=260), ui.col("period", "Kỳ"), ui.col("source_value", "Hệ cũ", "number"),
+            ui.col("target_value", "Barista", "number"), ui.col("diff", "Chênh", "number"), ui.col("tolerance", "Ngưỡng"),
+            ui.col("status", "Kết quả", "badge", labels=RECON_STATUS, tones={"khop": "green", "lech": "red", "loi": "orange"})]
+    if any(x["note"] for x in rows):   # chỉ số không tính được: lý do — số hai phía của dòng đó KHÔNG phải số đo
+        cols.append(ui.col("note", "Ghi chú", width=320))
+    blocks.append(ui.b_table(ui.table(rows, cols, title="Đối chiếu nguồn ↔ Barista", empty="Lượt này chưa có chỉ số đối chiếu")))
+    per = _per_entity(c)
+    if per:
+        blocks.append(ui.b_table(ui.table(per, [ui.col("entity", "Thực thể"), ui.col("created", "Tạo", "number"), ui.col("updated", "Cập nhật", "number"),
+                                                ui.col("skipped", "Giữ nguyên", "number"), ui.col("exceptions", "Ngoại lệ", "number"),
+                                                ui.col("seconds", "Giây", "number")], title="Theo thực thể (chậm nhất trước)", row_key="entity")))
     if reasons:
-        blocks.append(ui.b_list([{"title": REASONS.get(x["reason"], x["reason"]), "subtitle": f"{x['n']} dòng", "tone": "orange"} for x in reasons],
+        blocks.append(ui.b_list([{"title": REASONS.get(x["reason"], x["reason"]), "subtitle": f"{x['n']} dòng", "tone": "orange",
+                                  "open": {"query": "onboard.exceptions", "input": {"run_id": str(inp.run_id), "reason": x["reason"]}}} for x in reasons],
                                 "Ngoại lệ theo lý do"))
     actions = [ui.act("onboard.sign", "Ký biên bản đối chiếu", {"run_id": str(inp.run_id)}, "primary")] \
         if r["status"] == "done" and r["signed_at"] is None and ctx.p.can("onboard", "manage") else []
@@ -292,13 +344,46 @@ async def run(ctx: Ctx, inp: RunIn) -> dict[str, Any]:
                    actions=actions, open=[{"title": "Xem các dòng ngoại lệ", "query": "onboard.exceptions", "input": {"run_id": str(inp.run_id)}}])
 
 
+def _per_entity(counts: dict[str, Any]) -> list[dict[str, Any]]:
+    """Số của từng thực thể từ ``runs.counts`` (khoá ``<thực thể>:<loại>``; ``ms`` = thời gian chạy) — chậm nhất trước."""
+    per: dict[str, dict[str, Any]] = {}
+    for k, v in counts.items():
+        if ":" in k:
+            entity, what = k.split(":", 1)
+            per.setdefault(entity, {"entity": entity, "created": 0, "updated": 0, "skipped": 0, "exceptions": 0, "ms": 0})[what] = v
+    return sorted(({**r, "seconds": round(r.pop("ms") / 1000, 1)} for r in per.values()), key=lambda r: -r["seconds"]) if per else []
+
+
+EXCEPTION_PAGE = 500   # trang mặc định khi bên gọi không xin trang — bảng luôn mang TỔNG số dòng của tập lọc (không cắt lặng lẽ)
+
+
+class ExceptionsIn(Input):
+    run_id: UUID = field("Lượt chuyển", hidden=True)
+    reason: str = field("Lý do", "", options={"": "Mọi lý do", **REASONS})
+    entity: str = field("Thực thể", "", max_length=40, help="Khoá thực thể của bộ chuyển (cột Thực thể) — trống = mọi thực thể")
+
+
 @m.query("exceptions", resource="onboard", title="Ngoại lệ của một lượt chuyển", min_scope="all")
-async def exceptions(ctx: Ctx, inp: RunIn) -> dict[str, Any]:
-    """Dòng nguồn KHÔNG vào Barista ở lượt này: thực thể, mã ở hệ cũ, lý do, chi tiết — không tự điền thay dữ liệu thiếu."""
-    rows = await ctx.all("SELECT id, entity, source_id, reason, detail, at FROM onboard.exceptions WHERE run_id = %s ORDER BY entity, id LIMIT 2000",
-                         (inp.run_id,))
-    return ui.table(rows, [ui.col("entity", "Thực thể"), ui.col("source_id", "Mã ở hệ cũ"), ui.col("reason", "Lý do", "badge", labels=REASONS),
-                           ui.col("detail", "Chi tiết", width=420)], title="Ngoại lệ", limit=2000, empty="Lượt này không có ngoại lệ")
+async def exceptions(ctx: Ctx, inp: ExceptionsIn) -> dict[str, Any]:
+    """Dòng nguồn KHÔNG vào Barista ở lượt này: thực thể, mã ở hệ cũ, lý do, chi tiết — không tự điền thay dữ liệu thiếu. Lọc theo lý do / thực thể; bảng
+    chia trang ở SQL và luôn nêu TỔNG số dòng của tập lọc + số theo (thực thể, lý do) của cả lượt."""
+    pg = ui.paging() or ui.Paging(0, EXCEPTION_PAGE)
+    where, args = "run_id = %s AND (%s = '' OR reason = %s) AND (%s = '' OR entity = %s)", (inp.run_id, inp.reason, inp.reason, inp.entity, inp.entity)
+    total = int(await ctx.val("SELECT count(*) FROM onboard.exceptions WHERE " + where, args) or 0)
+    rows = await ctx.all("SELECT id, entity, source_id, reason, detail, at FROM onboard.exceptions WHERE " + where + " ORDER BY entity, id LIMIT %s OFFSET %s",
+                         (*args, pg.limit, pg.offset))
+    groups = await ctx.all("SELECT entity, reason, count(*) AS n FROM onboard.exceptions WHERE run_id = %s GROUP BY entity, reason ORDER BY n DESC, entity",
+                           (inp.run_id,))
+    header = [ui.b_list([{"title": f"{g['entity']} · {REASONS.get(g['reason'], g['reason'])}", "subtitle": f"{g['n']} dòng",
+                          "open": {"query": "onboard.exceptions", "input": {"run_id": str(inp.run_id), "reason": g["reason"], "entity": g["entity"]}}}
+                         for g in groups], "Cả lượt theo thực thể và lý do")] if groups else []
+    shown = f"Đang hiện dòng {pg.offset + 1}–{pg.offset + len(rows)} của {total}" if total > len(rows) else ""
+    out = ui.table(rows, [ui.col("entity", "Thực thể"), ui.col("source_id", "Mã ở hệ cũ"), ui.col("reason", "Lý do", "badge", labels=REASONS),
+                          ui.col("detail", "Chi tiết", width=420)], title="Ngoại lệ", empty="Không có ngoại lệ nào khớp bộ lọc", header=header,
+                   kpis=[ui.kpi("Dòng khớp bộ lọc", total), ui.kpi("Cả lượt", sum(int(g["n"]) for g in groups))],
+                   note=(shown + " — lọc theo lý do / thực thể, hoặc xin trang kế (limit / offset).") if shown else "", paged_total=total)
+    out.setdefault("total", total)   # bên gọi không xin trang vẫn biết TỔNG (không tưởng trang đầu là toàn bộ)
+    return out
 
 
 # ── Ký biên bản đối chiếu ──
@@ -319,7 +404,7 @@ async def _sign_gate(ctx: Ctx, inp: SignIn) -> str:
 
 
 async def _sign_state(ctx: Ctx, run_id: UUID) -> dict[str, Any]:
-    r = await ctx.one("SELECT status, (SELECT count(*) FROM onboard.recon c WHERE c.run_id = r.id AND c.status = 'lech') AS mismatches,"
+    r = await ctx.one("SELECT status, (SELECT count(*) FROM onboard.recon c WHERE c.run_id = r.id AND c.status <> 'khop') AS mismatches,"
                       " (SELECT count(*) FROM onboard.exceptions e WHERE e.run_id = r.id) AS exceptions"
                       " FROM onboard.runs r WHERE id = %s FOR UPDATE", (run_id,))
     if r is None:

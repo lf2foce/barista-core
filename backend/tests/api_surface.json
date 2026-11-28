@@ -247,6 +247,7 @@
   ],
   "onboard": [
    "Converter",
+   "ConverterError",
    "Entity",
    "Ids",
    "Metric",
