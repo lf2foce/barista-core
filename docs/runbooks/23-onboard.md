@@ -118,7 +118,7 @@ Bộ chạy làm gì với từng bản ghi:
 | Tình huống | Kết quả |
 |---|---|
 | Chưa có trong sổ mã gốc | chạy `create` (`historical=True`), ghi sổ (nguồn, thực thể, `source_id`) → mã Barista + dấu vân tay |
-| Có, dấu vân tay (băm ĐẦU VÀO LỆNH sau ánh xạ + `mapping_version`) giữ nguyên | bỏ qua (không gọi lệnh) |
+| Có, dấu vân tay (băm ĐẦU VÀO LỆNH sau ánh xạ — cả lệnh tạo lẫn lệnh cập nhật — + `mapping_version`) giữ nguyên | bỏ qua (không gọi lệnh) |
 | Có, dấu vân tay đổi (nguồn đổi HOẶC sửa ánh xạ), thực thể khai `update` | chạy `update`, tăng số lần cập nhật, cập nhật dấu |
 | Có, dấu vân tay đổi, không khai `update` | ngoại lệ "Nguồn đổi sau khi nạp" — sửa tay hoặc khai `update` |
 | Thiếu `source_id` / trùng mã trong cùng bản trích / `Problem` / lệnh từ chối / lệnh phải qua duyệt | ngoại lệ ghi lý do + chi tiết, không ghi gì |

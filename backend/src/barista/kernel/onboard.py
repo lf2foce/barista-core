@@ -236,6 +236,9 @@ class _Run:
             self.problems = []
 
 
+_FP_TARGET = UUID(int=0)   # mã đích giả CHỈ để băm đầu vào cập nhật (không bao giờ gửi đi)
+
+
 def _key(source: str, entity: str, source_id: str, step: str) -> str:
     """Khoá chống lặp của MỘT thay đổi: tạo = ``new`` (mỗi mã gốc tạo đúng một lần — chạy lại sau sự cố nhận lại kết quả cũ, không tạo trùng); cập nhật
     = ``v<lần thứ n>:<dấu>`` — thử lại đúng lần đó dùng lại khoá, lần thay đổi MỚI (kể cả quay về giá trị cũ A → B → A) là số khác ⇒ khoá khác."""
@@ -260,7 +263,9 @@ async def _entity(p: Principal, run: _Run, e: Entity, maps: dict[str, dict[str, 
         try:
             # dấu vân tay băm ĐẦU VÀO LỆNH sau ánh xạ + phiên bản ánh xạ ⇒ nguồn đổi HOẶC sửa ánh xạ (to_input / mapping_version) đều là "đổi"
             base = e.to_input(rec, ids)
-            fp = fingerprint({"mapping": run.conv.mapping_version, "input": base})
+            # cả đầu vào lệnh CẬP NHẬT (tính với một mã đích cố định cho ổn định) — trường chỉ cập nhật mới dùng đổi cũng là "đổi"
+            upd = e.update_input(rec, ids, _FP_TARGET) if e.update_input is not None else None
+            fp = fingerprint({"mapping": run.conv.mapping_version, "input": base, "update": upd})
             if old is not None and old[1] == fp:
                 run.count(e.name, "skipped")
                 continue

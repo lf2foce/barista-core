@@ -65,12 +65,15 @@ async def test_a_changed_record_runs_update_only_for_that_record() -> None:
     r = await ob.load(tid, ob.Converter("hecu", (people_entity(rows, update=True),)), by_email=f"admin@{domain}")
     assert (r.created, r.updated, r.skipped, r.exceptions) == (0, 1, 1, 0)
     assert await _names(tid) == ["Người Giả Hai (đổi tên)", "Người Giả Một"]
-    # thực thể không khai lệnh cập nhật ⇒ nguồn đổi thành ngoại lệ, không ghi đè lặng lẽ, không tạo bản thứ hai
+    # thực thể không khai lệnh cập nhật ⇒ nguồn đổi thành ngoại lệ, không ghi đè lặng lẽ, không tạo bản thứ hai (công ty khác: bộ chuyển giữ nguyên định nghĩa)
+    tid, domain = await company()
+    rows = [{"source_id": "1", "name": "Người Giả Một"}, {"source_id": "2", "name": "Người Giả Hai"}]
+    await ob.load(tid, ob.Converter("hecu", (people_entity(rows),)), by_email=f"admin@{domain}")
     rows[0] = {"source_id": "1", "name": "Người Giả Một (đổi)"}
     r = await ob.load(tid, ob.Converter("hecu", (people_entity(rows),)), by_email=f"admin@{domain}")
     assert (r.created, r.updated, r.skipped, r.exceptions) == (0, 0, 1, 1)
     assert await owner_val("SELECT reason FROM onboard.exceptions WHERE run_id = %s", (r.run_id,)) == "changed_after_load"
-    assert await _names(tid) == ["Người Giả Hai (đổi tên)", "Người Giả Một"]
+    assert await _names(tid) == ["Người Giả Hai", "Người Giả Một"]
 
 
 async def test_a_value_that_changes_and_comes_back_is_applied_each_time() -> None:
@@ -96,6 +99,28 @@ async def test_changing_the_mapping_reloads_unchanged_source_rows() -> None:
     assert (same.updated, same.skipped) == (0, 2)
     bumped = await ob.load(tid, ob.Converter("hecu", (people_entity(rows, update=True),), mapping_version="2"), by_email=f"admin@{domain}")
     assert (bumped.created, bumped.updated, bumped.skipped) == (0, 2, 0)
+
+
+async def test_a_field_used_only_by_the_update_mapping_is_noticed() -> None:
+    """Lệnh tạo chỉ nhận tên; lệnh cập nhật dùng thêm biệt danh ⇒ chỉ biệt danh đổi vẫn là "đổi" (dấu vân tay băm cả đầu vào cập nhật)."""
+    tid, domain = await company()
+    rows = [{"source_id": "1", "name": "Người Giả Một", "nick": "Một"}]
+
+    def to_input(r: dict[str, Any], ids: ob.Ids) -> dict[str, Any]:
+        return {"display_name": r["name"], "kind": "person"}
+
+    def update_input(r: dict[str, Any], ids: ob.Ids, target: UUID) -> dict[str, Any]:
+        return {"party_id": str(target), "display_name": f"{r['name']} ({r['nick']})"}
+
+    conv = ob.Converter("hecu", (ob.Entity("person", lambda: list(rows), "parties.create", to_input, "party_id", update="parties.update",
+                                           update_input=update_input, label="Người"),))
+    await ob.load(tid, conv, by_email=f"admin@{domain}")
+    same = await ob.load(tid, conv, by_email=f"admin@{domain}")
+    assert (same.updated, same.skipped) == (0, 1)
+    rows[0] = {**rows[0], "nick": "Số Một"}
+    r = await ob.load(tid, conv, by_email=f"admin@{domain}")
+    assert (r.updated, r.skipped, r.exceptions) == (1, 0, 0)
+    assert await _names(tid) == ["Người Giả Một (Số Một)"]
 
 
 async def test_a_record_gone_from_the_source_is_an_exception_not_a_delete() -> None:
