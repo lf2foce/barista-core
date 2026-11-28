@@ -52,7 +52,7 @@ export function Landing() {
             <h1 className="bl-display mt-6">
               Trợ lý làm.
               <br />
-              <span className="text-muted-foreground">Bạn duyệt.</span>
+              <span className="bl-grad">Bạn duyệt.</span>
             </h1>
             <p className="bl-lead mt-6 max-w-xl text-muted-foreground">
               Một nền tảng cho bán hàng, thu chi, kế toán, dự án và văn bản. Trợ lý AI làm việc trên dữ liệu thật của doanh nghiệp, tự xử lý trong hạn mức được giao và chuẩn bị sẵn những việc cần bạn phê duyệt.
@@ -167,7 +167,7 @@ function HeroPhoto() {
   return (
     <div className="relative hidden lg:block" aria-hidden>
       <div className="relative aspect-[4/5] overflow-hidden rounded-[28px] border border-hairline">
-        <Image src="/landing/cafe-sang.webp" alt="" fill priority sizes="400px" className="object-cover object-[40%_50%]" />
+        <Image src="/landing/cafe-xanh.webp" alt="" fill priority sizes="400px" className="object-cover object-[40%_50%]" />
       </div>
       <span className="t12m absolute -top-3 right-6 inline-flex items-center gap-1.5 rounded-full border border-hairline bg-surface px-3 py-1.5 shadow-[0_8px_20px_-10px_rgb(0_0_0/0.25)]">
         <CircleCheck className="size-3.5 text-ok" /> Đã tự khớp 12 khoản tiền về

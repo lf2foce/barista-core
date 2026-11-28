@@ -39,6 +39,28 @@
   mask-image: radial-gradient(70% 60% at 72% 18%, #000, transparent 75%);
 }
 
+/* "Bạn duyệt.": xanh hơi đậm (màu chữ "ạ") → xanh nhấn → xanh ngọc kéo dài gần hết chữ, chỉ hé xanh lá ở cuối; pha từ biến của app (--primary, --ok) ⇒ sáng / tối tự theo.
+   Nền sáng: pha chút đen để ngọc / lá không loãng. */
+.bl-grad {
+  background-image: linear-gradient(100deg,
+    color-mix(in oklab, var(--primary) 90%, #000) 0%,
+    var(--primary) 26%,
+    color-mix(in oklab, color-mix(in oklab, var(--primary) 45%, var(--ok)) 92%, #000) 85%,
+    color-mix(in oklab, color-mix(in oklab, var(--primary) 25%, var(--ok)) 88%, #000) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  padding-bottom: 0.08em;   /* chừa dấu nặng / chân chữ "ạ", "y" khỏi bị cắt khi tô theo chữ */
+}
+
+:is(.dark) .bl-grad {
+  background-image: linear-gradient(100deg,
+    color-mix(in oklab, var(--primary) 94%, #000) 0%,
+    var(--primary) 26%,
+    color-mix(in oklab, var(--primary) 45%, var(--ok)) 85%,
+    color-mix(in oklab, var(--primary) 25%, var(--ok)) 100%);
+}
+
 .bl-h2 {
   font-size: clamp(26px, 3vw, 34px);
   line-height: 1.2;
