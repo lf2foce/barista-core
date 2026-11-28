@@ -8,7 +8,7 @@ import {
   BookText, Brain, Briefcase, ChartBarBig, Settings, Send, Stethoscope, Paperclip, ToggleRight, SquarePen, Files, Hourglass,
   AppWindow, ArrowRightLeft, ShoppingBag, Zap, Book, CalendarPlus, ShoppingCart, ChartPie, ClipboardCheck, ShieldAlert, Folder, SquareFunction,
   Globe, ListTree, ListOrdered, Star, UserCog, UsersRound, CalendarSearch, IdCard, Phone, PhoneCall, Grid2x2, Table, Tag, Target, Type, Timer,
-  Trophy, Video, FileSearch, Image, Flag, List, Link, PanelLeft, Puzzle,
+  Trophy, Video, FileSearch, Image, Flag, List, Link, PanelLeft, Puzzle, Download,
   type LucideIcon,
 } from "lucide-react";
 
@@ -62,6 +62,8 @@ const MAP: Record<string, LucideIcon> = {
   "books.vertical": BookOpen,
   "books.vertical.fill": BookOpen,
   "square.and.arrow.up": Upload,
+  "square.and.arrow.up.on.square": Upload,
+  "square.and.arrow.down.on.square": Download,
   "arrow.left.arrow.right": ArrowLeftRight,
   checklist: ListChecks,
   "rectangle.split.3x1": Columns3,

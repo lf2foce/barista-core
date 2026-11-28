@@ -1,4 +1,4 @@
--- module: admin — lý do: ADR 0263 mục C — GÓI CẤU HÌNH CÔNG TY (xuất / so / nhập). Tệp cấu hình tải lên được GIỮ lại (đã đọc + kiểm, dạng JSON) để
+-- module: admin, core — lý do: ADR 0263 mục C — GÓI CẤU HÌNH CÔNG TY (xuất / so / nhập); phần core = luật duyệt mặc định của lệnh nhập cho công ty đã có. Tệp cấu hình tải lên được GIỮ lại (đã đọc + kiểm, dạng JSON) để
 -- người xem bảng so khác trên màn rồi mới bấm nhập, và để lệnh nhập sau DUYỆT (chuỗi đổi quyền → chủ tài khoản) chạy lại trên ĐÚNG nội dung người duyệt
 -- đã thấy: phiếu duyệt chỉ giữ đầu vào của lệnh (mã tệp), không giữ thân tệp tải lên. Nội dung là cấu hình (vai, quyền, chuỗi duyệt…) — không dữ liệu
 -- nghiệp vụ, không tài khoản người dùng (người ghi bằng email để ánh xạ). CHỈ THÊM (bảng mới trong schema admin có sẵn) ⇒ không cần cửa sổ bảo trì.
