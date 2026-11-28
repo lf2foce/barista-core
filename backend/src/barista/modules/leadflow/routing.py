@@ -98,11 +98,13 @@ async def _eligible(ctx: Ctx, rule: dict[str, Any], offering_code: str = "") -> 
              AND (%(team)s::uuid IS NULL OR EXISTS (SELECT 1 FROM core.team_members tm WHERE tm.user_id = mb.user_id AND tm.team_id IN (SELECT id FROM tree)))
              AND NOT EXISTS (SELECT 1 FROM leadflow.receivers r WHERE r.user_id = mb.user_id AND r.paused_until > now())
              AND (NOT %(strict)s OR EXISTS (SELECT 1 FROM leadflow.members lm WHERE lm.user_id = mb.user_id AND lm.active
+                                             AND (%(step)s::int IS NULL OR lm.step IS NULL OR lm.step = %(step)s)   -- luật có bậc: thành viên của bậc (0264)
                                              AND CASE WHEN %(plan)s <> '' THEN lm.plan_code = %(plan)s   -- luật của kế hoạch: người THAM GIA kế hoạch (0204)
                                                       ELSE lm.plan_code = '' AND (%(off)s = '' OR lm.offering_code = %(off)s) END))
              AND (NOT %(bound)s OR NOT EXISTS (SELECT 1 FROM core.grants g WHERE g.role = mb.role AND g.resource = 'leadflow' AND g.scope = 'own')
                   OR EXISTS (SELECT 1 FROM leadflow.members lm WHERE lm.user_id = mb.user_id AND lm.active AND lm.offering_code = %(off)s))""",
-        {"team": rule["team_id"], "roles": list(rule["roles"]), "strict": strict, "bound": bound, "off": offering_code, "plan": rule.get("plan_code") or ""})
+        {"team": rule["team_id"], "roles": list(rule["roles"]), "strict": strict, "bound": bound, "off": offering_code, "plan": rule.get("plan_code") or "",
+         "step": rule.get("step")})
     ids = [r["user_id"] for r in rows]
     gone = await away(ctx, ids)
     return [u for u in ids if str(u) not in gone]
@@ -142,12 +144,15 @@ async def _members_of(ctx: Ctx, offering_code: str, users: list[UUID], plan_code
     return {r["user_id"]: {"tier": r["tier"], "weight": r["weight"]} for r in rows}
 
 
-async def _recent(ctx: Ctx, offering_code: str, users: list[UUID]) -> dict[UUID, int]:
-    """Số lead của [[offering|l]] này mỗi người đã nhận trong ``RECENT_DAYS`` ngày — mẫu số của chia theo trọng số."""
+async def _recent(ctx: Ctx, offering_code: str, users: list[UUID], free: bool = False) -> dict[UUID, int]:
+    """Số lead của [[offering|l]] này mỗi người đã nhận trong ``RECENT_DAYS`` ngày — mẫu số của chia theo trọng số. ``free`` (luật khai "trả lead không
+    tính" — 0264): lead người đó đã TRẢ không đếm là đã nhận."""
     rows = await ctx.all(
         """SELECT e.user_id, count(DISTINCT e.lead_id) AS n FROM leadflow.sla_events e JOIN leadflow.lead_state s ON s.lead_id = e.lead_id
-           WHERE e.kind = 'assigned' AND e.at >= now() - make_interval(days => %s) AND s.offering_code = %s AND e.user_id = ANY(%s) GROUP BY e.user_id""",
-        (RECENT_DAYS, offering_code, users))
+           WHERE e.kind = 'assigned' AND e.at >= now() - make_interval(days => %s) AND s.offering_code = %s AND e.user_id = ANY(%s)
+             AND NOT (%s AND EXISTS (SELECT 1 FROM leadflow.sla_events r WHERE r.lead_id = e.lead_id AND r.kind = 'released' AND r.user_id = e.user_id))
+           GROUP BY e.user_id""",
+        (RECENT_DAYS, offering_code, users, free))
     return {r["user_id"]: int(r["n"]) for r in rows}
 
 
@@ -162,6 +167,13 @@ async def _pick(ctx: Ctx, rule: dict[str, Any], offering_code: str = "", exclude
     for u in planned:
         load[str(u)] = load.get(str(u), 0) + 1
     open_ones = [u for u in cands if not rule["cap_uncalled"] or load.get(str(u), 0) < rule["cap_uncalled"]]
+    if open_ones and rule.get("max_open"):   # trần lead ĐANG GIỮ chưa chốt (0264): "chỉ nhận lead mới khi không còn lead tồn"
+        held = {r["holder_id"]: int(r["n"]) for r in await ctx.all(
+            "SELECT holder_id, count(*) AS n FROM leadflow.lead_state WHERE holder_id = ANY(%s) AND status IN ('offered', 'waiting', 'contacted')"
+            " AND imported_at IS NULL GROUP BY holder_id", (open_ones,))}
+        for u in planned:
+            held[u] = held.get(u, 0) + 1
+        open_ones = [u for u in open_ones if held.get(u, 0) < rule["max_open"]]
     if not open_ones:
         return Pick(None, "cap", load, {})
     plan = rule.get("plan_code") or ""
@@ -178,7 +190,7 @@ async def _pick(ctx: Ctx, rule: dict[str, Any], offering_code: str = "", exclude
     least = rule["strategy"] == "least_loaded"
     recent: dict[UUID, int] = {}
     if tier is not None:
-        recent = await _recent(ctx, offering_code, open_ones)
+        recent = await _recent(ctx, offering_code, open_ones, bool(rule.get("release_free")))
         for u in planned:
             recent[u] = recent.get(u, 0) + 1
         chosen = min(open_ones, key=lambda u: ((load.get(str(u), 0) if least else recent.get(u, 0)) / mem[u]["weight"], last.get(u, EPOCH), str(u)))
@@ -213,6 +225,36 @@ def _snapshot(rule: dict[str, Any]) -> dict[str, Any]:
             "duty_days": list(rule["duty_days"]), "contact_proof": list(rule["contact_proof"]), **{k: rule[k] for k in SNAPSHOT}}
 
 
+# ── Bậc của luật (0264): bậc + hạn giữ là dữ liệu; luật không có bậc ⇒ mọi thứ dưới đây trả rỗng / None — hành vi cũ ──
+
+async def _steps(ctx: Ctx, rule: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Bậc của luật theo thứ tự. Luật không khai bậc (hoặc gợi ý dựng tạm không phải luật thật) ⇒ []."""
+    if not rule or not rule.get("id"):
+        return []
+    return await ctx.all("SELECT * FROM leadflow.steps WHERE rule_id = %s ORDER BY seq", (rule["id"],))
+
+
+async def _seq_now(ctx: Ctx, lead_id: UUID) -> int | None:
+    return await ctx.val("SELECT step_seq FROM leadflow.lead_state WHERE lead_id = %s", (lead_id,))
+
+
+def _hold_until(rule: dict[str, Any], step: dict[str, Any], at: datetime) -> datetime | None:
+    """Hết hạn giữ của bậc, tính LÚC NHẬN: ngày lịch ⇒ cộng thẳng; ngày làm việc ⇒ N lần độ dài một ngày làm việc của luật trên đồng hồ giờ làm việc
+    (trừ ngày nghỉ, ngày lễ của lịch luật chọn). 0 ngày = bậc không hạn giữ."""
+    if not step["after_days"]:
+        return None
+    if step["day_kind"] == "calendar":
+        return at + timedelta(days=int(step["after_days"]))
+    return due_in(at, int(step["after_days"]) * (rule["work_close_min"] - rule["work_open_min"]), (hours_of(rule),))
+
+
+async def _close_invites(ctx: Ctx, lead_id: UUID, winner: UUID | None = None) -> list[UUID]:
+    """Lead đã có người giữ / về hàng chờ vì lý do khác ⇒ mọi lời mời còn mở đóng lại (người được mời hết thấy lead). Trả người được mời bị đóng."""
+    rows = await ctx.all("""UPDATE leadflow.invites SET status = CASE WHEN user_id = %s THEN 'claimed' ELSE 'closed' END, closed_at = now()
+                            WHERE lead_id = %s AND status = 'open' RETURNING user_id""", (winner, lead_id))
+    return [r["user_id"] for r in rows if r["user_id"] != winner]
+
+
 async def _event(ctx: Ctx, lead_id: UUID, kind: str, user_id: UUID | None = None, data: dict[str, Any] | None = None) -> None:
     if ctx.historical:   # sổ việc Barista TỰ làm theo luật (xoay vòng, chấm điểm đọc sổ này) — lần nạp lịch sử không ghi vào (0185; lịch sử hệ cũ ở leadflow.history)
         return
@@ -227,68 +269,90 @@ async def _recalled(ctx: Ctx, holder: UUID | None, offering_code: str, why: str 
 
 
 async def _queue(ctx: Ctx, lead_id: UUID, offering_code: str, source: str, team_id: UUID | None, why: str,
-                 rule: dict[str, Any] | None, holders: tuple[UUID, ...] = (), recalls: int = 0, qualified_by: UUID | None = None) -> None:
+                 rule: dict[str, Any] | None, holders: tuple[UUID, ...] = (), recalls: int = 0, qualified_by: UUID | None = None,
+                 step_seq: int | None = None, notify: bool = True) -> None:
     """Đưa lead về hàng chờ của ``team_id`` (đội đó thấy + chia; trống = hàng chờ cả công ty). Đã nằm hàng chờ rồi ⇒ im lặng (vòng quét thử lại
     không báo lặp). Lead nạp từ hệ khác đang ĐỖ (``imported_at`` — 0185) mà Barista đưa vào hàng chờ ⇒ thành lead sống (xoá dấu), tuổi hàng chờ tính từ bây giờ. Ghi trong một lần nạp lịch sử (``ctx.historical``) ⇒ dòng mang dấu đỗ. Hàng chờ có CHỦ (``queue_team_id``) và có TUỔI (``queued_at``): vòng quét báo chủ khi lead nằm quá hạn của luật (0153)."""
-    if await ctx.val("SELECT status FROM leadflow.lead_state WHERE lead_id = %s FOR UPDATE", (lead_id,)) == "queued":
+    cur = await ctx.one("SELECT status, queue_reason, step_seq FROM leadflow.lead_state WHERE lead_id = %s FOR UPDATE", (lead_id,))
+    if cur is not None and cur["status"] == "queued" and "invited" not in (why, cur["queue_reason"]) \
+            and (step_seq is None or step_seq == cur["step_seq"]):
         return
+    if why != "invited":
+        await _close_invites(ctx, lead_id)
     await ctx.call_system("crm.place", lead_id=lead_id, owner_id=None, team_id=team_id, reason=f"Vào hàng chờ: {QUEUE_REASON[why]}")
     await ctx.exec(
         """INSERT INTO leadflow.lead_state (lead_id, offering_code, source, status, holder_id, holders, rule_id, rule, recalls, queue_reason, qualified_by,
-                                            queued_at, queue_team_id, imported_at)
-           VALUES (%s, %s, %s, 'queued', NULL, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END)
+                                            queued_at, queue_team_id, imported_at, step_seq, step_since)
+           VALUES (%s, %s, %s, 'queued', NULL, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s, CASE WHEN %s::int IS NOT NULL THEN now() END)
            ON CONFLICT (lead_id) DO UPDATE SET status = 'queued', holder_id = NULL, rule_id = EXCLUDED.rule_id, rule = EXCLUDED.rule,
                recalls = EXCLUDED.recalls, queue_reason = EXCLUDED.queue_reason, first_call_due = NULL, accept_due = NULL, remind_at = NULL,
                breached_at = NULL, recall_at = NULL, qualified_by = coalesce(EXCLUDED.qualified_by, lead_state.qualified_by), queued_at = EXCLUDED.queued_at,
                queue_team_id = EXCLUDED.queue_team_id, queue_escalated_at = NULL, queue_escalations = 0, via_team_id = NULL, via_members = false,
-               imported_at = EXCLUDED.imported_at, updated_at = now()""",
+               imported_at = EXCLUDED.imported_at, hold_until = NULL, step_seq = coalesce(EXCLUDED.step_seq, lead_state.step_seq),
+               step_since = CASE WHEN EXCLUDED.step_seq IS NULL OR EXCLUDED.step_seq IS NOT DISTINCT FROM lead_state.step_seq THEN lead_state.step_since
+                                 ELSE EXCLUDED.step_since END, updated_at = now()""",
         (lead_id, offering_code, source, list(holders), rule and rule["id"], Jsonb(_snapshot(rule) if rule else {}), recalls, why, qualified_by,
-         lf.clock(), team_id, ctx.historical))
-    await _event(ctx, lead_id, "queued", data={"reason": why})
-    await ctx.notify_team(team_id, kind="lead_queue", title=f"Lead chờ chia{f' ({offering_code})' if offering_code else ''}", body=QUEUE_REASON[why],
-                          push="Có lead mới chờ đội chia", open={"query": "leadflow.queue", "input": {}})
+         lf.clock(), team_id, ctx.historical, step_seq, step_seq))
+    await _event(ctx, lead_id, "queued", data={"reason": why, **({"step": step_seq} if step_seq else {})})
+    if notify:
+        await ctx.notify_team(team_id, kind="lead_queue", title=f"Lead chờ chia{f' ({offering_code})' if offering_code else ''}", body=QUEUE_REASON[why],
+                              push="Có lead mới chờ đội chia", open={"query": "leadflow.queue", "input": {}})
 
 
 async def _assign_to(ctx: Ctx, lead_id: UUID, offering_code: str, source: str, chosen: UUID, rule: dict[str, Any] | None, *,
                      holders: tuple[UUID, ...] = (), recalls: int = 0, reason: str = "Chia tự động",
                      data: dict[str, Any] | None = None, duty: bool = False, qualified_by: UUID | None = None,
-                     via_team: UUID | None = None, via_members: bool = False, place: bool = True) -> UUID:
+                     via_team: UUID | None = None, via_members: bool = False, place: bool = True, step_seq: int | None = None,
+                     accepted: bool = False) -> UUID:
     """Giao lead + CHỤP hạn theo luật (hạn bấm nhận, nhắc, hạn gọi — tính từ BÂY GIỜ trong giờ của người nhận: giao lúc đêm ⇒ hạn đủ phút từ giờ mở
     cửa, không ai nhận lead "đã trễ"; lead đội trực ⇒ giờ trực ∪ giờ làm việc). Không có luật ⇒ giao nhưng không có hạn.
     ``place=False``: người phụ trách bên Khách đã đổi trong cùng giao dịch (``crm.assign`` → ``follow_owner``) — chỉ ghi phần chia lead.
     ``via_team`` / ``via_members``: người này được chọn VÌ thuộc đội / là thành viên — rời đội / rời [[offering|l]] ⇒ chuyển lead (0153).
     Lead nạp từ hệ khác đang ĐỖ (``imported_at`` — 0185) ⇒ từ đây là lead SỐNG theo luật Barista (xoá dấu), hạn tính từ bây giờ. Ngược lại,
-    chia trong một lần nạp lịch sử (``ctx.historical`` — vd nạp lead cũ qua cửa nạp lead) ⇒ dòng mang dấu đỗ ngay: mọi trạng thái chia ghi lúc nạp là tham chiếu."""
+    chia trong một lần nạp lịch sử (``ctx.historical`` — vd nạp lead cũ qua cửa nạp lead) ⇒ dòng mang dấu đỗ ngay: mọi trạng thái chia ghi lúc nạp là tham chiếu.
+    Luật có BẬC (0264): lead ở bậc ``step_seq`` (không nêu ⇒ bậc đang ở, lead mới ⇒ bậc 1), hạn giữ tính từ lúc nhận; lời mời còn mở đóng lại.
+    ``accepted``: người nhận đã cam kết (nhận lời mời) ⇒ không thêm bước bấm nhận."""
     now = lf.clock()
     if place:
         await ctx.call_system("crm.place", lead_id=lead_id, owner_id=chosen, reason=reason)
-    due = remind = accept = None
+    due = remind = accept = hold = None
     quiet = False
+    step: dict[str, Any] | None = None
+    if steps := await _steps(ctx, rule):
+        seq = step_seq or await _seq_now(ctx, lead_id) or 1
+        step = next((x for x in steps if x["seq"] == seq), steps[-1])
     if rule:
         hs = clock_of(rule, duty)
         due = due_in(now, rule["first_call_min"], hs)
         if 0 < rule["remind_before_min"] < rule["first_call_min"]:
             remind = due_in(now, rule["first_call_min"] - rule["remind_before_min"], hs)
-        if rule["accept_min"]:
+        if step is not None:
+            hold = _hold_until(rule, step, now)
+        if rule["accept_min"] and not accepted:
             accept = due_in(now, min(rule["accept_min"], rule["first_call_min"]), hs)
         quiet = not open_in(now, hs)   # ngoài giờ của người nhận: báo trong app, không rung máy — hạn tính từ giờ mở cửa
     status = ("offered" if accept else "waiting") if rule else "closed"
     await ctx.exec(
         """INSERT INTO leadflow.lead_state (lead_id, offering_code, source, status, holder_id, holders, rule_id, rule, assigned_at,
                                             first_call_due, recalls, queue_reason, accept_due, remind_at, duty, qualified_by, via_team_id, via_members,
-                                            imported_at)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, '', %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END)
+                                            imported_at, accepted_at, step_seq, step_since, hold_until)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, '', %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s, %s, %s, %s)
            ON CONFLICT (lead_id) DO UPDATE SET status = EXCLUDED.status, holder_id = EXCLUDED.holder_id, holders = EXCLUDED.holders,
                rule_id = EXCLUDED.rule_id, rule = EXCLUDED.rule, assigned_at = EXCLUDED.assigned_at, first_call_due = EXCLUDED.first_call_due,
                first_call_at = NULL, first_call_ok = NULL, recalls = EXCLUDED.recalls, queue_reason = '', accept_due = EXCLUDED.accept_due,
-               accepted_at = NULL, remind_at = EXCLUDED.remind_at, reminded_at = NULL, breached_at = NULL, recall_at = NULL, duty = EXCLUDED.duty,
+               accepted_at = EXCLUDED.accepted_at, remind_at = EXCLUDED.remind_at, reminded_at = NULL, breached_at = NULL, recall_at = NULL, duty = EXCLUDED.duty,
                qualified_by = coalesce(EXCLUDED.qualified_by, lead_state.qualified_by), via_team_id = EXCLUDED.via_team_id,
                via_members = EXCLUDED.via_members, queued_at = NULL, queue_team_id = NULL, queue_escalated_at = NULL, queue_escalations = 0,
-               imported_at = EXCLUDED.imported_at, updated_at = now()""",
+               imported_at = EXCLUDED.imported_at, step_seq = EXCLUDED.step_seq, hold_until = EXCLUDED.hold_until,
+               step_since = CASE WHEN EXCLUDED.step_seq IS NULL THEN NULL WHEN EXCLUDED.step_seq IS NOT DISTINCT FROM lead_state.step_seq
+                                 THEN coalesce(lead_state.step_since, EXCLUDED.step_since) ELSE EXCLUDED.step_since END, updated_at = now()""",
         (lead_id, offering_code, source, status, chosen, list(dict.fromkeys([*holders, chosen])), rule and rule["id"],
-         Jsonb(_snapshot(rule) if rule else {}), now, due, recalls, accept, remind, duty, qualified_by, via_team, via_members, ctx.historical))
+         Jsonb(_snapshot(rule) if rule else {}), now, due, recalls, accept, remind, duty, qualified_by, via_team, via_members, ctx.historical,
+         now if accepted else None, step and step["seq"], now if step else None, hold))
+    await _close_invites(ctx, lead_id, chosen)
     await _event(ctx, lead_id, "assigned", chosen, {"rule": rule["name"] if rule else None, "due": due.isoformat() if due else None,
                                                     **({"accept_due": accept.isoformat()} if accept else {}), **({"duty": True} if duty else {}),
+                                                    **({"step": step["seq"], "hold_until": hold.isoformat() if hold else None} if step else {}),
                                                     "reason": reason, **(data or {})})
     if accept:
         title = f"Lead mới{f' ({offering_code})' if offering_code else ''} — bấm Nhận trước {accept.astimezone(zone()):%H:%M %d/%m}"
@@ -304,30 +368,37 @@ async def _assign_to(ctx: Ctx, lead_id: UUID, offering_code: str, source: str, c
 async def _distribute(ctx: Ctx, lead_id: UUID, offering_code: str, source: str, *, keep_owner: UUID | None = None,
                       to_team: UUID | None = None, exclude: tuple[UUID, ...] = (), holders: tuple[UUID, ...] = (), recalls: int = 0,
                       reason: str = "Chia tự động", qualified_by: UUID | None = None, data: dict[str, Any] | None = None,
-                      plan_code: str = "") -> UUID | None:
+                      plan_code: str = "", step: int | None = None) -> UUID | None:
     """Chia (hoặc chia lại) MỘT lead. Thứ tự: giữ người cũ / người được chỉ định → đội được chỉ định (hàng chờ của đội đó) → luật
     (điều phối ⇒ hàng chờ đội điều phối; ngoài giờ + luật có đội trực + đang giờ trực ⇒ đội trực; tự chia ⇒ chọn người). Trả người nhận, hoặc
-    None nếu vào hàng chờ."""
+    None nếu vào hàng chờ / đang mời. Luật có BẬC (0264): chia ở bậc ``step`` (không nêu ⇒ bậc lead đang ở, lead mới ⇒ bậc 1) cho thành viên của bậc;
+    đã qua bậc cuối ⇒ hàng chờ có chủ; bậc mời nhiều người ⇒ mời (chưa ai giữ), người đầu tiên bấm nhận giữ."""
     await _lock(ctx)
     rule = await _rule_for(ctx, offering_code, source, today(), plan_code)
     extra = dict(data or {})
+    steps = await _steps(ctx, rule)
+    seq = (step or await _seq_now(ctx, lead_id) or 1) if steps else None
+    cur = next((x for x in steps if x["seq"] == seq), None)
     if keep_owner and keep_owner not in await _lead_capable(ctx, offering_code):
         keep_owner = None   # người chăm khách cũ đã nghỉ / bị khoá / tạm ngừng / nghỉ phép / không thuộc [[offering|l]] ⇒ đi theo luật như khách mới
     if to_team is None and not await _routing_on(ctx, offering_code):
         # [[offering|l]] tạm ngừng chia: cả khách cũ quay lại cũng chờ người quyết; người chỉ định đội thì vẫn theo người
-        await _queue(ctx, lead_id, offering_code, source, None, "paused", rule, holders, recalls, qualified_by)
+        await _queue(ctx, lead_id, offering_code, source, None, "paused", rule, holders, recalls, qualified_by, step_seq=seq)
         return None
     if keep_owner:
         return await _assign_to(ctx, lead_id, offering_code, source, keep_owner, rule, holders=holders, recalls=recalls,
-                                reason=reason, data={"kept_owner": True, **extra}, qualified_by=qualified_by)
+                                reason=reason, data={"kept_owner": True, **extra}, qualified_by=qualified_by, step_seq=seq)
     if to_team:
-        await _queue(ctx, lead_id, offering_code, source, to_team, "team", rule, holders, recalls, qualified_by)
+        await _queue(ctx, lead_id, offering_code, source, to_team, "team", rule, holders, recalls, qualified_by, step_seq=seq)
         return None
     if rule is None:
         await _queue(ctx, lead_id, offering_code, source, None, "no_rule", None, holders, recalls, qualified_by)
         return None
     if rule["mode"] == "coordinator":
-        await _queue(ctx, lead_id, offering_code, source, rule["coord_team_id"], "coordinator", rule, holders, recalls, qualified_by)
+        await _queue(ctx, lead_id, offering_code, source, rule["coord_team_id"], "coordinator", rule, holders, recalls, qualified_by, step_seq=seq)
+        return None
+    if steps and cur is None:   # đã qua bậc cuối (0264): không ngõ cụt — hàng chờ có chủ (đội nhận của luật), vòng quét báo tới khi có người nhận
+        await _queue(ctx, lead_id, offering_code, source, rule["team_id"], "steps_done", rule, holders, recalls, qualified_by, step_seq=seq)
         return None
     now = lf.clock()
     if rule["off_hours"] == "duty" and not open_now(now, hours_of(rule)) and open_now(now, duty_hours_of(rule)):
@@ -335,14 +406,52 @@ async def _distribute(ctx: Ctx, lead_id: UUID, offering_code: str, source: str, 
         if pick.user:   # đội trực không còn ai (nghỉ, chạm trần) ⇒ chia như giờ thường, hạn bắt đầu từ giờ mở cửa
             return await _assign_to(ctx, lead_id, offering_code, source, pick.user, rule, holders=holders, recalls=recalls,
                                     reason=f"{reason} (đội trực ngoài giờ)", data={**pick.basis, **extra}, duty=True, qualified_by=qualified_by,
-                                    via_team=rule["duty_team_id"])
-    pick = await _pick(ctx, rule, offering_code, exclude)
+                                    via_team=rule["duty_team_id"], step_seq=seq)
+    at_step = {**rule, "step": seq} if cur else rule
+    if cur and cur["invite_n"] > 1 and not ctx.historical:
+        users = await _pick_n(ctx, at_step, offering_code, exclude, cur["invite_n"])
+        if len(users) > 1:
+            await _invite(ctx, lead_id, offering_code, source, users, rule, cur, holders=holders, recalls=recalls, qualified_by=qualified_by)
+            return None
+    pick = await _pick(ctx, at_step, offering_code, exclude)
     if pick.user is None:
-        await _queue(ctx, lead_id, offering_code, source, rule["team_id"], pick.why, rule, holders, recalls, qualified_by)
+        await _queue(ctx, lead_id, offering_code, source, rule["team_id"], pick.why, rule, holders, recalls, qualified_by, step_seq=seq)
         return None
     return await _assign_to(ctx, lead_id, offering_code, source, pick.user, rule, holders=holders, recalls=recalls, reason=reason,
                             data={**pick.basis, **extra}, qualified_by=qualified_by, via_team=rule["team_id"],
-                            via_members=await _via_members(ctx, rule, offering_code, pick.user))
+                            via_members=await _via_members(ctx, rule, offering_code, pick.user), step_seq=seq)
+
+
+async def _pick_n(ctx: Ctx, rule: dict[str, Any], offering_code: str, exclude: tuple[UUID, ...], n: int) -> list[UUID]:
+    """Tới ``n`` người theo đúng cách chọn của ``_pick`` (người sau loại người trước) — danh sách mời của một bậc (0264)."""
+    out: list[UUID] = []
+    for _ in range(n):
+        pick = await _pick(ctx, rule, offering_code, (*exclude, *out))
+        if pick.user is None:
+            break
+        out.append(pick.user)
+    return out
+
+
+async def _invite(ctx: Ctx, lead_id: UUID, offering_code: str, source: str, users: list[UUID], rule: dict[str, Any], step: dict[str, Any], *,
+                  holders: tuple[UUID, ...] = (), recalls: int = 0, qualified_by: UUID | None = None, round_: int = 1) -> None:
+    """MỜI nhiều người nhận một lead (0264): CHƯA ai là người giữ (lead nằm hàng chờ có chủ, lý do "đang mời"); người được mời thấy lead qua chính sách
+    đọc riêng (``leadflow.invited_leads``) tới hạn lời mời; người đầu tiên bấm nhận thành người giữ qua ``take`` (đường ghi duy nhất ``_assign_to``).
+    Lượt mời sau (``round_`` > 1) giữ nguyên hàng chờ, chỉ thêm lời mời."""
+    if round_ == 1:
+        await _queue(ctx, lead_id, offering_code, source, rule["team_id"], "invited", rule, holders, recalls, qualified_by, step_seq=step["seq"],
+                     notify=False)
+    now = lf.clock()
+    until = due_in(now, int(step["invite_min"]), clock_of(rule, False))
+    for u in users:
+        await ctx.exec("INSERT INTO leadflow.invites (lead_id, user_id, step_seq, round, at, until) VALUES (%s, %s, %s, %s, %s, %s)",
+                       (lead_id, u, step["seq"], round_, now, until))
+    await _event(ctx, lead_id, "invited", None, {"users": [str(u) for u in users], "until": until.isoformat(), "step": step["seq"],
+                                                 "label": step["label"], "round": round_})
+    when = until.astimezone(zone())
+    await ctx.notify(users, kind="lead", title=f"Lead mới{f' ({offering_code})' if offering_code else ''} — mời {len(users)} người, ai nhận trước giữ",
+                     body=f"Bấm Nhận lead trước {when:%H:%M %d/%m}", push=f"Có lead mời nhận — ai nhận trước giữ (trước {when:%H:%M})",
+                     open={"query": "leadflow.mine", "input": {}})
 
 
 class RouteIn(Input):
@@ -539,7 +648,7 @@ async def _drain(ctx: Ctx) -> int:
     n = 0
     await _lock(ctx)   # khoá TRƯỚC khi đọc tải / chọn người: lượt nạp lead chạy song song phải chờ, không vượt trần
     routing: dict[str, bool] = {}
-    for q in await ctx.all("SELECT lead_id, offering_code, source, holders, recalls, plan_code FROM leadflow.lead_state"
+    for q in await ctx.all("SELECT lead_id, offering_code, source, holders, recalls, plan_code, step_seq FROM leadflow.lead_state"
                            " WHERE status = 'queued' AND queue_reason = ANY(%s) AND imported_at IS NULL ORDER BY updated_at LIMIT 200 FOR UPDATE SKIP LOCKED",
                            (list(DRAINABLE),)):
         if q["offering_code"] not in routing:
@@ -549,6 +658,8 @@ async def _drain(ctx: Ctx) -> int:
         rule = await _rule_for(ctx, q["offering_code"], q["source"], today(), q.get("plan_code") or "")
         if rule is None or rule["mode"] == "coordinator":
             continue
+        if await _steps(ctx, rule):   # luật có bậc (0264): chia lại cho thành viên của bậc lead đang đứng
+            rule = {**rule, "step": q["step_seq"] or 1}
         pick = await _pick(ctx, rule, q["offering_code"], tuple(q["holders"]))
         if pick.user:
             await _assign_to(ctx, q["lead_id"], q["offering_code"], q["source"], pick.user, rule, holders=tuple(q["holders"]),
@@ -632,6 +743,8 @@ async def queue(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
         if key not in rules_cache:
             rules_cache[key] = await _rule_for(ctx, *key)
         rule = rules_cache[key] or {"team_id": None, "roles": lead_roles, "cap_uncalled": 0, "strategy": "least_loaded"}
+        if st.get("step_seq"):   # luật có bậc (0264): gợi ý thành viên của bậc lead đang đứng
+            rule = {**rule, "step": st["step_seq"]}
         pick = await _pick(ctx, rule, st["offering_code"], tuple(st["holders"]), tuple(planned))
         if pick.user:
             planned.append(pick.user)
@@ -944,3 +1057,167 @@ async def put_imported(ctx: Ctx, v: dict[str, Any]) -> None:
                first_call_at = EXCLUDED.first_call_at, first_call_ok = EXCLUDED.first_call_ok, recalls = EXCLUDED.recalls,
                followup_due = EXCLUDED.followup_due, queue_reason = EXCLUDED.queue_reason, queued_at = EXCLUDED.queued_at,
                queue_team_id = EXCLUDED.queue_team_id, imported_at = now(), updated_at = now()""", v)
+
+
+
+# ── Bậc (0264): đẩy bậc khi hết hạn giữ, mời nhiều người — ai nhận trước giữ, sale trả lead ──
+
+async def step_up(ctx: Ctx, st: dict[str, Any], *, why: str = "hold") -> UUID | None:
+    """Lead sang BẬC KẾ (hết hạn giữ của bậc, hoặc lượt mời cuối của bậc không ai nhận): CHUYỂN GIAO, không tính lần thu hồi; người đã giữ không nhận
+    lại; không bao giờ lùi bậc. Bậc kế không còn ai ⇒ hàng chờ có chủ; đã qua bậc cuối ⇒ hàng chờ "đã qua hết các bậc"."""
+    lid, gone = st["lead_id"], st["holder_id"]
+    holders: tuple[UUID, ...] = tuple(dict.fromkeys([*st["holders"], *([gone] if gone else [])]))
+    frm = int(st["step_seq"] or 1)
+    rule = await _rule_for(ctx, st["offering_code"], st["source"], today(), st.get("plan_code") or "")
+    labels = {x["seq"]: x["label"] for x in await _steps(ctx, rule)}
+    to = await _distribute(ctx, lid, st["offering_code"], st["source"], exclude=holders, holders=holders, recalls=st["recalls"],
+                           reason=f"Sang bậc {labels.get(frm + 1, frm + 1)}", data={"stepped": True}, plan_code=st.get("plan_code") or "",
+                           step=frm + 1)
+    await _event(ctx, lid, "stepped", gone, {"from": frm, "to_step": frm + 1, "label": labels.get(frm + 1), "to": str(to) if to else None,
+                                             "why": why, "status": st["status"]})
+    if gone:
+        await ctx.notify([gone], kind="lead_recalled", title=f"Lead đã sang bậc kế{f' ({st['offering_code']})' if st['offering_code'] else ''}",
+                         body="Hết hạn giữ của bậc mà lead chưa chốt — lead chuyển cho người ở bậc sau", push="Một lead của anh/chị đã sang bậc kế")
+    return to
+
+
+async def invites_due(ctx: Ctx, st: dict[str, Any], now: datetime) -> int:
+    """Lead đang MỜI (hàng chờ lý do "invited"): còn lời mời chưa hết hạn ⇒ chờ. Hết hạn mà không ai nhận ⇒ mời lượt kế trong bậc (người chưa được mời,
+    chưa từng giữ); bậc không còn ai ⇒ sang bậc kế. Trả 1 nếu đã làm gì."""
+    lid = st["lead_id"]
+    rows = await ctx.all("SELECT user_id, until, round, status FROM leadflow.invites WHERE lead_id = %s AND step_seq = %s",
+                         (lid, st["step_seq"]))
+    if any(r["status"] == "open" and r["until"] > now for r in rows):
+        return 0
+    await ctx.exec("UPDATE leadflow.invites SET status = 'expired', closed_at = now() WHERE lead_id = %s AND status = 'open'", (lid,))
+    await _lock(ctx)
+    rule = await _rule_for(ctx, st["offering_code"], st["source"], today(), st.get("plan_code") or "")
+    cur = next((x for x in await _steps(ctx, rule) if x["seq"] == st["step_seq"]), None)
+    holders = tuple(st["holders"])
+    if rule is None or cur is None:   # luật đổi, bậc không còn ⇒ chia lại như thường (người đã giữ không nhận lại)
+        await _distribute(ctx, lid, st["offering_code"], st["source"], exclude=holders, holders=holders, recalls=st["recalls"],
+                          reason="Lời mời hết hạn — chia lại theo luật", plan_code=st.get("plan_code") or "")
+        return 1
+    excl = (*holders, *{r["user_id"] for r in rows})
+    at_step = {**rule, "step": cur["seq"]}
+    users = await _pick_n(ctx, at_step, st["offering_code"], excl, int(cur["invite_n"]))
+    if len(users) > 1:
+        await _invite(ctx, lid, st["offering_code"], st["source"], users, rule, cur, holders=holders, recalls=st["recalls"],
+                      round_=max((int(r["round"]) for r in rows), default=0) + 1)
+    elif users:
+        await _assign_to(ctx, lid, st["offering_code"], st["source"], users[0], rule, holders=holders, recalls=st["recalls"],
+                         reason="Lời mời trước hết hạn, không ai nhận — chia người kế trong bậc", via_team=rule["team_id"],
+                         via_members=await _via_members(ctx, rule, st["offering_code"], users[0]), step_seq=cur["seq"])
+    else:
+        await step_up(ctx, st, why="invites")
+    return 1
+
+
+class InviteForIn(Input):
+    lead_ids: list[UUID]
+    user_id: UUID
+
+
+@m.query("invite_for", resource="leadflow", title="Lời mời nhận lead của một người", internal=True, agent="allow", callers=("crm",),
+         why="Thẻ khách (crm.journey) hiện nút Nhận lead cho người đang được mời; ghi chăm sóc / đổi chặng của người được mời là nhận lead ngầm (0264). "
+             "Trả CHỈ {invited: {lead_id: hạn lời mời}} cho lời mời CÒN MỞ của đúng người đó trên các lead đã nêu — không người được mời khác, không lịch sử."
+             " [id: người gọi thấy — lead_ids là dòng crm.leads người xem vừa đọc qua RLS ngay trước đó; user_id = chính người xem (ctx.p.user_id)]")
+async def invite_for(ctx: Ctx, inp: InviteForIn) -> dict[str, dict[str, Any]]:
+    rows = await ctx.all("SELECT lead_id, until FROM leadflow.invites WHERE lead_id = ANY(%s) AND user_id = %s AND status = 'open' AND until > now()",
+                         (inp.lead_ids, inp.user_id))
+    return {"invited": {str(r["lead_id"]): r["until"] for r in rows}}
+
+
+@m.command("claim",
+           subject=("crm.lead", "lead_id"), purpose="Nhận lead đang mời nhiều người cùng lúc — ai nhận trước giữ, để khách được liên hệ ngay.",
+           irreversible=True, effect="Lead thành của bạn, lời mời của đồng nghiệp đóng lại và hạn gọi lần đầu bắt đầu chạy; muốn bỏ thì dùng Trả lead.",
+           resource="leadflow", title="Nhận lead được mời", agent="propose", risk="low")
+async def claim(ctx: Ctx, inp: LeadRef) -> dict[str, Any]:
+    """Người được MỜI bấm nhận (0264): người đầu tiên thành người giữ, người còn lại hết thấy lead. Ghi chăm sóc / đổi chặng lead đang được mời cũng
+    gọi lệnh này (nhận ngầm). Trợ lý chỉ soạn thẻ — nhận lead là cam kết của chính người đó."""
+    inv = await ctx.one("SELECT lead_id, until FROM leadflow.invites WHERE lead_id = %s AND user_id = %s AND status = 'open'", (inp.lead_id, ctx.p.user_id))
+    if inv is None:
+        raise Conflict("Không còn lời mời nhận lead này — đồng nghiệp đã nhận trước, hoặc lời mời đã hết hạn")
+    await ctx.call_system("leadflow.take", lead_id=inv["lead_id"], user_id=ctx.p.user_id)
+    due = await ctx.val("SELECT first_call_due FROM leadflow.lead_state WHERE lead_id = %s", (inv["lead_id"],))
+    return {"lead_id": inv["lead_id"], "assigned_to": ctx.p.user_id,
+            "summary": "Đã nhận lead" + (f" — gọi trước {due.astimezone(zone()):%H:%M %d/%m}" if due else "")}
+
+
+class TakeIn(Input):
+    lead_id: UUID
+    user_id: UUID
+
+
+@m.command("take", resource="leadflow", title="Người được mời nhận lead", internal=True, agent="deny", callers=("leadflow",),
+           why="claim, sau khi người gọi đọc được lời mời CÒN MỞ của chính mình cho lead này (RLS leadflow.invites): khoá dòng leadflow.lead_state, kiểm lại "
+               "lead còn đang mời + lời mời chưa hết hạn (hai người bấm cùng lúc ⇒ người sau thấy đã có người nhận), giao qua đúng đường ghi người giữ "
+               "(_assign_to → crm.place), đóng lời mời còn lại, báo đồng nghiệp. Sau khi giao, lời mời của người khác đóng — không ghi được bằng quyền "
+               "người gọi. Trả {assigned_to}."
+               " [id: người gọi thấy — lead_id đọc từ lời mời của chính người gọi qua RLS; user_id = chính người gọi]")
+async def take(ctx: Ctx, inp: TakeIn) -> dict[str, Any]:
+    st = await ctx.one("SELECT * FROM leadflow.lead_state WHERE lead_id = %s FOR UPDATE", (inp.lead_id,))
+    if st is None or st["status"] != "queued" or st["queue_reason"] != "invited":
+        raise Conflict("Đồng nghiệp đã nhận lead này trước")
+    inv = await ctx.one("SELECT id, until FROM leadflow.invites WHERE lead_id = %s AND user_id = %s AND status = 'open' FOR UPDATE",
+                        (inp.lead_id, inp.user_id))
+    if inv is None or inv["until"] <= lf.clock():
+        raise Conflict("Lời mời đã hết hạn — lead đang được mời người khác")
+    await _lock(ctx)
+    rule = await _rule_for(ctx, st["offering_code"], st["source"], today(), st.get("plan_code") or "")
+    others = [r["user_id"] for r in await ctx.all("SELECT user_id FROM leadflow.invites WHERE lead_id = %s AND status = 'open' AND user_id <> %s",
+                                                   (inp.lead_id, inp.user_id))]
+    await _assign_to(ctx, inp.lead_id, st["offering_code"], st["source"], inp.user_id, rule, holders=tuple(st["holders"]), recalls=st["recalls"],
+                     reason="Nhận lead được mời — nhận trước", data={"claimed": True}, step_seq=st["step_seq"], accepted=True,
+                     via_team=rule["team_id"] if rule else None,
+                     via_members=await _via_members(ctx, rule, st["offering_code"], inp.user_id) if rule else False)
+    await _event(ctx, inp.lead_id, "claimed", inp.user_id, {"step": st["step_seq"], "others": [str(u) for u in others]})
+    if others:
+        await ctx.notify(others, kind="lead", title=f"Đồng nghiệp đã nhận lead trước{f' ({st['offering_code']})' if st['offering_code'] else ''}")
+    return {"assigned_to": inp.user_id}
+
+
+class ReleaseIn(Input):
+    lead_id: UUID = field("Lead", hidden=True)
+    reason: str = field("Lý do trả lead", example="Khách cần khu vực em không phụ trách", max_length=300)
+
+
+@m.command("release",
+           subject=("crm.lead", "lead_id"), purpose="Người đang giữ trả lead mình không theo được, để lead sang người khác ngay thay vì nằm im.",
+           irreversible=True, effect="Lead chuyển cho người khác theo luật chia (bạn không nhận lại lead này), người nhận mới được báo; bạn không còn thấy khách.",
+           resource="leadflow", title="Trả lead", agent="propose", risk="low")
+async def release(ctx: Ctx, inp: ReleaseIn) -> dict[str, Any]:
+    """Sale TRẢ lead đang giữ (0264): lead chia lại theo luật ở bậc hiện tại, người trả không nhận lại; sổ sự kiện ghi lý do. Luật khai "trả lead không
+    tính" ⇒ lead đã trả không đếm vào số lead người đó đã nhận khi chia theo trọng số. Trợ lý chỉ soạn thẻ."""
+    if not inp.reason.strip():
+        raise Invalid("Ghi lý do trả lead")
+    st = await ctx.one("SELECT lead_id FROM leadflow.lead_state WHERE lead_id = %s AND holder_id = %s AND status = ANY(%s) AND imported_at IS NULL",
+                       (inp.lead_id, ctx.p.user_id, list(HELD)))   # quyền NGƯỜI GỌI (RLS) + chính người giữ
+    if st is None:
+        raise NotFound("Không thấy lead anh/chị đang giữ")
+    got = await ctx.call_system("leadflow.drop", lead_id=st["lead_id"], reason=inp.reason.strip(), by=ctx.p.user_id)
+    who = await ctx.val("SELECT name FROM core.users WHERE id = %s", (got["assigned_to"],)) if got["assigned_to"] else None
+    return {"lead_id": st["lead_id"], "assigned_to": got["assigned_to"],
+            "summary": f"Đã trả lead — chuyển cho {who}" if who else "Đã trả lead — lead về hàng chờ chia"}
+
+
+class DropIn(Input):
+    lead_id: UUID
+    reason: str
+    by: UUID
+
+
+@m.command("drop", resource="leadflow", title="Người giữ trả lead", internal=True, agent="deny", callers=("leadflow",),
+           why="release, sau khi người gọi đọc được lead CHÍNH MÌNH đang giữ (RLS leadflow.lead_state, holder_id = người gọi): khoá dòng, kiểm lại người giữ, "
+               "ghi sự kiện 'released' (lý do), chia lại theo luật ở bậc hiện tại loại người đã giữ. Lead rời phạm vi người trả nên không ghi được bằng "
+               "quyền họ. Trả {assigned_to}."
+               " [id: người gọi thấy — lead_id người gọi vừa đọc qua RLS với holder_id = chính mình; by = chính người gọi]")
+async def drop(ctx: Ctx, inp: DropIn) -> dict[str, Any]:
+    st = await ctx.one("SELECT * FROM leadflow.lead_state WHERE lead_id = %s FOR UPDATE", (inp.lead_id,))
+    if st is None or st["holder_id"] != inp.by or st["status"] not in HELD:
+        raise NotFound("Lead không còn do anh/chị giữ")
+    holders: tuple[UUID, ...] = tuple(dict.fromkeys([*st["holders"], inp.by]))
+    await _event(ctx, inp.lead_id, "released", inp.by, {"why": inp.reason, "status": st["status"], "step": st["step_seq"]})
+    to = await _distribute(ctx, inp.lead_id, st["offering_code"], st["source"], exclude=holders, holders=holders, recalls=st["recalls"],
+                           reason=f"Sale trả lead: {inp.reason}", data={"released": True}, plan_code=st.get("plan_code") or "", step=st["step_seq"])
+    return {"assigned_to": to}

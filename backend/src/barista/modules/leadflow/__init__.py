@@ -66,7 +66,8 @@ DAY_PRESETS = {"mon_fri": ((1, 2, 3, 4, 5), "T2–T6"), "mon_sat": ((1, 2, 3, 4,
 EVENT_LABEL = {"assigned": "Được chia", "queued": "Vào hàng chờ", "first_call_met": "Liên hệ lần đầu", "first_call_breached": "Quá hạn gọi",
                "recalled": "Thu hồi", "followup_breached": "Quá hạn chăm sóc lại", "reminded": "Nhắc trước hạn", "escalated": "Báo trưởng nhóm",
                "accepted": "Bấm nhận lead", "accept_missed": "Không bấm nhận kịp", "returned": "Khách quay lại", "reopened": "Mở lại lead đã mất",
-               "handed_over": "Chuyển người giữ"}
+               "handed_over": "Chuyển người giữ", "stepped": "Sang bậc kế", "invited": "Mời nhận (ai nhận trước giữ)", "claimed": "Nhận lead được mời",
+               "released": "Người giữ trả lead"}
 # vì sao lead đổi người giữ mà KHÔNG phải thu hồi (0153): không tính vào số lần thu hồi, ghi vào sổ sự kiện của lead
 HANDOVER = {"away": "người giữ đang nghỉ phép", "deactivated": "người giữ đã nghỉ việc / bị khoá tài khoản",
             "lost_access": "vai của người giữ không còn quyền xem + ghi Khách hàng", "left_team": "người giữ đã rời đội nhận lead của luật",
@@ -74,11 +75,11 @@ HANDOVER = {"away": "người giữ đang nghỉ phép", "deactivated": "ngườ
 QUEUE_ESCALATE_MIN = 240                           # mặc định (luật cũ / chưa có luật): lead chờ quá 4 giờ làm việc ⇒ báo người sở hữu hàng chờ
 QUEUE_REASON = {"no_rule": "chưa có luật chia", "no_eligible": "không có ai đủ điều kiện nhận", "cap": "mọi người đã chạm trần lead chưa gọi",
                 "recall_limit": "đã thu hồi hết số lần cho phép", "coordinator": "chờ đội điều phối chia", "team": "giao cho đội chỉ định chia",
-                "paused": "đang tạm ngừng chia lead"}
+                "paused": "đang tạm ngừng chia lead", "invited": "đang mời người nhận — ai nhận trước giữ", "steps_done": "đã qua hết các bậc chia"}
 # lead ĐỖ (0185): trạng thái chia nạp từ hệ khác (``lead_state.imported_at``) là tham chiếu — không chấm hạn / nhắc / thu hồi / chia lại cho tới khi Barista tự chia
 PARKED_LABEL = "nạp từ hệ cũ — chưa kích hoạt"
 DRAINABLE = ("no_rule", "no_eligible", "cap", "paused")   # chỉ những lý do này vòng quét tự thử chia lại (tạm ngừng: khi bật lại); chờ điều phối thì để người chia
-PLANNED = ("coordinator", "team", "paused")                # nằm hàng chờ CÓ CHỦ Ý (không phải kẹt)
+PLANNED = ("coordinator", "team", "paused", "invited")     # nằm hàng chờ CÓ CHỦ Ý (không phải kẹt) — "invited": đang mời nhiều người (0264)
 OPEN = ("offered", "waiting")                      # chưa có liên hệ đầu: đang chạy hạn gọi (và hạn bấm nhận nếu luật có)
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)   # mốc xếp hạng "chưa nhận lần nào" — chỉ so, không hiện
 SWEEP_LIMIT = 500
@@ -266,6 +267,10 @@ class SetRule(Input):
     plan_code: str = field("Kế hoạch chiến dịch", "", max_length=40, example="CP7K3ABCDEFG", group=G4,
                            help="Trống = mọi lead. Có mã = luật cho lead của các chiến dịch thuộc kế hoạch đó — thắng luật theo nguồn / [[offering|l]] (0204)")
     reopen_lost: bool = field("Khách đã mất quay lại ⇒ mở lại lead", True, help="Tắt: chỉ báo người đang chăm, lead vẫn ở chặng Mất", group=G4)
+    max_open: int = field("Trần lead đang giữ chưa chốt / người", 0, ge=0, le=500, group=G4,
+                          help="0 = không trần. Có trần ⇒ người đang giữ đủ số lead chưa chốt (kể cả đã liên hệ) thì không được chia thêm (0264)")
+    release_free: bool = field("Trả lead không tính là đã nhận", False, group=G4,
+                               help="Bật: lead sale đã trả không đếm vào số lead người đó đã nhận khi chia theo trọng số (0264)")
 
 
 async def _proof(ctx: Ctx, chosen: list[str]) -> list[str]:
@@ -317,20 +322,32 @@ async def set_rule(ctx: Ctx, inp: SetRule) -> dict[str, Any]:
         """INSERT INTO leadflow.rules (name, source, offering_code, plan_code, effective_from, mode, coord_team_id, team_id, roles, strategy, cap_uncalled,
                                        first_call_min, followup_hours, max_recalls, work_days, work_open_min, work_close_min, created_by,
                                        calendar, contact_proof, min_talk_s, remind_before_min, escalate, grace_min, off_hours, duty_team_id, duty_days,
-                                       duty_open_min, duty_close_min, accept_min, receivers, reopen_lost, queue_escalate_min, hide_contact)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                       duty_open_min, duty_close_min, accept_min, receivers, reopen_lost, queue_escalate_min, hide_contact, max_open, release_free)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (tenant_id, offering_code, source, plan_code, effective_from) DO NOTHING RETURNING id""",
         (inp.name, inp.source, offering_code, plan_code_of(inp.plan_code), inp.effective_from, inp.mode,
          await _team_id(ctx, inp.coord_team_code) if inp.mode == "coordinator" else None, await _team_id(ctx, inp.team_code), roles,
          inp.strategy, inp.cap_uncalled, inp.first_call_min, inp.followup_hours, inp.max_recalls, list(DAY_PRESETS[inp.days][0]),
          open_min, close_min, ctx.p.user_id, inp.calendar, proof, inp.min_talk_s, inp.remind_before_min, inp.escalate, inp.grace_min, inp.off_hours,
          await _team_id(ctx, inp.duty_team_code) if inp.off_hours == "duty" else None, list(DAY_PRESETS[inp.duty_days][0]), duty_open, duty_close,
-         inp.accept_min, inp.receivers, inp.reopen_lost, inp.queue_escalate_min, inp.hide_contact))
+         inp.accept_min, inp.receivers, inp.reopen_lost, inp.queue_escalate_min, inp.hide_contact, inp.max_open, inp.release_free))
     if rid is None:
         raise Conflict("Đã có luật cho phạm vi này hiệu lực đúng ngày đó — chọn ngày khác (luật cũ giữ nguyên để tra cứu)")
     rule = await ctx.one("SELECT * FROM leadflow.rules WHERE id = %s", (rid,))
     assert rule is not None
     return {"rule_id": rid, **await _describe(ctx, rule)}
+
+
+DAY_KINDS = {"working": "ngày làm việc", "calendar": "ngày lịch"}
+
+
+def step_text(t: dict[str, Any]) -> str:
+    """Một bậc thành câu ngắn (0264)."""
+    bits = [f"giữ tối đa {t['after_days']} {DAY_KINDS[t['day_kind']]}" + ("" if t["include_contacted"] else " (lead đã liên hệ ở lại)")
+            if t["after_days"] else "không hạn giữ"]
+    if t["invite_n"] > 1:
+        bits.append(f"mời {t['invite_n']} người, ai nhận trước trong {t['invite_min']} phút giữ")
+    return f"{t['label']} ({', '.join(bits)})"
 
 
 def proof_text(rule: dict[str, Any]) -> str:
@@ -368,6 +385,12 @@ async def _describe(ctx: Ctx, rule: dict[str, Any]) -> dict[str, Any]:
     steps.append(f"lead nằm hàng chờ quá {rule['queue_escalate_min']} phút làm việc thì báo người sở hữu hàng chờ, lặp lại tới khi có người nhận")
     if rule["cap_uncalled"]:
         steps.append(f"mỗi người tối đa {rule['cap_uncalled']} lead chưa gọi")
+    if rule.get("max_open"):
+        steps.append(f"mỗi người giữ tối đa {rule['max_open']} lead chưa chốt")
+    if rule.get("release_free"):
+        steps.append("lead sale trả lại không tính là đã nhận")
+    if tiers := await ctx.all("SELECT * FROM leadflow.steps WHERE rule_id = %s ORDER BY seq", (rule["id"],)):
+        steps.append(f"chia theo {len(tiers)} bậc: " + " → ".join(step_text(t) for t in tiers))
     if rule["off_hours"] == "duty":
         ddays = next((v[1] for v in DAY_PRESETS.values() if v[0] == tuple(rule["duty_days"])), "tuỳ chọn")
         steps.append(f"lead về ngoài giờ chia đội trực {teams.get(rule['duty_team_id'], '?')} ({ddays} {hm(rule['duty_open_min'])}–"
@@ -502,6 +525,10 @@ class SetMember(Input):
     plan_code: str = field("Kế hoạch chiến dịch", "", max_length=40, example="CP7K3ABCDEFG", group="Thêm chi tiết",
                            help="Trống = thành viên [[offering|l]]. Có mã = người THAM GIA kế hoạch đó (vd gói đồng chi trả): chỉ họ nhận lead của kế hoạch "
                                 "khi luật của kế hoạch chọn người nhận \"Thành viên\" (0204)")
+    step: int | None = field("Bậc nhận lead", None, ge=1, le=9, group="Thêm chi tiết", placeholder="Mọi bậc",
+                             help="Luật chia theo bậc (0264): người này chỉ nhận lead ở bậc này. Trống = mọi bậc")
+    team_code: str = field("Chi nhánh", "", options_query="admin.team_options", group="Thêm chi tiết",
+                           help="Chi nhánh / đội của người này trong [[offering|l]] (hiện trên danh sách thành viên)")
 
 
 @m.command("set_member",
@@ -518,15 +545,17 @@ async def set_member(ctx: Ctx, inp: SetMember) -> dict[str, Any]:
         raise Invalid("Chọn [[offering|l]]")
     uid = await _user_by_email(ctx, inp.user_email)
     plan = plan_code_of(inp.plan_code)
+    team = await _team_id(ctx, inp.team_code)
     await ctx.exec(
-        """INSERT INTO leadflow.members (offering_code, plan_code, user_id, tier, weight, active, note, updated_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """INSERT INTO leadflow.members (offering_code, plan_code, user_id, tier, weight, active, note, updated_by, step, team_id)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (tenant_id, offering_code, plan_code, user_id) DO UPDATE SET tier = EXCLUDED.tier, weight = EXCLUDED.weight, active = EXCLUDED.active,
-               note = EXCLUDED.note, updated_by = EXCLUDED.updated_by, updated_at = now()""",
-        (code, plan, uid, inp.tier, inp.weight, inp.active, inp.note, ctx.p.user_id))
+               note = EXCLUDED.note, updated_by = EXCLUDED.updated_by, step = EXCLUDED.step, team_id = EXCLUDED.team_id, updated_at = now()""",
+        (code, plan, uid, inp.tier, inp.weight, inp.active, inp.note, ctx.p.user_id, inp.step, team))
     if not inp.active:   # rời [[offering|l]] ⇒ lead của [[offering|l]] này đang giữ theo tư cách thành viên chuyển NGAY qua luật chia (0153)
         await routing.recheck(ctx, user_ids=[uid])
     name = await ctx.val("SELECT name FROM core.users WHERE id = %s", (uid,))
-    state = f"hạng {inp.tier}, trọng số {inp.weight}" if inp.active else "đã rời"
+    state = (f"hạng {inp.tier}, trọng số {inp.weight}" + (f", bậc {inp.step}" if inp.step else "")) if inp.active else "đã rời"
     return {"offering_code": code, "plan_code": plan, "user_id": uid, "summary": f"{name} · [[offering|l]] {code}{f' · kế hoạch {plan}' if plan else ''}: {state}"}
 
 
@@ -539,8 +568,8 @@ async def members(ctx: Ctx, inp: MembersIn) -> dict[str, Any]:
     """Ai bán [[offering|l]] nào, hạng + trọng số + đang nhận được lead lúc này không (khoá, tạm ngừng, nghỉ phép, vai không thấy lead)."""
     code = await _offering_code(ctx, inp.offering_code) if inp.offering_code else ""
     rows = await ctx.all(
-        """SELECT m.offering_code, m.user_id, u.name, u.email, m.tier, m.weight, m.active, m.note, m.updated_at FROM leadflow.members m
-           JOIN core.users u ON u.id = m.user_id WHERE (%(c)s = '' OR m.offering_code = %(c)s)
+        """SELECT m.offering_code, m.user_id, u.name, u.email, m.tier, m.weight, m.active, m.note, m.updated_at, m.step, t.name AS team
+           FROM leadflow.members m JOIN core.users u ON u.id = m.user_id LEFT JOIN core.teams t ON t.id = m.team_id WHERE (%(c)s = '' OR m.offering_code = %(c)s)
            ORDER BY m.offering_code, m.active DESC, m.tier, m.weight DESC, u.name""", {"c": code})
     capable = await _lead_capable(ctx)
     for r in rows:
@@ -549,12 +578,67 @@ async def members(ctx: Ctx, inp: MembersIn) -> dict[str, Any]:
     on = sum(1 for r in rows if r["state"] == "ok")
     return ui.table(rows, [
         ui.col("offering_code", "[[offering]]"), ui.col("name", "Người"), ui.col("tier", "Hạng", "number"), ui.col("weight", "Trọng số", "number"),
+        ui.col("step", "Bậc", "number"), ui.col("team", "Chi nhánh"),
         ui.col("state", "Nhận lead", "badge", labels={"ok": "Đang nhận", "away": "Tạm không nhận", "off": "Đã rời"},
                tones={"ok": "green", "away": "orange", "off": "gray"}),
         ui.col("note", "Ghi chú"), ui.col("updated_at", "Cập nhật", "datetime"),
     ], title="Thành viên [[offering|l]]", kpis=[ui.kpi("Thành viên đang nhận lead", on), ui.kpi("Dòng", len(rows))],
         empty="Chưa có thành viên — luật chia theo đội vẫn chạy; thêm thành viên để chia theo hạng / trọng số từng [[offering|l]]",
         empty_actions=[ui.act("leadflow.set_member", "Thêm thành viên", style="primary")])
+
+
+# ── Bậc của luật (0264): mỗi bậc giữ lead tối đa N ngày, quá hạn chưa chốt ⇒ sang bậc kế; bậc mời nhiều người ⇒ ai nhận trước giữ ──
+
+class SetStep(Input):
+    rule_id: UUID = field("Luật chia", options_query="leadflow.rule_options")
+    seq: int = field("Bậc số", 1, ge=1, le=9, help="Bậc 1 nhận lead mới; quá hạn giữ chưa chốt ⇒ bậc 2… Không lùi bậc")
+    label: str = field("Tên bậc", example="Bậc 1", max_length=40)
+    after_days: int = field("Giữ tối đa (ngày)", 2, ge=0, le=365, help="Hết số ngày này (tính lúc người nhận nhận lead) mà lead chưa chốt ⇒ sang bậc kế. "
+                                                                         "0 = không hạn giữ (thường là bậc cuối)")
+    day_kind: Literal["working", "calendar"] = field("Tính theo", "working", options={"working": "Ngày làm việc của luật", "calendar": "Ngày lịch"})
+    include_contacted: bool = field("Đẩy cả lead đã liên hệ", True, help="Tắt: lead người giữ đã liên hệ ở lại với họ khi hết hạn giữ")
+    invite_n: int = field("Mời cùng lúc (người)", 1, ge=1, le=3, help="Lớn hơn 1: lead mời từng ấy người, ai bấm nhận (hoặc ghi chăm sóc) trước thì giữ")
+    invite_min: int = field("Hạn nhận lời mời (phút làm việc)", 30, ge=1, le=1440, help="Hết hạn không ai nhận ⇒ mời lượt kế trong bậc, hết người ⇒ bậc kế")
+
+
+@m.command("set_step",
+           purpose="Khai bậc chia lead của một luật (giữ tối đa bao lâu, mời mấy người), để lead không bị ôm mà không chốt.",
+           reversible="Sửa lại bậc khi luật chưa chia lead nào; luật đã chạy thì thêm luật mới ngày hiệu lực mới (luật cũ giữ để tra cứu)",
+           resource="leadflow", action="manage", title="Thêm / sửa bậc chia lead", category="setup", importable=True, agent="propose", risk="authority")
+async def set_step(ctx: Ctx, inp: SetStep) -> dict[str, Any]:
+    """Bậc là DỮ LIỆU của luật (0264). Sửa được tới khi luật chia lead đầu tiên — từ đó bậc của luật đứng yên (lead đang chạy theo đúng bậc đã khai);
+    đổi bậc = thêm luật mới có ngày hiệu lực mới. Bậc đánh số liền nhau từ 1. Thành viên theo bậc khai ở Thành viên [[offering|l]] (ô Bậc)."""
+    if not ctx.p.has_scope("leadflow", "all"):
+        raise Denied("Bậc chia lead là chính sách cả công ty — cần quyền quản lý chia lead phạm vi cả công ty")
+    rule = await ctx.one("SELECT * FROM leadflow.rules WHERE id = %s", (inp.rule_id,))
+    if rule is None:
+        raise NotFound("Không có luật này")
+    if rule["mode"] == "coordinator" and inp.invite_n > 1:
+        raise Invalid("Luật điều phối: lead về hàng chờ để người chia — không mời nhiều người được")
+    if await ctx.val("SELECT 1 FROM leadflow.lead_state WHERE rule_id = %s LIMIT 1", (inp.rule_id,)):
+        raise Conflict("Luật này đã chia lead — bậc đứng yên. Thêm luật mới (ngày hiệu lực mới) với bậc mới; luật cũ giữ để tra cứu")
+    top = await ctx.val("SELECT coalesce(max(seq), 0) FROM leadflow.steps WHERE rule_id = %s", (inp.rule_id,))
+    if inp.seq > top + 1:
+        raise Invalid(f"Bậc đánh số liền nhau — luật đang có {top} bậc, bậc kế là {top + 1}")
+    await ctx.exec(
+        """INSERT INTO leadflow.steps (rule_id, seq, label, after_days, day_kind, include_contacted, invite_n, invite_min, updated_by)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (tenant_id, rule_id, seq) DO UPDATE SET label = EXCLUDED.label, after_days = EXCLUDED.after_days, day_kind = EXCLUDED.day_kind,
+               include_contacted = EXCLUDED.include_contacted, invite_n = EXCLUDED.invite_n, invite_min = EXCLUDED.invite_min,
+               updated_by = EXCLUDED.updated_by, updated_at = now()""",
+        (inp.rule_id, inp.seq, inp.label.strip(), inp.after_days, inp.day_kind, inp.include_contacted, inp.invite_n, inp.invite_min, ctx.p.user_id))
+    tiers = await ctx.all("SELECT * FROM leadflow.steps WHERE rule_id = %s ORDER BY seq", (inp.rule_id,))
+    notes = [] if rule["receivers"] == "members" else [
+        "Luật chọn người nhận theo đội: mọi bậc chia trong cùng đội (bậc sau là người chưa giữ lead). Chia theo danh sách từng bậc ⇒ chọn người nhận "
+        "“Thành viên” và khai ô Bậc của thành viên"]
+    return {"rule_id": inp.rule_id, "seq": inp.seq, "summary": f"{rule['name']}: " + " → ".join(step_text(t) for t in tiers), "notes": notes}
+
+
+@m.query("rule_options", resource="leadflow", title="Luật chia lead")
+async def rule_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
+    rows = await ctx.all("SELECT id, name, source, offering_code, effective_from FROM leadflow.rules ORDER BY effective_from DESC, name LIMIT 200")
+    return [{"value": str(r["id"]), "label": f"{r['name']} · {SOURCE_LABEL[r['source']]} · {r['offering_code'] or 'mọi [[offering|l]]'} · từ "
+                                             f"{r['effective_from']:%d/%m/%Y}"} for r in rows]
 
 
 # ── Tạm ngừng nhận lead ──

@@ -25,7 +25,7 @@ from barista.api import (
 from barista.api.lead_labels import SOURCES
 from barista.modules.crm import ACTIVITY, APPT_KIND, APPT_STATUS, OUTCOMES, STAGES, appointment_times, interest_text, m, reveal
 from barista.modules.crm.identity import _party_of_lead
-from barista.modules.crm.leads import offering_names
+from barista.modules.crm.leads import invited, offering_names
 
 TEMP = {"hot": "Nóng", "warm": "Ấm", "new": "Mới", "cold": "Nguội"}
 TEMP_TONE = {"hot": "bad", "warm": "warn", "new": "accent", "cold": "muted"}
@@ -206,6 +206,10 @@ async def journey(ctx: Ctx, inp: JourneyIn) -> dict[str, Any]:
                                    "Bấm Nhận lead để xem đủ số và liên hệ khách. Quá hạn bấm nhận thì lead chuyển cho người khác." if mine
                                    else "Người được chia chưa bấm nhận — liên hệ của khách đang che với mọi người cho tới lúc đó.",
                                    actions=[ui.act("leadflow.accept", "Nhận lead", {"lead_id": str(lead["id"])}, "primary")] if mine else []))
+    if lead["owner_id"] is None and (until := (await invited(ctx, [lead["id"]])).get(str(lead["id"]))):   # mời nhiều người (ADR 0264)
+        blocks.append(ui.b_callout("warn", "Anh/chị được mời nhận lead này — ai nhận trước giữ",
+                                   f"Bấm Nhận lead (hoặc ghi chăm sóc) trước {until.astimezone(zone()):%H:%M %d/%m}. Đồng nghiệp nhận trước thì lời mời đóng lại.",
+                                   actions=[ui.act("leadflow.claim", "Nhận lead", {"lead_id": str(lead["id"])}, "primary")]))
     if blocker:
         blocks.append(ui.b_callout("bad", f"Đang kẹt: {blocker[0]}", blocker[1]))
     blocks.append(ui.b_steps(steps, "Hành trình"))
@@ -252,6 +256,8 @@ async def journey(ctx: Ctx, inp: JourneyIn) -> dict[str, Any]:
         actions += [a for p in parts for a in p.get("actions", ())]
         # ấn phẩm riêng cho khách này (ADR 0249): lệnh của phân hệ Ấn phẩm — gói đó tắt / người xem không chạy được ⇒ nút tự ẩn (``visible_actions``)
         actions.append(ui.act("compose.brochure", "Soạn ấn phẩm cho khách", {"lead_id": str(lead["id"])}))
+        if lead["owner_id"] == ctx.p.user_id:   # người đang giữ trả lead không theo được (ADR 0264) — lệnh tự ẩn khi người xem không chạy được
+            actions.append(ui.act("leadflow.release", "Trả lead", {"lead_id": str(lead["id"])}))
         actions.append(ui.act("crm.set_stage", "Mất khách", {"lead_id": str(lead["id"]), "stage": "lost"}, "destructive"))
     who = " · ".join(x for x in (phone_display(lead["phone"]), lead["offering_code"] or "chưa chọn [[offering|l]]", STAGES[lead["stage"]], lead["owner"]) if x)
     return ui.card(lead["customer"], blocks, subtitle=who, icon="person.crop.circle", actions=actions,

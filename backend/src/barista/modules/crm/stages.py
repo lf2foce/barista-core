@@ -134,3 +134,74 @@ async def labels(ctx: Ctx) -> dict[str, str]:
 
 async def tones(ctx: Ctx) -> dict[str, str]:
     return {**STAGE_TONES, **{r["key"]: r["tone"] or STAGE_TONES[r["phase"]] for r in await stage_rows(ctx)}}
+
+
+# ── Chuyển chặng được phép (ADR 0264): công ty khai cặp (từ → sang) + vai; không khai cặp nào ⇒ như cũ, mọi chặng chuyển được ──
+
+class SetStageMove(Input):
+    from_stage: str = field("Từ chặng", options_query="crm.stage_options")
+    to_stage: str = field("Sang chặng", options_query="crm.stage_options")
+    roles: list[str] = field("Vai được chuyển", [], options_query="admin.role_options", help="Trống = mọi vai được chuyển cặp chặng này")
+    active: bool = field("Đang dùng", True, help="Tắt = bỏ cặp này (giữ dòng để tra cứu). Công ty không còn cặp nào đang dùng ⇒ chuyển chặng tự do như cũ")
+
+
+@m.command("set_stage_move",
+           purpose="Khai cặp chặng được phép chuyển (và vai nào được chuyển), để lead không bị chuyển chặng bừa làm sai phễu.",
+           reversible="Chạy lại lệnh với giá trị cũ hoặc tắt cặp chặng",
+           resource="crm", action="manage", title="Thêm / sửa chuyển chặng được phép", category="setup", importable=True, agent="propose", risk="authority")
+async def set_stage_move(ctx: Ctx, inp: SetStageMove) -> dict[str, Any]:
+    """Ma trận chuyển chặng là cấu hình cả công ty (ADR 0264). Khai ít nhất một cặp ⇒ ``crm.set_stage`` (kể cả luật tự động và bước tự chuyển chặng khi
+    liên hệ lần đầu) chỉ cho các cặp đã khai, đúng vai. Chặng ghi bằng mã chặng của công ty hoặc mã giai đoạn (lead / prospect / lost)."""
+    if not ctx.p.has_scope("crm", "all"):
+        raise Denied("Chuyển chặng được phép là cấu hình cả công ty — cần quyền quản lý Khách hàng phạm vi cả công ty")
+    known = {r["key"] for r in await stage_rows(ctx)} | set(PHASES)
+    for k in (inp.from_stage, inp.to_stage):
+        if k not in known:
+            raise NotFound(f"Không có chặng {k}")
+    if inp.from_stage == inp.to_stage:
+        raise Invalid("Chặng đi và chặng đến phải khác nhau")
+    roles = sorted(set(inp.roles))
+    if bad := sorted(set(roles) - {r["key"] for r in await ctx.all("SELECT key FROM core.roles")}):
+        raise Invalid(f"Không có vai: {', '.join(bad)}")
+    await ctx.exec(
+        """INSERT INTO crm.stage_moves (from_stage, to_stage, roles, active, updated_by) VALUES (%s, %s, %s, %s, core.me())
+           ON CONFLICT (tenant_id, from_stage, to_stage) DO UPDATE SET roles = EXCLUDED.roles, active = EXCLUDED.active, updated_by = EXCLUDED.updated_by,
+               updated_at = now()""", (inp.from_stage, inp.to_stage, roles, inp.active))
+    names = await labels(ctx)
+    who = ", ".join(roles) if roles else "mọi vai"
+    return {"from_stage": inp.from_stage, "to_stage": inp.to_stage,
+            "summary": f"{names.get(inp.from_stage, inp.from_stage)} → {names.get(inp.to_stage, inp.to_stage)}: "
+                       + (f"được chuyển ({who})" if inp.active else "đã bỏ")}
+
+
+@m.query("stage_moves", resource="crm", title="Chuyển chặng được phép")
+async def stage_moves(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    names = await labels(ctx)
+    rows = await ctx.all("SELECT from_stage, to_stage, roles, active, updated_at FROM crm.stage_moves ORDER BY from_stage, to_stage")
+    for r in rows:
+        r["id"] = f"{r['from_stage']}:{r['to_stage']}"
+        r["from_label"], r["to_label"] = names.get(r["from_stage"], r["from_stage"]), names.get(r["to_stage"], r["to_stage"])
+        r["who"] = ", ".join(r["roles"]) or "Mọi vai"
+        r["state"] = "on" if r["active"] else "off"
+    return ui.table(rows, [
+        ui.col("from_label", "Từ chặng"), ui.col("to_label", "Sang chặng"), ui.col("who", "Vai được chuyển"),
+        ui.col("state", "", "badge", labels={"on": "Đang dùng", "off": "Đã bỏ"}, tones={"on": "green", "off": "gray"}),
+        ui.col("updated_at", "Cập nhật", "datetime"),
+    ], title="Chuyển chặng được phép", empty="Chưa khai cặp nào — mọi chặng chuyển được (như cũ)",
+        empty_actions=[ui.act("crm.set_stage_move", "Thêm cặp chặng", style="primary")])
+
+
+async def move_block(ctx: Ctx, frm: str, to: str) -> str:
+    """Câu từ chối nếu công ty đã khai chuyển chặng và cặp (``frm`` → ``to``) chưa được phép cho vai người gọi; "" = được. Công ty chưa khai cặp nào đang
+    dùng ⇒ luôn được (hành vi cũ). Quyền hệ thống không mang vai ⇒ chỉ cần cặp có khai."""
+    moves = await ctx.all("SELECT from_stage, to_stage, roles FROM crm.stage_moves WHERE active")
+    if not moves:
+        return ""
+    role = ctx.p.role
+    fit = [r for r in moves if r["from_stage"] == frm and (not r["roles"] or not role or role in r["roles"])]
+    if any(r["to_stage"] == to for r in fit):
+        return ""
+    names = await labels(ctx)
+    ok = sorted({str(names.get(r["to_stage"], r["to_stage"])) for r in fit})
+    return (f"Chưa được chuyển từ “{names.get(frm, frm)}” sang “{names.get(to, to)}”"
+            + (f" — từ chặng này chuyển được sang: {', '.join(ok)}" if ok else " — từ chặng này chưa có chặng nào được chuyển cho vai của anh/chị"))

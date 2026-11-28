@@ -281,6 +281,7 @@ async def log_activity(ctx: Ctx, inp: LogActivity) -> dict[str, Any]:
         raise NotFound("Không thấy lead")
     if inp.outcome and inp.kind != "call":
         raise Invalid("Kết quả cuộc gọi chỉ dùng cho hình thức Gọi điện")
+    await claim_if_invited(ctx, inp.lead_id)
     await ctx.exec("INSERT INTO crm.activities (lead_id, kind, outcome, note, by_user) VALUES (%s, %s, %s, %s, %s)",
                    (inp.lead_id, inp.kind, inp.outcome, inp.note, ctx.p.user_id))
     # không nghe máy / máy bận mà chưa hẹn ⇒ tự hẹn gọi lại sau 4 giờ trong ngày (quá giờ ⇒ ngày mai) — học từ bds
@@ -307,8 +308,29 @@ async def _first_contact_moves_on(ctx: Ctx, inp: LogActivity) -> str | None:
     current = await ctx.val("SELECT pipeline_stage FROM crm.leads WHERE id = %s", (inp.lead_id,))
     if current != stages[0]["key"]:
         return None
+    from barista.modules.crm.stages import move_block  # nạp muộn: giữ thứ tự thao tác trong sổ đăng ký
+    if await move_block(ctx, current, stages[1]["key"]):   # công ty khai chuyển chặng (ADR 0264) mà cặp này chưa được phép ⇒ không tự chuyển
+        return None
     await ctx.call("crm.set_stage", lead_id=str(inp.lead_id), stage=stages[1]["key"])
     return str(stages[1]["label"])
+
+
+async def invited(ctx: Ctx, lead_ids: list[UUID]) -> dict[str, Any]:
+    """Lead (trong ``lead_ids`` — bên gọi đã đọc qua RLS) người xem đang được MỜI nhận (ADR 0264): {lead_id: hạn lời mời}."""
+    if not lead_ids or ctx.p.user_id is None:
+        return {}
+    got: dict[str, Any] = (await ctx.call_system("leadflow.invite_for", lead_ids=lead_ids, user_id=ctx.p.user_id))["invited"]
+    return got
+
+
+async def claim_if_invited(ctx: Ctx, lead_id: UUID) -> None:
+    """"Ai cập nhật trước thì giữ" (ADR 0264): người được mời ghi chăm sóc / đổi chặng lead chưa ai giữ ⇒ nhận lead TRƯỚC (đúng lệnh ``leadflow.claim``, quyền
+    của chính họ — trợ lý thì thành thẻ đề xuất), rồi mới ghi. Lead đã có người phụ trách ⇒ không làm gì."""
+    row = await ctx.one("SELECT id, owner_id FROM crm.leads WHERE id = %s", (lead_id,))
+    if row is None or row["owner_id"] is not None:
+        return
+    if str(row["id"]) in await invited(ctx, [row["id"]]):
+        await ctx.call("leadflow.claim", lead_id=str(row["id"]))
 
 
 class LeadRef(Input):
@@ -411,8 +433,9 @@ async def set_stage(ctx: Ctx, inp: SetStage) -> dict[str, Any]:
     đánh dấu tay; sang "Mất" cần lý do (chọn trong danh mục — ADR 0246). Chọn lại đúng chặng đang có ⇒ không ghi gì. Lý do của lần mất gần nhất ở lại
     trên lead khi lead quay lại theo; mỗi lần mất có trong lịch sử chặng."""
     from barista.modules.crm import lost_reasons  # nạp muộn: giữ thứ tự thao tác trong sổ đăng ký
-    from barista.modules.crm.stages import resolve
+    from barista.modules.crm.stages import move_block, resolve
 
+    await claim_if_invited(ctx, inp.lead_id)   # người được mời đổi chặng trước ⇒ nhận lead (ADR 0264)
     phase, pipeline = await resolve(ctx, inp.stage)
     note = inp.lost_reason.strip()
     key, label = await lost_reasons.pick(ctx, inp.lost_reason_key, note) if phase == "lost" else (None, "")
@@ -421,6 +444,9 @@ async def set_stage(ctx: Ctx, inp: SetStage) -> dict[str, Any]:
         raise NotFound("Không thấy lead (hoặc lead đã thành giao dịch)")
     if before["stage"] == phase and before["pipeline_stage"] == pipeline and phase != "lost":
         return {"lead_id": inp.lead_id, "stage": phase, "pipeline_stage": pipeline, "unchanged": True}
+    frm, to = before["pipeline_stage"] or before["stage"], pipeline or phase
+    if frm != to and (why := await move_block(ctx, frm, to)):   # công ty khai cặp chuyển chặng được phép (ADR 0264) — kể cả luật tự động
+        raise Invalid(why)
     if phase == "lost":
         await ctx.exec("UPDATE crm.leads SET stage = %s, pipeline_stage = %s, lost_reason = %s, lost_reason_key = %s, updated_at = now() WHERE id = %s",
                        (phase, pipeline, note, key, inp.lead_id))
