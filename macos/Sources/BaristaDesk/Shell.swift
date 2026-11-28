@@ -73,19 +73,25 @@ struct LoginView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                #if os(iOS)
+                // iPhone / iPad: màn đầu tiên khách và người duyệt App Store thấy — logo, tên app, một câu; địa chỉ máy chủ xuống cuối, chữ nhỏ
+                VStack(spacing: 10) {
+                    Image("Logo").resizable().scaledToFit().frame(width: 84, height: 84)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    Text("Barista Work").font(.system(size: 28, weight: .semibold))
+                    Text("Mỗi người một trợ lý AI — thấy đúng phần dữ liệu của mình.")
+                        .font(.t14).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity).padding(.top, 36).padding(.bottom, 8)
+                #else
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Barista Desk").font(.t20)
                     Text("Mỗi người một trợ lý — thấy đúng phần dữ liệu của mình.").font(.t14).foregroundStyle(.secondary)
                 }
+                #endif
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle").font(.t14).foregroundStyle(.red)
                 }
-                #if os(iOS)
-                Button { NotificationCenter.default.post(name: .baristaOpenServerSettings, object: nil) } label: {
-                    Label("Máy chủ: \(API.defaultBase.absoluteString)", systemImage: "server.rack").font(.t12)
-                }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                #endif
                 if let grant {
                     tenantPicker(grant)
                 } else if let g = config?.google {
@@ -126,13 +132,33 @@ struct LoginView: View {
                     Text("Core chưa cấu hình đăng nhập Google (BARISTA_GOOGLE_CLIENT_IDS, BARISTA_GOOGLE_APP_CLIENT_ID).")
                         .font(.t12).foregroundStyle(.secondary).textSelection(.enabled)
                 }
+                #if os(iOS)
+                // chân màn: máy chủ (bấm / lắc máy để đổi — công ty có máy chủ riêng) + chính sách quyền riêng tư
+                VStack(spacing: 6) {
+                    Button { NotificationCenter.default.post(name: .baristaOpenServerSettings, object: nil) } label: {
+                        Text(API.defaultBase.host() ?? API.defaultBase.absoluteString).font(.t12)
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    Link("Chính sách quyền riêng tư", destination: AIConsent.privacyURL).font(.t12)
+                }
+                .frame(maxWidth: .infinity).padding(.top, 12)
+                #endif
             }
             .padding(28)
             .padding(.top, titlebarInset)
             .frame(maxWidth: 640)
             .frame(maxWidth: .infinity)
         }
+        #if os(iOS)
+        .background(
+            LinearGradient(colors: [Color(red: 0.12, green: 0.25, blue: 0.69).opacity(0.22), Color(red: 0.08, green: 0.72, blue: 0.65).opacity(0.10), Color.canvas],
+                           startPoint: .top, endPoint: .center)
+                .background(Color.canvas)
+                .ignoresSafeArea()
+        )
+        #else
         .background(Color.canvas)
+        #endif
         .task { await load() }
     }
 
@@ -200,6 +226,55 @@ private struct EmailSignIn: View {
     private var trimmed: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
+        #if os(iOS)
+        phone
+        #else
+        desk
+        #endif
+    }
+
+    #if os(iOS)
+    /// iPhone / iPad: thẻ trắng bo góc, ô to, nút full chiều ngang (màn đầu tiên khách + người duyệt App Store thấy).
+    private var phone: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(sent ? "Nhập mã trong email" : "Đăng nhập").font(.system(size: 20, weight: .semibold))
+            if !sent {
+                TextField("", text: $email, prompt: Text("email@congty.vn").foregroundStyle(.secondary))
+                    .keyboardType(.emailAddress).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .font(.system(size: 17)).foregroundStyle(.primary).padding(.horizontal, 16).frame(height: 52)
+                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.canvas))
+                    .onSubmit { start() }
+                Button { start() } label: {
+                    Text(busy ? "Đang gửi…" : "Nhận mã đăng nhập").font(.system(size: 17, weight: .semibold)).frame(maxWidth: .infinity).frame(height: 52)
+                }
+                .buttonStyle(.borderedProminent).buttonBorderShape(.roundedRectangle(radius: 14)).disabled(busy || !trimmed.contains("@"))
+                Text("Dùng email mà công ty đã mời — Gmail hay email công ty đều được.").font(.t12).foregroundStyle(.secondary)
+            } else {
+                Text("Đã gửi mã 6 số tới \(trimmed). Mã hết hạn sau 10 phút.").font(.t14).foregroundStyle(.secondary)
+                TextField("••••••", text: $code)
+                    .keyboardType(.numberPad).textContentType(.oneTimeCode).focused($codeFocused)
+                    .font(.system(size: 28, weight: .semibold, design: .rounded)).kerning(10).multilineTextAlignment(.center)
+                    .frame(height: 60).background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.canvas))
+                    .onChange(of: code) { _, v in
+                        let digits = String(v.filter(\.isNumber).prefix(6))
+                        if digits != v { code = digits }
+                        if digits.count == 6, !busy { verify() }
+                    }
+                Button { verify() } label: {
+                    Text(busy ? "Đang kiểm…" : "Đăng nhập").font(.system(size: 17, weight: .semibold)).frame(maxWidth: .infinity).frame(height: 52)
+                }
+                .buttonStyle(.borderedProminent).buttonBorderShape(.roundedRectangle(radius: 14)).disabled(busy || code.count != 6)
+                Button("Đổi email / gửi lại mã") { sent = false; code = ""; error = nil }.font(.t14).frame(maxWidth: .infinity)
+            }
+            if let error { Label(error, systemImage: "exclamationmark.triangle").font(.t12).foregroundStyle(Color.bad) }
+        }
+        .padding(20)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.surface))
+        .shadow(color: .black.opacity(0.06), radius: 16, y: 6)
+    }
+    #endif
+
+    private var desk: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Đăng nhập bằng email").font(.t12m).foregroundStyle(.secondary)
             HStack(spacing: 8) {
