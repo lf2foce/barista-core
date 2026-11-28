@@ -19,7 +19,8 @@ from tests.conftest import approved, edge, ok, owner_val
 PEOPLE = [("giamdoc", "Giám đốc thử", "director", "HQ", True), ("admin", "Quản trị thử", "admin", "QT", True),
           ("ketoan", "Kế toán thử", "accountant", "KT", True), ("nv", "Nhân viên thử", "staff", "KD-A", False)]
 ACCESS_RULES = {f"admin.{c}" for c in ("set_grant", "set_info_access", "set_rule", "set_chain", "upsert_role", "update_member", "invite_user", "add_team", "remove_team",
-                                        "upsert_team", "set_agent_policy", "set_agent_trust", "set_agent_preset")} | {"kb.save_shelf"} \
+                                        "upsert_team", "set_agent_policy", "set_agent_trust", "set_agent_preset",
+                                        "import_config")} | {"kb.save_shelf"} \
     | {f"connect.{c}" for c in ("install", "set_access", "rotate_secret")}   # nới tự chủ trợ lý / hạ ngưỡng tin cậy = cấp quyền (0143)
 
 
