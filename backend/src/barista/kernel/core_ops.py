@@ -118,6 +118,7 @@ Pack("base", "Nền",
                      ("onboard.sign", "onboard_signoff"), ("onboard.go_live", "onboard_go_live"),
                      *((f"admin.{c}", "access_change") for c in ("set_grant", "set_info_access", "set_rule", "set_chain", "upsert_role", "update_member",
                                                                   "invite_user", "add_team", "remove_team", "upsert_team",
+                                                                  "import_config",   # gói cấu hình (0263 C): MỘT phiếu cho cả tệp
                                                                   "set_agent_policy", "set_agent_trust", "set_agent_preset")),   # nới tự chủ trợ lý (0143 / 0144) = cấp quyền
                      ("kb.save_shelf", "access_change"),   # mở thêm người đọc kệ hạn chế = cấp quyền đọc tài liệu
                      # app từ xa (0140): cài / đổi quyền / xoay khoá = cấp quyền cho một người gọi ngoài ⇒ như đổi quyền người

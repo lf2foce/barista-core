@@ -42,7 +42,9 @@ CORE_STEPS: tuple[OnboardStep, ...] = (
     OnboardStep("process_signed", 1, "Khách ký quy trình vận hành trên Barista", evidence="Biên bản quy trình đã ký"),
     OnboardStep("configured", 2, "Cấu hình công ty xong: vai, quyền, chuỗi duyệt, cài đặt, từ vựng, mẫu quy trình, luật của từng gói",
                 evidence="Ai rà, ngày rà"),
-    OnboardStep("people", 2, "Mời đủ người dùng thật với đúng vai và đội", evidence="Số người đã mời / còn thiếu"),
+    OnboardStep("config_imported", 2, "Nhập cấu hình đã duyệt từ bản thử (Quản trị › Tệp cấu hình đã tải lên) thay vì làm tay lại; phần chưa nhập "
+                "được (chờ mời người, không ghi đè) có lý do", required=False, evidence="Phiên bản cấu hình (config_version) đã nhập"),
+    OnboardStep("people", 2,"Mời đủ người dùng thật với đúng vai và đội", evidence="Số người đã mời / còn thiếu"),
     OnboardStep("mock_runs", 3, f"Ít nhất {MIN_MOCK_RUNS} lượt chuyển thử đạt đối chiếu (không lệch, hoặc lệch đã ký)"),
     OnboardStep("uat", 4, "Người dùng thật chạy trọn nghiệp vụ trên dữ liệu đã chuyển — biên bản kiểm thử chấp nhận", evidence="Biên bản kiểm thử"),
     OnboardStep("training", 5, "Đào tạo theo vai: mỗi vai một buổi trên màn của vai", evidence="Danh sách người đã học"),

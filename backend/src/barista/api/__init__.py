@@ -266,6 +266,9 @@ __version__ = "1.86.0"   # 1.4: Module.command(import_rows=…) (0151) · 1.5: b
 #                              ``Problem`` + bộ chạy ``load`` — lệnh qua executor ``historical=True``, sổ mã gốc + dấu vân tay, đối chiếu có ngưỡng);
 #                              ``Module.cutover(step, label, order=, resource=, why=)`` + ``CutoverIn`` (bước ngày chuyển gói tự khai — ``onboard.go_live`` chạy theo thứ tự);
 #                              ``Pack(onboard_steps=…)`` + ``OnboardStep`` (việc của gói trong danh sách 7 chặng). Migration base/116 (schema onboard) — chỉ thêm
+#                              + ``Module.config(key, label, read=, write=, order=, match=, mutable=)`` (ADR 0263 C — tài nguyên cấu hình gói tự khai cho gói cấu hình
+#                              công ty ``admin.export_config`` / ``admin.import_config``: truy vấn đọc trả mục ở dạng đầu vào của lệnh ghi sẵn có). Migration
+#                              base/117 (bảng ``admin.config_bundles`` giữ tệp đã tải lên + luật duyệt ``admin.import_config``) — chỉ thêm
 
 __all__ = [
     "VN",

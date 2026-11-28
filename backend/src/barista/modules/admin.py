@@ -7,11 +7,14 @@ khách của cả đội, bắt huỷ giao dịch phải qua giám đốc… B�
 """
 
 import base64
+import hashlib
+import json
 import re
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import date, timedelta
 from typing import Any, Literal
+from urllib.parse import quote
 from uuid import UUID
 
 from psycopg.types.json import Jsonb
@@ -35,6 +38,7 @@ from barista.api import (
     files,
     today,
     ui,
+    web,
     zone,
 )
 from barista.db import db
@@ -42,6 +46,7 @@ from barista.kernel import (
     alerts,
     clock,
     company_settings,
+    config_bundle,
     executor,
     extra_fields,
     operator_door,
@@ -63,7 +68,7 @@ m = Module("admin", "Quản trị", pack="base")
 SCOPE_LABEL = {"own": "Của mình", "unit": "Đội mình thuộc", "team": "Đội mình quản", "all": "Cả công ty"}
 ACTION_LABEL = {"read": "xem", "write": "ghi", "approve": "duyệt", "manage": "quản lý"}
 TEAM_KINDS = {"company": "Công ty", "branch": "Chi nhánh", "sales": "Kinh doanh", "marketing": "Marketing",
-              "accounting": "Kế toán", "admin": "Hành chính / quản trị"}
+              "accounting": "Kế toán", "admin": "Hành chính / quản trị", "department": "Phòng ban", "leasing": "Cho thuê"}   # = CHECK của core.teams.kind
 
 
 async def _ensure_admin_remains(ctx: Ctx) -> None:
@@ -547,7 +552,7 @@ class UpsertTeam(Input):
     code: str = field("Mã đội", "", example="KD-C", max_length=30, group="Thêm chi tiết", placeholder="Máy đặt từ tên đội",
                       help="Để trống khi thêm đội mới. Sửa đội có sẵn thì mã đã điền sẵn.")
     name: str = field("Tên đội", example="Kinh doanh C", max_length=120)
-    kind: Literal["company", "branch", "sales", "marketing", "accounting", "admin"] = field("Loại", "sales", options=TEAM_KINDS)
+    kind: Literal["company", "branch", "sales", "marketing", "accounting", "admin", "department", "leasing"] = field("Loại", "sales", options=TEAM_KINDS)
     parent_code: str = field("Thuộc đội", "", options_query="admin.team_options", example="HQ")
 
 
@@ -2188,14 +2193,15 @@ async def save_field(ctx: Ctx, inp: SaveField) -> dict[str, Any]:
         raise Invalid("Tối đa 50 lựa chọn, mỗi lựa chọn tối đa 80 ký tự")
     have = await ctx.all("SELECT key, kind, active, label FROM core.field_defs WHERE subject = %s", (inp.subject,))
     old = next((r for r in have if r["key"] == inp.key), None) if inp.key else None
-    if inp.key and old is None:
+    if inp.key and old is None and not extra_fields.KEY.fullmatch(inp.key):
         raise NotFound("Không thấy trường này")
     if old is not None and old["kind"] != inp.kind:
         raise Invalid("Không đổi được kiểu của trường đã tạo — ngừng trường này và thêm trường mới")
     if old is None:
         if sum(1 for r in have if r["active"]) >= extra_fields.MAX_PER_SUBJECT:
             raise Invalid(f"Mỗi đối tượng tối đa {extra_fields.MAX_PER_SUBJECT} trường riêng đang dùng")
-        key = code_from_name(inp.label, frozenset(r["key"].upper().replace("_", "-") for r in have)).lower().replace("-", "_")
+        # mã có sẵn chưa có ở công ty này = nhập cấu hình từ công ty khác (0263 C): giữ đúng mã của công ty nguồn (giá trị ``extra`` nạp theo mã đó)
+        key = inp.key or code_from_name(inp.label, frozenset(r["key"].upper().replace("_", "-") for r in have)).lower().replace("-", "_")
         if not extra_fields.KEY.fullmatch(key):
             key = "f_" + key[:28]
         await ctx.exec("""INSERT INTO core.field_defs (subject, key, label, kind, options, help, active, position, updated_by)
@@ -2644,6 +2650,305 @@ async def ensure_owner(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
     """Công ty chưa có chủ tài khoản đang hoạt động ⇒ gán theo quy tắc của ``_first_owner`` (0029). Cho đường cấp thành viên ngoài executor
     (công ty khách do công ty dịch vụ tạo: thành viên tới SAU lần cài mặc định — ``kernel/tenancy.sync_members``)."""
     return {"owners": [str(u) for u in await _first_owner(ctx)]}
+
+
+# ── Gói cấu hình công ty (ADR 0263 mục C): xuất / so / nhập — tài nguyên do module khai (``Module.config``), máy so ở ``kernel/config_bundle`` ──
+# Mỗi truy vấn ``config_*`` trả mục ĐÚNG dạng đầu vào của lệnh ghi (khoá tự nhiên, người theo email, đã chuẩn hoá như lệnh lưu) — xuất lại sau khi nhập ra
+# đúng các mục đó. Trợ lý không dùng (agent="deny"): đây là đường ống của tệp cấu hình, không phải câu hỏi của người.
+
+def _steps_text(steps: list[dict[str, Any]]) -> str:
+    """Bước duyệt đã lưu ⇒ chữ ``team_lead > role:x > user:<email> > owner`` (đúng cú pháp ``parse_steps`` đọc lại)."""
+    out = []
+    for s in steps:
+        k = s.get("kind")
+        out.append("team_lead" if k == "team_lead" else "owner" if k == "owner" else f"role:{s.get('role', '')}" if k == "role"
+                   else f"user:{s.get('email', '')}")
+    return " > ".join(out)
+
+
+@m.query("config_roles", resource="core.admin", title="Cấu hình: vai", agent="deny")
+async def config_roles(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    return [{"key": r["key"], "label": r["label"], "entry": bool(r["entry"])}
+            for r in await ctx.all("SELECT key, label, entry FROM core.roles ORDER BY key")]
+
+
+@m.query("config_teams", resource="core.admin", title="Cấu hình: cây đơn vị", agent="deny")
+async def config_teams(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    """Đội theo cây (cha trước con). Đội GỐC là chính công ty (tên = tên công ty) ⇒ không mang sang; đội con nhắc mã đội gốc như thường."""
+    rows = await ctx.all(
+        """WITH RECURSIVE tree AS (
+               SELECT t.id, t.code, t.name, t.kind, t.parent_id, 0 AS depth, t.code::text AS path FROM core.teams t WHERE t.parent_id IS NULL
+               UNION ALL
+               SELECT c.id, c.code, c.name, c.kind, c.parent_id, tree.depth + 1, tree.path || '/' || c.code
+               FROM core.teams c JOIN tree ON c.parent_id = tree.id)
+           SELECT tree.code, tree.name, tree.kind, p.code AS parent_code FROM tree JOIN core.teams p ON p.id = tree.parent_id
+           WHERE tree.depth > 0 ORDER BY tree.depth, tree.path""")
+    return [{"code": r["code"], "name": r["name"], "kind": r["kind"], "parent_code": r["parent_code"]} for r in rows]
+
+
+@m.query("config_grants", resource="core.admin", title="Cấu hình: quyền", agent="deny")
+async def config_grants(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    grantable = registry.grantable()   # tài nguyên của nhà vận hành (0193) không thuộc ma trận của công ty
+    return [{"role": r["role"], "resource": r["resource"], "scope": r["scope"], "actions": [a for a in ACTIONS if a in r["actions"]]}
+            for r in await ctx.all("SELECT role, resource, scope, actions FROM core.grants ORDER BY role, resource") if r["resource"] in grantable]
+
+
+@m.query("config_chains", resource="core.admin", title="Cấu hình: chuỗi duyệt", agent="deny")
+async def config_chains(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    return [{"key": r["key"], "label": r["label"], "steps": _steps_text(r["steps"])}
+            for r in await ctx.all("SELECT key, label, steps FROM core.approval_chains ORDER BY key")]
+
+
+@m.query("config_rules", resource="core.admin", title="Cấu hình: luật duyệt", agent="deny")
+async def config_rules(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    return [{"command": r["command"], "chain": r["chain"]} for r in await ctx.all("SELECT command, chain FROM core.approval_rules ORDER BY command")
+            if _ruleable(registry.get(r["command"]))]
+
+
+@m.query("config_settings", resource="core.admin", title="Cấu hình: cài đặt công ty", agent="deny")
+async def config_settings(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    on = await _enabled(ctx)
+    return [{"key": r["key"], "enabled": r["enabled"]} for r in await ctx.all("SELECT key, enabled FROM core.settings ORDER BY key")
+            if (s := company_settings.SETTINGS.get(r["key"])) is not None and registry.MODULE_PACK.get(s.module, "base") in on]
+
+
+@m.query("config_vocabulary", resource="core.admin", title="Cấu hình: từ vựng", agent="deny")
+async def config_vocabulary(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    return [{"term": r["term"], "label": r["label"]} for r in await ctx.all("SELECT term, label FROM core.vocabulary ORDER BY term") if r["term"] in vocab.TERMS]
+
+
+@m.query("config_fields", resource="core.admin", title="Cấu hình: trường riêng", agent="deny")
+async def config_fields(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    on = await _enabled(ctx)
+    rows = await ctx.all("SELECT subject, key, label, kind, options, help, active FROM core.field_defs ORDER BY subject, position, created_at")
+    return [{"subject": r["subject"], "key": r["key"], "label": r["label"], "kind": r["kind"], "options": ", ".join(str(o) for o in r["options"] or ()),
+             "help": r["help"], "active": r["active"]}
+            for r in rows if (s := extra_fields.SUBJECTS.get(r["subject"])) is not None and registry.MODULE_PACK.get(s.module, "base") in on]
+
+
+m.config("roles", "Vai", read="admin.config_roles", write="admin.upsert_role", order=10, match=("key",))
+m.config("teams", "Cây đơn vị (đội)", read="admin.config_teams", write="admin.upsert_team", order=20, match=("code",))
+m.config("grants", "Quyền (vai × tài nguyên)", read="admin.config_grants", write="admin.set_grant", order=30, match=("role", "resource"))
+m.config("chains", "Chuỗi duyệt", read="admin.config_chains", write="admin.set_chain", order=40, match=("key",))
+m.config("settings", "Cài đặt công ty", read="admin.config_settings", write="admin.set_setting", order=60, match=("key",))
+m.config("vocabulary", "Từ vựng công ty", read="admin.config_vocabulary", write="admin.set_term", order=70, match=("term",))
+m.config("fields", "Trường riêng", read="admin.config_fields", write="admin.save_field", order=80, match=("subject", "key"))
+# luật duyệt CUỐI CÙNG: luật chỉ có hiệu lực với lệnh chạy SAU nó — đặt sớm thì các lệnh ghi phía sau của chính lần nhập này phải qua duyệt riêng
+m.config("rules", "Luật duyệt", read="admin.config_rules", write="admin.set_rule", order=900, match=("command",))
+
+
+async def _company_name(ctx: Ctx) -> str:
+    return str(await ctx.val("SELECT name FROM core.tenants WHERE id = core.tenant()") or "")
+
+
+@m.query("export_config", resource="core.admin", action="manage", title="Xuất cấu hình công ty", min_scope="all", agent="deny")
+async def export_config(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    """Tệp cấu hình của công ty (JSON): mỗi tài nguyên cấu hình của các gói đang bật một khối, ``config_version`` = băm nội dung. Không dữ liệu nghiệp vụ,
+    không tài khoản người dùng (người trong chuỗi duyệt / luật ghi bằng email để ánh xạ). Tải về ở ``GET /v1/admin/config.json``."""
+    return await config_bundle.export(ctx, frozenset(await _enabled(ctx)), await _company_name(ctx))
+
+
+@m.route("GET", "/v1/admin/config.json")
+async def http_config_json(request: web.Request) -> web.Response:
+    p = await web.caller(request)
+    r = await web.query(p, "admin.export_config", {})
+    if not r.ok:
+        return web.result(r)
+    name = f"cau-hinh-{snake_from_name(r.output.get('company') or 'cong-ty', set(), limit=40).replace('_', '-')}-{r.output['config_version'][:8]}.json"
+    return web.Response(json.dumps(r.output, ensure_ascii=False, indent=1).encode(), media_type="application/json",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+
+async def _members(ctx: Ctx) -> set[str]:
+    return {r["email"].lower() for r in await ctx.all("""SELECT u.email FROM core.users u JOIN core.memberships mb ON mb.user_id = u.id
+                                                         AND mb.tenant_id = core.tenant() WHERE mb.active""")}
+
+
+async def _bundle(ctx: Ctx, bundle_id: UUID) -> dict[str, Any]:
+    row = await ctx.one("SELECT config_version, source_company, bundle, filename FROM admin.config_bundles WHERE id = %s", (bundle_id,))
+    if row is None:
+        raise NotFound("Không có tệp cấu hình này")
+    return {"config_version": row["config_version"], "company": row["source_company"], "blocks": row["bundle"], "filename": row["filename"]}
+
+
+async def _config_plan(ctx: Ctx, bundle: dict[str, Any]) -> config_bundle.Plan:
+    return await config_bundle.plan(ctx, bundle, frozenset(await _enabled(ctx)), await _members(ctx))
+
+
+def _plan_text(p: config_bundle.Plan) -> str:
+    n = {s: p.count(s) for s in config_bundle.STATUS}
+    parts = [f"{n['add']} thêm", f"{n['change']} đổi", f"{n['keep']} giữ nguyên"]
+    parts += [f"{n['locked']} khác nhưng không ghi đè"] if n["locked"] else []
+    parts += [f"{n['invite']} chờ mời người ({', '.join(p.invite)})"] if n["invite"] else []
+    parts += [f"{n['failed']} không ghi được"] if n["failed"] else []
+    return ", ".join(parts)
+
+
+class UploadConfig(Input):
+    filename: str = field("Tệp", "", hidden=True, max_length=300)
+    size: int = field("Cỡ", 0, hidden=True, ge=0)
+    sha256: str = field("Mã băm", "", hidden=True, max_length=64)
+
+
+@m.command("upload_config", resource="core.admin", action="manage", title="Tải tệp cấu hình lên", agent="deny", upload="json",
+           purpose="Đưa tệp cấu hình đã làm và duyệt trên bản thử vào để xem so khác với cấu hình hiện tại trước khi nhập.",
+           reversible="Tải tệp không đổi cấu hình nào — nhầm tệp thì tải tệp khác lên")
+async def upload_config(ctx: Ctx, inp: UploadConfig) -> dict[str, Any]:
+    """Đọc + kiểm tệp (đúng dạng, ``config_version`` khớp nội dung) rồi GIỮ lại để xem so khác và nhập (``admin.import_config``). Không ghi cấu hình nào."""
+    data = ctx.files.get("file")
+    if not data:
+        raise Invalid("Thiếu nội dung tệp")
+    if len(data) != inp.size or hashlib.sha256(data).hexdigest() != inp.sha256.lower():
+        raise Invalid("Nội dung tệp không khớp cỡ / mã băm đã khai")
+    b = config_bundle.parse(data)
+    bid = await ctx.val("""INSERT INTO admin.config_bundles (filename, sha256, config_version, source_company, bundle, uploaded_by)
+                           VALUES (%s, %s, %s, %s, %s, core.me()) RETURNING id""",
+                        ((inp.filename.strip() or "cau-hinh.json")[:300], inp.sha256.lower(), b["config_version"], b["company"], Jsonb(b["blocks"])))
+    p = await _config_plan(ctx, b)
+    return {"bundle_id": bid, "config_version": b["config_version"],
+            "summary": f"Đã nhận tệp cấu hình{' của “' + b['company'] + '”' if b['company'] else ''}: so với công ty này {_plan_text(p)}"}
+
+
+class ImportConfig(Input):
+    bundle_id: UUID = field("Tệp cấu hình", hidden=True)
+    dry_run: bool = field("Chỉ so khác, chưa ghi", True, help="Bỏ chọn để nhập thật (thay đổi quyền / vai / chuỗi duyệt qua chủ tài khoản duyệt)")
+
+
+async def _import_access(ctx: Ctx, inp: ImportConfig) -> str | None:
+    """Nhập THẬT mà có mục thêm / đổi ⇒ MỘT phiếu chủ tài khoản cho cả tệp (luật mặc định ``access_change`` — 0029): phiếu nói tệp nào, phần nào đổi bao
+    nhiêu và đúng các mục đổi. Lệnh chạy sau duyệt bằng quyền người xin; lệnh ghi lồng (đặt quyền, chuỗi duyệt…) cùng chuỗi ⇒ không thành phiếu riêng."""
+    if inp.dry_run:
+        return None
+    b = await _bundle(ctx, inp.bundle_id)
+    p = await _config_plan(ctx, b)
+    todo = [x for x in p.lines if x.status in config_bundle.APPLY]
+    if not todo:
+        return None
+    per = {x.label: [0, 0] for x in todo}
+    for x in todo:
+        per[x.label][x.status == "change"] += 1
+    head = f"nhập tệp cấu hình “{b['filename']}”{' của ' + b['company'] if b['company'] else ''} ({b['config_version'][:12]}): "
+    head += "; ".join(f"{k} +{a} thêm, {c} đổi" for k, (a, c) in per.items())
+    items = [f"{'thêm' if x.status == 'add' else 'đổi'} {x.label.lower()} {x.name}" + (f" ({x.detail})" if x.detail else "") for x in todo[:40]]
+    return head + " — " + "; ".join(items) + (f"; … và {len(todo) - 40} mục khác" if len(todo) > 40 else "")
+
+
+@m.command("import_config", resource="core.admin", action="manage", title="Nhập cấu hình công ty", agent="deny", sensitive=_import_access,
+           purpose="Mang cấu hình đã làm và duyệt trên bản thử (vai, quyền, đội, chuỗi duyệt, cài đặt, mẫu quy trình, luật của gói) sang công ty này, "
+                   "không làm tay lại.",
+           irreversible=True, effect="Thêm / sửa vai, quyền, đội, chuỗi và luật duyệt… cho khớp tệp (không xoá gì của công ty); muốn quay lại phải sửa từng "
+                                     "mục. Người chưa là thành viên không được tạo — mục nhắc họ bỏ qua tới khi mời.")
+async def import_config(ctx: Ctx, inp: ImportConfig) -> dict[str, Any]:
+    """So tệp đã tải lên với cấu hình hiện tại (thêm / đổi / giữ theo từng tài nguyên); ``dry_run`` (mặc định) chỉ trả bảng so, không ghi gì. Nhập thật ⇒
+    gọi đúng lệnh ghi của từng tài nguyên qua executor theo thứ tự khai (vai trước quyền, đội trước luật…), mỗi mục một điểm lưu — mục lỗi ghi lý do,
+    mục khác vẫn vào. Chạy lại cùng tệp không đổi gì. Email chưa là thành viên ⇒ "cần mời trước", không tự tạo tài khoản."""
+    b = await _bundle(ctx, inp.bundle_id)
+    p = await _config_plan(ctx, b)
+    out: dict[str, Any] = {"bundle_id": inp.bundle_id, "config_version": b["config_version"], "current_version": p.current, "dry_run": inp.dry_run,
+                           "blocks": p.blocks, "needs_invite": p.invite}
+    if inp.dry_run:
+        return {**out, "lines": [_line(x) for x in p.lines if x.status != "keep"], "summary": f"So với công ty này: {_plan_text(p)}"}
+    done = await config_bundle.apply(ctx, p)
+    await ctx.exec("UPDATE admin.config_bundles SET applied_by = core.me(), applied_at = now(), applied = %s WHERE id = %s",
+                   (Jsonb([_line(x) for x in done]), inp.bundle_id))
+    ctx.after_commit(_forget(ctx.p.tenant_id))
+    ctx.after_commit(_forget_vocab(ctx.p.tenant_id))
+    written = sum(1 for x in done if x.status != "failed")
+    return {**out, "written": written, "failed": [_line(x) for x in done if x.status == "failed"],
+            "summary": (f"Đã nhập {written} mục cấu hình" if written else "Không có gì cần ghi — cấu hình đã khớp tệp") + f" ({_plan_text(p)})"}
+
+
+def _line(x: config_bundle.Line) -> dict[str, Any]:
+    return {"resource": x.resource, "label": x.label, "name": x.name, "status": x.status, "detail": x.detail}
+
+
+@m.query("config", resource="core.admin", action="manage", title="Cấu hình công ty", min_scope="all", agent="deny")
+async def config_page(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    """Cấu hình hiện tại theo tài nguyên (số mục), ``config_version``, tải tệp cấu hình về; tải tệp đã duyệt lên ở màn Tệp cấu hình đã tải lên."""
+    on = frozenset(await _enabled(ctx))
+    blocks, skipped = await config_bundle.collect(ctx, on)
+    labels = {c.key: c.label for c in config_bundle.resources(on)}
+    ver = config_bundle.version(blocks)
+    fields_ = [ui.field(labels[k], len(v), "number") for k, v in blocks.items()]
+    fields_ += [ui.field(labels[k], f"không đọc được: {why}") for k, why in skipped.items()]
+    page = ui.detail("Cấu hình công ty", [
+        ui.section("Phiên bản cấu hình", [ui.field("config_version", ver[:16]), ui.field("Số phần cấu hình", len(blocks), "number")],
+                   text="Hai công ty cấu hình giống hệt nhau có cùng phiên bản. Tải tệp về ở bản thử đã duyệt, rồi tải lên ở công ty thật (màn Tệp cấu hình "
+                        "đã tải lên) để xem so khác trước khi nhập."),
+        ui.section("Mục cấu hình theo phần", fields_,
+                   text="Chỉ cấu hình — không dữ liệu nghiệp vụ, không tài khoản người dùng (người trong chuỗi duyệt / luật ghi bằng email)."),
+    ], subtitle=await _company_name(ctx))
+    page["links"] = [{"title": "Tải tệp cấu hình (.json)", "path": "/v1/admin/config.json", "filename": f"cau-hinh-{ver[:8]}.json"}]
+    page["actions"] = []
+    return page
+
+
+@m.query("config_bundles", resource="core.admin", action="manage", title="Tệp cấu hình đã tải lên", min_scope="all", agent="deny")
+async def config_bundles(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
+    """Tệp cấu hình đã tải lên: từ công ty nào, phiên bản, đã nhập chưa — bấm một dòng để xem so khác với cấu hình hiện tại rồi nhập."""
+    on = frozenset(await _enabled(ctx))
+    current = config_bundle.version((await config_bundle.collect(ctx, on))[0])
+    rows = await ctx.all("""SELECT b.id, b.filename, b.source_company, b.config_version, b.uploaded_at, b.applied_at, u.name AS by_name
+                            FROM admin.config_bundles b LEFT JOIN core.users u ON u.id = b.uploaded_by ORDER BY b.uploaded_at DESC LIMIT 100""")
+    out = [{"id": r["id"], "uploaded_at": r["uploaded_at"], "filename": r["filename"], "company": r["source_company"] or "—", "version": r["config_version"][:12],
+            "state": "same" if r["config_version"] == current else ("applied" if r["applied_at"] else "new"), "by_name": r["by_name"] or "—",
+            "applied_at": r["applied_at"]} for r in rows]
+    return ui.table(out, [ui.col("uploaded_at", "Lúc tải lên", "datetime"), ui.col("filename", "Tệp", width=240), ui.col("company", "Từ công ty"),
+                          ui.col("version", "Phiên bản"),
+                          ui.col("state", "So với hiện tại", "badge", labels={"same": "Đã khớp", "applied": "Đã nhập, còn khác", "new": "Chưa nhập"},
+                                 tones={"same": "green", "applied": "orange", "new": "blue"}),
+                          ui.col("applied_at", "Nhập lúc", "datetime"), ui.col("by_name", "Người tải")],
+                    title="Tệp cấu hình đã tải lên", limit=100,
+                    empty="Chưa tải tệp nào — xuất tệp ở bản thử (Cấu hình công ty › Tải tệp cấu hình), rồi bấm “Tải tệp cấu hình lên”",
+                    note=f"Phiên bản cấu hình hiện tại: {current[:12]}. “Đã nhập, còn khác”: thường do mục chờ mời người / không ghi đè — mở dòng để xem.")
+
+
+class BundleRef(Input):
+    bundle_id: UUID = field("Tệp cấu hình", hidden=True)
+
+
+@m.query("config_diff", resource="core.admin", action="manage", title="So khác tệp cấu hình", min_scope="all", agent="deny")
+async def config_diff(ctx: Ctx, inp: BundleRef) -> dict[str, Any]:
+    """Tệp ↔ cấu hình hiện tại theo từng phần: thêm / đổi / giữ / không ghi đè / chờ mời người — và lần nhập gần nhất ghi được gì, lỗi gì."""
+    b = await _bundle(ctx, inp.bundle_id)
+    p = await _config_plan(ctx, b)
+    n = {s: p.count(s) for s in config_bundle.STATUS}
+    blocks: list[dict[str, Any]] = [ui.b_kpis([ui.kpi("Thêm", n["add"], tone="blue" if n["add"] else None),
+                                               ui.kpi("Đổi", n["change"], tone="orange" if n["change"] else None), ui.kpi("Giữ nguyên", n["keep"]),
+                                               ui.kpi("Chờ mời người", n["invite"], tone="red" if n["invite"] else None),
+                                               ui.kpi("Không ghi đè", n["locked"])])]
+    if p.invite:
+        blocks.append(ui.b_callout("warn", f"Cần mời {len(p.invite)} người trước", "Mục nhắc những người này (người duyệt, thành viên…) chưa nhập được. "
+                                   "Mời họ ở Quản trị › Người dùng rồi nhập lại cùng tệp — không tự tạo tài khoản.", facts=p.invite))
+    if p.current == b["config_version"]:
+        blocks.append(ui.b_callout("ok", "Cấu hình công ty đã khớp tệp", f"Phiên bản {p.current[:12]}"))
+    blocks.append(ui.b_table(ui.table(
+        [{"id": f"{x.resource}|{i}", "label": x.label, "name": x.name, "status": x.status, "detail": x.detail} for i, x in enumerate(p.lines) if x.status != "keep"],
+        [ui.col("label", "Phần"), ui.col("name", "Mục", width=260),
+         ui.col("status", "So với hiện tại", "badge", labels=config_bundle.STATUS,
+                tones={"add": "blue", "change": "orange", "locked": "gray", "invite": "red", "failed": "red"}),
+         ui.col("detail", "Chi tiết", width=420)],
+        title="Mục khác với công ty này", empty="Không có mục nào khác — nhập tệp này không đổi gì")))
+    blocks.append(ui.b_list([{"title": x["label"], "subtitle": f"{x['items']} mục trong tệp" + (f" — {x['note']}" if x.get("note") else ""),
+                              "tone": "orange" if x.get("note") else "muted"} for x in p.blocks], "Theo phần"))
+    last = await ctx.one("SELECT applied, applied_at FROM admin.config_bundles WHERE id = %s", (inp.bundle_id,))
+    if last and last["applied_at"] and (bad := [x for x in last["applied"] if x.get("status") == "failed"]):
+        blocks.append(ui.b_callout("warn", f"Lần nhập lúc {last['applied_at'].astimezone(zone()):%H:%M %d/%m/%Y}: {len(bad)} mục không ghi được",
+                                   facts=[f"{x['label']} {x['name']}: {x['detail']}" for x in bad[:30]]))
+    actions = [ui.act("admin.import_config", "Nhập cấu hình này", {"bundle_id": str(inp.bundle_id), "dry_run": False}, "primary")] \
+        if n["add"] + n["change"] and ctx.p.can("core.admin", "manage") else []
+    return ui.card(f"Tệp cấu hình {b['filename']}", blocks, icon="square.and.arrow.down.on.square", actions=actions,
+                   subtitle=(f"Từ “{b['company']}” · " if b["company"] else "") + f"phiên bản {b['config_version'][:12]} · hiện tại {p.current[:12]}")
+
+
+m.screens("admin", (
+    Screen("config_bundle", "Cấu hình công ty", "square.and.arrow.up.on.square", "admin.config", group="Đưa vào dùng", tint="indigo", min_scope="all",
+           pinnable=False, about="Xuất cấu hình đã làm trên bản thử (vai, quyền, đội, chuỗi duyệt, cài đặt, mẫu quy trình, luật) thành một tệp để nhập sang công ty thật"),
+    Screen("config_uploads", "Tệp cấu hình đã tải lên", "square.and.arrow.down.on.square", "admin.config_bundles", group="Đưa vào dùng", tint="indigo",
+           min_scope="all", pinnable=False, about="Tải tệp cấu hình đã duyệt lên, xem so khác với cấu hình hiện tại rồi nhập (đổi quyền qua chủ tài khoản duyệt)",
+           actions=(A("admin.upload_config", "Tải tệp cấu hình lên", style="primary"),),
+           open=Open("admin.config_diff", {"bundle_id": "id"}, "So khác"), row_click="open"),
+), rank=31)
 
 
 # ── Chợ gói (0059): thẻ từng gói → xem gói gồm gì, bật sẽ thêm gì, rồi bật. App chỉ vẽ thẻ do server mô tả. ──
