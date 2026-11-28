@@ -16,6 +16,7 @@ from psycopg.types.json import Jsonb
 
 from barista.db import Conn
 from barista.kernel import vocab
+from barista.kernel.mode import HISTORICAL
 
 
 async def team_members(conn: Conn, team_id: UUID | None) -> list[UUID]:
@@ -30,7 +31,10 @@ async def team_members(conn: Conn, team_id: UUID | None) -> list[UUID]:
 
 async def send(conn: Conn, users: Iterable[UUID | None], *, kind: str, title: str, body: str = "", push: str = "",
                open: dict[str, Any] | None = None, key: str | None = None, actor: UUID | None = None) -> int:
-    """Ghi thông báo cho từng người (bỏ ``actor``, bỏ trùng). Trả số thông báo mới."""
+    """Ghi thông báo cho từng người (bỏ ``actor``, bỏ trùng). Trả số thông báo mới. Nạp lịch sử (0185) ⇒ không báo ai, trả 0 — MỘT nơi chặn cho mọi đường
+    gửi (``ctx.notify``, phiếu "xin duyệt" / "tự duyệt" của ``kernel/approvals``, gói gọi thẳng): dữ liệu hệ cũ là tham chiếu, không phải việc vừa xảy ra."""
+    if HISTORICAL.get():
+        return 0
     n = 0
     if vocab.has_token(f"{title}{body}{push}"):   # nơi GHI cuối cùng: dấu nhãn không bao giờ vào hộp thông báo / tin đẩy (0124)
         cur = await conn.execute("SELECT core.tenant() AS t")

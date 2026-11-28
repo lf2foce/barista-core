@@ -34,6 +34,7 @@ from barista.kernel import (
     clock,
     company_settings,
     extra_fields,
+    mode,
     needs,
     notify,
     packs,
@@ -73,13 +74,17 @@ FROM_FILE: ContextVar[bool] = ContextVar("barista_from_file", default=False)
 # dõi, không gửi app từ xa. Chỉ mã trong tiến trình bật (``run(historical=True)``, ``imports.run_import(historical=True)``; ``events`` bật lại khi giao sự kiện đã đánh
 # dấu) — không phải ô đầu vào, không có ở cửa HTTP / trợ lý; NGOẠI LỆ DUY NHẤT: app từ xa người vận hành đặt CHỈ GHI NHẬN (0207 — cột core.remote_apps.shadow, app không
 # tự đổi được) ⇒ cửa /v1/commands chạy lệnh của app đó ở chế độ này. Gói chỉ đọc ``ctx.historical``.
-HISTORICAL: ContextVar[bool] = ContextVar("barista_historical", default=False)
+HISTORICAL = mode.HISTORICAL   # cờ nằm ở module lá ``kernel/mode`` (``notify.send`` cùng đọc)
 # LỆNH đang chạy (tên thao tác — lõi đặt ở ``run`` / gọi lồng) — lịch sử thay đổi theo trường (ADR 0246) ghi "đổi qua lệnh nào"; gói không đặt
 _COMMAND: ContextVar[str] = ContextVar("barista_command", default="")
 _SEALED = ("conn", "p", "module", "caller", "readonly", "background")
 _CTXS: dict[int, tuple[weakref.ref[Ctx], Any, Principal, str, str, bool, Any]] = {}
 # QUYẾT ĐỊNH DUYỆT chỉ từ người bấm ở cửa HTTP (tay cầm EDGE còn hạn — 0144): không gọi lồng, không qua trợ lý / app / việc nền / ``call_as``
 DECISIONS = frozenset({"core.decide"})
+# NGOẠI LỆ DUY NHẤT của luật trên: lớp nạp dữ liệu hệ cũ (``kernel/onboard.load(approver_email=…)`` — ADR 0263) quyết phiếu do CHÍNH lượt nạp sinh ra, bằng
+# quyền một NGƯỜI THỨ HAI có thật trong công ty, qua ``decide_in_load`` bên dưới. Biến giữ đúng tay cầm của người duyệt đó trong lúc lời gọi chạy — không phải ô
+# đầu vào, không có ở cửa HTTP / trợ lý / gọi lồng (``invoke`` vẫn chặn mọi quyết định).
+_LOAD_DECIDER: ContextVar[Principal | None] = ContextVar("barista_load_decider", default=None)
 CORE_MODULES = ("",)   # Ctx lõi dựng không gắn module (test, việc của lõi) — không có mã gói nào đứng sau
 
 
@@ -1045,9 +1050,10 @@ async def _audit_alone(p: Principal, command: str, inp: Any, status: str, error:
         log.exception("không ghi được nhật ký cho %s", command)
 
 
-def scoped_key(p: Principal, key: str) -> str:
-    """Khoá chống lặp theo người gọi: ``<user>:<khoá>`` (hệ thống: ``system``). Dài quá cột ⇒ băm phần khoá."""
-    who = str(p.user_id) if p.user_id else "system"
+def scoped_key(p: Principal, key: str, *, shared: bool = False) -> str:
+    """Khoá chống lặp theo người gọi: ``<user>:<khoá>`` (hệ thống: ``system``). Dài quá cột ⇒ băm phần khoá. ``shared``: khoá của LƯỢT NẠP dữ liệu hệ cũ
+    (``run(load_key=True)``) — ``load:<khoá>``, chung cho mọi người chạy của lượt nạp trong công ty."""
+    who = "load" if shared else str(p.user_id) if p.user_id else "system"
     scoped = f"{who}:{key}"
     return scoped if len(scoped) <= 300 else f"{who}:{hashlib.sha256(key.encode()).hexdigest()}"
 
@@ -1210,6 +1216,7 @@ async def _mark_failed(p: Principal, on_fail: Callable[[Conn, Result], Awaitable
 async def run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None = None, quiet: bool = False,
               expect_basis: dict[str, str] | None = None, edited: bool = False, files: dict[str, bytes | bytearray] | None = None,
               attended: bool = False, background: bool = False, keep_output: bool = True, historical: bool = False,
+              load_key: bool = False,
               dry_run: bool = False, claim: Callable[[Conn, bool], Awaitable[Result | None]] | None = None,
               on_prepare: Callable[[Conn], Awaitable[None]] | None = None,
               on_done: Callable[[Conn, Result], Awaitable[None]] | None = None,
@@ -1217,6 +1224,9 @@ async def run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None =
     """``dry_run``: CHỈ quyền hệ thống (cửa nhà vận hành — 0206): kiểm và chạy handler thật trong điểm lưu rồi HOÀN — không ghi gì (kể cả nhật ký, khoá
     chống lặp, sự kiện); kết quả trạng thái ``dry_run`` mang đầu ra của lần chạy thử.
     ``historical``: CHỈ mã trong tiến trình (lớp nạp dữ liệu hệ cũ — 0185): lệnh, gọi lồng và mọi sự kiện nó phát chạy ở chế độ nạp lịch sử.
+    ``load_key``: CHỈ lớp nạp dữ liệu hệ cũ (``kernel/onboard`` — cần ``historical``): khoá chống lặp thuộc LƯỢT NẠP của công ty (``load:<khoá>``), không thuộc
+    người gọi ⇒ lượt bị ngắt mà lượt sau do người khác chạy (đổi người chạy của một thực thể) vẫn nhận lại kết quả cũ, không tạo trùng. Không gian ``load:``
+    không trùng được với khoá của người (``<mã người>:…``) hay ``system:…``.
     ``background``: CHỈ lõi (vòng quét) — lượt VIỆC NỀN, có hợp đồng thuê riêng cho ``ctx.job_for``, hết khi lệnh xong.
     ``keep_output``: False ⇒ bảng chống lặp chỉ giữ trạng thái (+ mã phiếu duyệt), không giữ kết quả — cho đường nhập hàng loạt, nơi người gọi chỉ đọc trạng thái
     / lỗi của từng dòng (``imports._run_rows``) và khoá là băm nội dung dòng; lần gọi lặp vẫn nhận ``replayed`` + đúng trạng thái, cùng khoá khác nội dung vẫn ``conflict`` (0177).
@@ -1227,8 +1237,10 @@ async def run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None =
     door(p, f"run {name}")
     if dry_run and not p.system:
         return Result("denied", error="Chạy thử không ghi chỉ dành cho lệnh vận hành chạy bằng quyền hệ thống")
-    if name in DECISIONS and not principal.live_edge(p):
+    if name in DECISIONS and not (principal.live_edge(p) or _LOAD_DECIDER.get() is p):
         return Result("denied", error="Quyết định duyệt chỉ do người bấm trong app (phiên đăng nhập của chính request này) — 0144")
+    if load_key and not historical:
+        raise TypeError("load_key chỉ dùng cho lớp nạp lịch sử (historical=True)")
     lease = principal.Lease() if background else None
     token = HISTORICAL.set(True) if historical else None   # chỉ BẬT: lệnh chạy bên trong một lần nạp lịch sử thừa hưởng, không tắt được
     command = _COMMAND.set(name)
@@ -1236,7 +1248,7 @@ async def run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None =
         with timing.span("executor"):
             return localized(p, await _run(p, name, inp, key=key, quiet=quiet, expect_basis=expect_basis, edited=edited, files=files, attended=attended,
                                            background=lease, keep_output=keep_output, dry_run=dry_run, claim=claim, on_prepare=on_prepare,
-                                           on_done=on_done, on_fail=on_fail))
+                                           on_done=on_done, on_fail=on_fail, load_key=load_key))
     finally:
         _COMMAND.reset(command)
         if token is not None:
@@ -1251,7 +1263,7 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
                prepared: Any = _UNPREPARED, dry_run: bool = False, claim: Callable[[Conn, bool], Awaitable[Result | None]] | None = None,
                on_prepare: Callable[[Conn], Awaitable[None]] | None = None,
                on_done: Callable[[Conn, Result], Awaitable[None]] | None = None,
-               on_fail: Callable[[Conn, Result], Awaitable[None]] | None = None, claimed: bool = False) -> Result:
+               on_fail: Callable[[Conn, Result], Awaitable[None]] | None = None, claimed: bool = False, load_key: bool = False) -> Result:
     """Chạy một LỆNH (ghi) trong giao dịch riêng. ``key``: khoá chống lặp (cùng khoá + cùng dữ liệu ⇒ trả kết quả cũ).
     ``quiet``: cho vòng quét định kỳ — kết quả là dict toàn số 0 (không có gì xảy ra) thì KHÔNG ghi nhật ký thao tác.
     ``attended``: trợ lý đang làm trong lượt CÓ NGƯỜI — MẶC ĐỊNH False, chỉ lượt chat (``agent/chat.py: ToolRun`` với ``defer=True``) bật; mọi
@@ -1303,7 +1315,7 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
                 # Khoá chống lặp thuộc NGƯỜI GỌI (hai người trùng khoá không nhận kết quả của nhau) và được GIỮ trước khi đọc:
                 # hai request cùng khoá tới cùng lúc ⇒ request sau chờ request trước commit rồi trả lại kết quả đó, không chạy
                 # lần hai, không lỗi trùng khoá.
-                key = scoped_key(p, key)
+                key = scoped_key(p, key, shared=load_key)
                 await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"idem:{p.tenant_id}:{key}",))
                 cur = await conn.execute("SELECT command, input_hash, status, output FROM core.idempotency WHERE key = %s", (key,))
                 prev = await cur.fetchone()
@@ -1414,7 +1426,7 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
             prepared_outside = True
             finished = await _run(p, name, inp, key=given_key, quiet=quiet, expect_basis=expect_basis, edited=edited, files=files, attended=attended,
                                   background=background, keep_output=keep_output, prepared=value, dry_run=dry_run, claim=claim, on_prepare=on_prepare,
-                                  on_done=on_done, on_fail=on_fail, claimed=need_prepare)
+                                  on_done=on_done, on_fail=on_fail, claimed=need_prepare, load_key=load_key)
     except asyncio.CancelledError:
         if need_prepare and on_fail is not None:
             await asyncio.shield(_mark_failed(p, on_fail, Result(previews.RECONCILIATION, error=previews.RECONCILIATION_LABEL)))
@@ -1437,6 +1449,21 @@ async def _run(p: Principal, name: str, inp: dict[str, Any], *, key: str | None 
     if finished.status == previews.RECONCILIATION:
         log.error("%s: hệ ngoài đã nhận lệnh nhưng phần ghi trong Barista không chạy (thẻ đã đóng) — cần đối soát tay", name)
     return finished
+
+
+async def decide_in_load(approver: Principal, approval_id: UUID | str, *, approve: bool = True, note: str = "") -> Result:
+    """LỐI QUYẾT PHIẾU CỦA LỚP NẠP (ADR 0263, bổ sung 28/11/2026) — CHỈ ``kernel/onboard`` gọi, mã trong tiến trình như ``historical``: không có ở cửa HTTP,
+    trợ lý không có, không gọi lồng được. Người duyệt là một NGƯỜI có thật của công ty, quyền nạp từ DB (tay cầm CORE; không quyền hệ thống, không trợ lý,
+    không app / link); lệnh chạy là ĐÚNG ``core.decide`` — vẫn kiểm người đó thuộc bước duyệt hiện tại (người xin không bao giờ nằm trong đó — bất biến 6),
+    vẫn ghi tên người duyệt vào phiếu + nhật ký, lệnh đích vẫn chạy bằng quyền người xin nạp lại. Cả lượt ở chế độ nạp lịch sử (không thông báo)."""
+    if not principal.is_issued(approver, principal.CORE) or approver.system or approver.via != "human" or approver.user_id is None \
+            or approver.link_ref is not None:
+        return Result("denied", error="Quyết phiếu trong lượt nạp: người duyệt phải là một thành viên có thật của công ty (không quyền hệ thống / trợ lý / app)")
+    token = _LOAD_DECIDER.set(approver)
+    try:
+        return await run(approver, next(iter(DECISIONS)), {"approval_id": str(approval_id), "approve": approve, "note": note}, historical=True)
+    finally:
+        _LOAD_DECIDER.reset(token)
 
 
 async def propose(p: Principal, name: str, inp: dict[str, Any], *, reason: str = "") -> Result:

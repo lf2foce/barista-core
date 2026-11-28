@@ -320,6 +320,23 @@ async def approval(ctx: Ctx, inp: ApprovalRef) -> dict[str, Any]:
     return ui.card((a["preview"] or {}).get("title") or a["summary"], blocks, subtitle=("Chờ bạn duyệt · " if mine else "") + sub, icon="checkmark.seal", actions=actions)
 
 
+class ApprovalStatesIn(Input):
+    ids: list[UUID] = field("Phiếu", [], max_length=500)
+
+
+@m.query("approval_states", resource=None, title="Trạng thái các phiếu duyệt (lớp nạp)", category="core", internal=True, agent="deny")
+async def approval_states(ctx: Ctx, inp: ApprovalStatesIn) -> dict[str, Any]:
+    """TRẠNG THÁI của các phiếu do một lượt nạp dữ liệu hệ cũ sinh ra (ADR 0263) — chỉ lớp nạp ``kernel/onboard`` hỏi bằng quyền hệ thống: phiếu còn chờ
+    (bước nào, ai duyệt), đã thực hiện (kèm đầu vào + kết quả của lệnh đích — lớp nạp cần mã bản ghi vừa tạo), bị từ chối / lỗi / hết căn cứ (kèm lý do). Phiếu không
+    thấy ⇒ không có dòng."""
+    rows = await ctx.all("""SELECT id, status, command, input, result, error, current_step, steps, approver_ids FROM core.approvals WHERE id = ANY(%s)""",
+                         (inp.ids,))
+    for r in rows:
+        steps = r.pop("steps")
+        r["step"] = steps[r["current_step"]]["label"] if r["status"] == "pending" and r["current_step"] < len(steps) else ""
+    return {"rows": rows}
+
+
 async def _stale(ctx: Ctx, a: dict[str, Any], decisions: list[dict[str, Any]], changed: list[str]) -> dict[str, Any]:
     """Căn cứ đổi ⇒ phiếu kết thúc KHÔNG chạy (như từ chối về hệ quả: ``on_reject`` nhả thứ phiếu đang giữ), ghi khoá đổi + nhật ký."""
     msg = stale_message(changed)
