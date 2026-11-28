@@ -40,6 +40,7 @@ CREATE TABLE onboard.source_ids (
     source_id text NOT NULL CHECK (btrim(source_id) <> '' AND length(source_id) <= 200),
     target_id uuid NOT NULL,
     fingerprint text NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{64}$'),
+    version integer NOT NULL DEFAULT 0 CHECK (version >= 0),   -- số lần đã cập nhật từ nguồn (0 = mới tạo); khoá chống lặp của lần cập nhật kế tiếp mang số này + 1
     run_id uuid NOT NULL,
     loaded_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz,
@@ -55,7 +56,7 @@ CREATE TABLE onboard.exceptions (
     run_id uuid NOT NULL,
     entity text NOT NULL CHECK (entity ~ '^[a-z][a-z0-9_]{0,39}$'),
     source_id text NOT NULL DEFAULT '' CHECK (length(source_id) <= 200),
-    reason text NOT NULL CHECK (reason IN ('bad_source', 'missing_ref', 'duplicate', 'rejected', 'needs_approval', 'changed_after_load')),
+    reason text NOT NULL CHECK (reason IN ('bad_source', 'missing_ref', 'duplicate', 'rejected', 'needs_approval', 'changed_after_load', 'missing_at_source', 'retry_conflict')),
     detail text NOT NULL DEFAULT '' CHECK (length(detail) <= 2000),
     at timestamptz NOT NULL DEFAULT now(),
     FOREIGN KEY (tenant_id, run_id) REFERENCES onboard.runs (tenant_id, id)
@@ -89,6 +90,7 @@ CREATE TABLE onboard.signoffs (
     approved_by uuid[] NOT NULL DEFAULT '{}',                -- người duyệt từng bước của chuỗi (trống = không qua phiếu: chủ tài khoản duy nhất / công ty bỏ luật)
     note text NOT NULL DEFAULT '' CHECK (length(note) <= 1000),
     mismatches integer NOT NULL DEFAULT 0,
+    exceptions integer NOT NULL DEFAULT 0,                     -- số dòng ngoại lệ người ký chấp nhận (có lệch / ngoại lệ ⇒ bắt ghi lý do)
     signed_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (tenant_id, run_id),
     FOREIGN KEY (tenant_id, run_id) REFERENCES onboard.runs (tenant_id, id)

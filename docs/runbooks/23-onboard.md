@@ -118,12 +118,14 @@ Bộ chạy làm gì với từng bản ghi:
 | Tình huống | Kết quả |
 |---|---|
 | Chưa có trong sổ mã gốc | chạy `create` (`historical=True`), ghi sổ (nguồn, thực thể, `source_id`) → mã Barista + dấu vân tay |
-| Có, dấu vân tay (băm bản ghi trung tính) giữ nguyên | bỏ qua (không gọi lệnh) |
-| Có, dấu vân tay đổi, thực thể khai `update` | chạy `update`, cập nhật dấu |
+| Có, dấu vân tay (băm ĐẦU VÀO LỆNH sau ánh xạ + `mapping_version`) giữ nguyên | bỏ qua (không gọi lệnh) |
+| Có, dấu vân tay đổi (nguồn đổi HOẶC sửa ánh xạ), thực thể khai `update` | chạy `update`, tăng số lần cập nhật, cập nhật dấu |
 | Có, dấu vân tay đổi, không khai `update` | ngoại lệ "Nguồn đổi sau khi nạp" — sửa tay hoặc khai `update` |
 | Thiếu `source_id` / trùng mã trong cùng bản trích / `Problem` / lệnh từ chối / lệnh phải qua duyệt | ngoại lệ ghi lý do + chi tiết, không ghi gì |
+| Đã nạp ở lượt trước nhưng bản trích lần này không còn | ngoại lệ "Không còn ở nguồn" — KHÔNG tự xoá ở Barista, người xử lý tay |
 
-- Chạy lại **cùng nguồn bao nhiêu lần cũng không tạo trùng** (sổ mã gốc + khoá chống lặp theo dấu vân tay: chết giữa chừng chạy lại an toàn).
+- Chạy lại **cùng nguồn bao nhiêu lần cũng không tạo trùng**: khoá chống lặp theo LẦN THAY ĐỔI — tạo một khoá cố định mỗi mã gốc, cập nhật mang số lần (`v1`, `v2`…). Chết giữa chừng chạy lại an toàn; giá trị đổi rồi quay về (A → B → A) vẫn được cập nhật đúng.
+- **Lượt đạt** = không chỉ số lệch và không dòng ngoại lệ, hoặc có người ký chấp nhận — ký khi còn lệch / ngoại lệ phải ghi lý do. Có nhiều nguồn (vd hệ bán hàng + hệ kế toán) thì ngày chuyển đòi lượt cuối đạt của TỪNG nguồn.
 - Thay đổi phát hiện bằng **so dấu vân tay trên toàn bộ bản kéo lại**, không dựa vào cột "ngày sửa" của hệ cũ (không tin được).
 - Mọi lệnh chạy chế độ nạp lịch sử: không thông báo, không việc theo dõi, lead nằm đỗ (runbook 16). Vẫn chạy **kiểm im** (`scripts/check_quiet_after_load.py`)
   trên bản sao DB trước khi cho máy chủ trỏ vào.

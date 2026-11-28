@@ -73,6 +73,41 @@ async def test_a_changed_record_runs_update_only_for_that_record() -> None:
     assert await _names(tid) == ["Người Giả Hai (đổi tên)", "Người Giả Một"]
 
 
+async def test_a_value_that_changes_and_comes_back_is_applied_each_time() -> None:
+    """A → B → A (→ B): mỗi lần đổi là một lần cập nhật MỚI (khoá chống lặp mang số lần) — không bị nhận nhầm là lần chạy lại của lần trước."""
+    tid, domain = await company()
+    rows = [{"source_id": "1", "name": "Người Giả A"}]
+    conv = ob.Converter("hecu", (people_entity(rows, update=True),))
+    await ob.load(tid, conv, by_email=f"admin@{domain}")
+    for name in ("Người Giả B", "Người Giả A", "Người Giả B"):
+        rows[0] = {"source_id": "1", "name": name}
+        r = await ob.load(tid, conv, by_email=f"admin@{domain}")
+        assert (r.created, r.updated, r.exceptions) == (0, 1, 0), name
+        assert await _names(tid) == [name]
+    assert await owner_val("SELECT version FROM onboard.source_ids WHERE tenant_id = %s", (tid,)) == 3
+
+
+async def test_changing_the_mapping_reloads_unchanged_source_rows() -> None:
+    """Nguồn giữ nguyên nhưng ánh xạ đổi (``to_input`` / ``mapping_version``) ⇒ dòng được cập nhật lại, không bị bỏ qua."""
+    tid, domain = await company()
+    rows = [{"source_id": "1", "name": "người giả một"}, {"source_id": "2", "name": "người giả hai"}]
+    await ob.load(tid, ob.Converter("hecu", (people_entity(rows, update=True),), mapping_version="1"), by_email=f"admin@{domain}")
+    same = await ob.load(tid, ob.Converter("hecu", (people_entity(rows, update=True),), mapping_version="1"), by_email=f"admin@{domain}")
+    assert (same.updated, same.skipped) == (0, 2)
+    bumped = await ob.load(tid, ob.Converter("hecu", (people_entity(rows, update=True),), mapping_version="2"), by_email=f"admin@{domain}")
+    assert (bumped.created, bumped.updated, bumped.skipped) == (0, 2, 0)
+
+
+async def test_a_record_gone_from_the_source_is_an_exception_not_a_delete() -> None:
+    tid, domain = await company()
+    rows = [{"source_id": "1", "name": "Người Giả Một"}, {"source_id": "2", "name": "Người Giả Hai"}]
+    await ob.load(tid, ob.Converter("hecu", (people_entity(rows),)), by_email=f"admin@{domain}")
+    r = await ob.load(tid, ob.Converter("hecu", (people_entity(rows[:1]),)), by_email=f"admin@{domain}")
+    assert (r.created, r.skipped, r.exceptions) == (0, 1, 1)
+    assert await owner_val("SELECT reason || ':' || source_id FROM onboard.exceptions WHERE run_id = %s", (r.run_id,)) == "missing_at_source:2"
+    assert await _names(tid) == ["Người Giả Hai", "Người Giả Một"]   # không tự xoá ở Barista
+
+
 async def test_bad_source_rows_become_exceptions_and_are_not_invented() -> None:
     tid, domain = await company()
     rows = [{"source_id": "1", "name": "Người Giả Một"}, {"source_id": "2", "name": "  "}, {"name": "Không mã"}, {"source_id": "1", "name": "Trùng"}]

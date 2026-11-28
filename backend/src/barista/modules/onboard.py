@@ -30,7 +30,8 @@ m = Module("onboard", "Đưa vào dùng", pack="base",
 KINDS = {"mock": "Chuyển thử", "final": "Lượt cuối"}
 RUN_STATUS = {"running": "Đang chạy", "done": "Xong", "failed": "Lỗi"}
 REASONS = {"bad_source": "Dữ liệu nguồn sai / thiếu", "missing_ref": "Thiếu bản ghi được tham chiếu", "duplicate": "Trùng mã nguồn trong lượt",
-           "rejected": "Lệnh từ chối", "needs_approval": "Lệnh cần duyệt — không nạp qua duyệt", "changed_after_load": "Nguồn đổi sau khi đã nạp"}
+           "rejected": "Lệnh từ chối", "needs_approval": "Lệnh cần duyệt — không nạp qua duyệt", "changed_after_load": "Nguồn đổi sau khi đã nạp",
+           "missing_at_source": "Không còn ở nguồn (đã nạp trước — không tự xoá)", "retry_conflict": "Chạy lại gặp nội dung khác lần trước — kiểm tay"}
 STEP_STATUS = {"todo": "Chưa xong", "done": "Đã xong", "skipped": "Bỏ qua"}
 MIN_MOCK_RUNS = 2   # ADR 0263 chặng 3: ít nhất hai lượt chuyển thử đạt (không lệch, hoặc lệch đã ký) trước lượt cuối
 
@@ -39,7 +40,7 @@ CORE_STEPS: tuple[OnboardStep, ...] = (
     OnboardStep("fit_gap", 1, "Bảng fit-gap: cho khách xem quy trình có sẵn của gói, ghi phần lệch (chuẩn / cấu hình / phát triển)",
                 evidence="Tệp hoặc đường dẫn bảng fit-gap"),
     OnboardStep("process_signed", 1, "Khách ký quy trình vận hành trên Barista", evidence="Biên bản quy trình đã ký"),
-    OnboardStep("configured", 2, "Cấu hình công ty xong: vai, quyền, chuỗi duyệt, cài đặt, từ vựng, mẫu quy trình, luật chia lead",
+    OnboardStep("configured", 2, "Cấu hình công ty xong: vai, quyền, chuỗi duyệt, cài đặt, từ vựng, mẫu quy trình, luật của từng gói",
                 evidence="Ai rà, ngày rà"),
     OnboardStep("people", 2, "Mời đủ người dùng thật với đúng vai và đội", evidence="Số người đã mời / còn thiếu"),
     OnboardStep("mock_runs", 3, f"Ít nhất {MIN_MOCK_RUNS} lượt chuyển thử đạt đối chiếu (không lệch, hoặc lệch đã ký)"),
@@ -97,7 +98,8 @@ class MapIn(Input):
 
 @m.query("source_map", resource="onboard", title="Sổ mã gốc của một thực thể", internal=True, agent="deny")
 async def source_map(ctx: Ctx, inp: MapIn) -> dict[str, Any]:
-    rows = await ctx.all("SELECT source_id, target_id, fingerprint FROM onboard.source_ids WHERE source = %s AND entity = %s", (inp.source, inp.entity))
+    rows = await ctx.all("SELECT source_id, target_id, fingerprint, version FROM onboard.source_ids WHERE source = %s AND entity = %s",
+                         (inp.source, inp.entity))
     return {"rows": rows}
 
 
@@ -105,6 +107,7 @@ class IdRow(BaseModel):
     source_id: str
     target_id: UUID
     fingerprint: str
+    version: int = 0
 
 
 class PutIds(Input):
@@ -116,20 +119,23 @@ class PutIds(Input):
 
 @m.command("put_ids", resource="onboard", action="manage", title="Ghi sổ mã gốc", internal=True, agent="deny")
 async def put_ids(ctx: Ctx, inp: PutIds) -> dict[str, Any]:
-    """Thêm mã gốc mới; mã đã có ⇒ cập nhật dấu vân tay + lượt (sau lệnh cập nhật). Không đổi mã đích của mã gốc đã có (một mã gốc một bản ghi)."""
+    """Thêm mã gốc mới; mã đã có ⇒ cập nhật dấu vân tay + số lần cập nhật + lượt (sau lệnh cập nhật). Không đổi mã đích của mã gốc đã có (một mã gốc
+    một bản ghi); số lần cập nhật chỉ tăng."""
     n = 0
     for r in inp.rows:
-        n += await ctx.exec("""INSERT INTO onboard.source_ids (source, entity, source_id, target_id, fingerprint, run_id) VALUES (%s, %s, %s, %s, %s, %s)
-                               ON CONFLICT (tenant_id, source, entity, source_id) DO UPDATE SET fingerprint = EXCLUDED.fingerprint, run_id = EXCLUDED.run_id,
-                                   updated_at = now() WHERE onboard.source_ids.target_id = EXCLUDED.target_id""",
-                            (inp.source, inp.entity, r.source_id, r.target_id, r.fingerprint, inp.run_id))
+        n += await ctx.exec("""INSERT INTO onboard.source_ids (source, entity, source_id, target_id, fingerprint, version, run_id)
+                               VALUES (%s, %s, %s, %s, %s, %s, %s)
+                               ON CONFLICT (tenant_id, source, entity, source_id) DO UPDATE SET fingerprint = EXCLUDED.fingerprint, version = EXCLUDED.version,
+                                   run_id = EXCLUDED.run_id, updated_at = now()
+                               WHERE onboard.source_ids.target_id = EXCLUDED.target_id AND EXCLUDED.version >= onboard.source_ids.version""",
+                            (inp.source, inp.entity, r.source_id, r.target_id, r.fingerprint, r.version, inp.run_id))
     return {"written": n}
 
 
 class ExceptionRow(BaseModel):
     entity: str
     source_id: str = ""
-    reason: Literal["bad_source", "missing_ref", "duplicate", "rejected", "needs_approval", "changed_after_load"]
+    reason: Literal["bad_source", "missing_ref", "duplicate", "rejected", "needs_approval", "changed_after_load", "missing_at_source", "retry_conflict"]
     detail: str = ""
 
 
@@ -202,9 +208,13 @@ RUN_ROWS = """SELECT r.id, r.source, r.kind, r.status, r.started_at, r.finished_
               LEFT JOIN core.users au ON au.id = s.approved_by[cardinality(s.approved_by)]"""
 
 
+def _clean(r: dict[str, Any]) -> bool:
+    return not r["mismatches"] and not r["exceptions"]
+
+
 def _passed(r: dict[str, Any]) -> bool:
-    """Lượt ĐẠT: chạy xong, và không còn chỉ số lệch hoặc lệch đã có người ký."""
-    return r["status"] == "done" and (not r["mismatches"] or r["signed_at"] is not None)
+    """Lượt ĐẠT: chạy xong, và không còn chỉ số lệch / dòng ngoại lệ — hoặc đã có người ký chấp nhận (kèm lý do)."""
+    return r["status"] == "done" and (_clean(r) or r["signed_at"] is not None)
 
 
 @m.query("runs", resource="onboard", title="Lượt chuyển dữ liệu", min_scope="all")
@@ -216,7 +226,7 @@ async def runs(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
         c = r["counts"] or {}
         out.append({"id": r["id"], "started_at": r["started_at"], "source": r["source"], "kind": r["kind"], "status": r["status"],
                     "created": c.get("created", 0), "updated": c.get("updated", 0), "skipped": c.get("skipped", 0), "exceptions": r["exceptions"],
-                    "mismatches": r["mismatches"], "signed": "signed" if r["signed_at"] else ("none" if not r["mismatches"] else "waiting"),
+                    "mismatches": r["mismatches"], "signed": "signed" if r["signed_at"] else ("none" if _clean(r) else "waiting"),
                     "by_name": r["by_name"] or "—", "can_sign": "yes" if r["status"] == "done" and r["signed_at"] is None else "no"})
     return ui.table(out, [ui.col("started_at", "Lúc chạy", "datetime"), ui.col("source", "Nguồn"),
                           ui.col("kind", "Loại", "badge", labels=KINDS, tones={"mock": "gray", "final": "blue"}),
@@ -257,8 +267,9 @@ async def run(ctx: Ctx, inp: RunIn) -> dict[str, Any]:
         blocks.append(ui.b_callout("ok", "Đã ký biên bản đối chiếu",
                                    f"{r['signed_name'] or '—'} ký lúc {r['signed_at'].astimezone(zone()):%H:%M %d/%m/%Y}"
                                    + (f", {r['approved_name']} duyệt" if r["approved_name"] else "")))
-    elif r["status"] == "done" and r["mismatches"]:
-        blocks.append(ui.b_callout("warn", "Còn chỉ số lệch chưa ký", "Xem từng dòng lệch và ngoại lệ; chấp nhận thì ký biên bản (qua chuỗi duyệt của công ty)."))
+    elif r["status"] == "done" and not _clean(r):
+        blocks.append(ui.b_callout("warn", "Còn chỉ số lệch / dòng ngoại lệ chưa ký",
+                                   "Xử lý ở nguồn rồi chạy lượt mới; chấp nhận thì ký biên bản kèm lý do (qua chuỗi duyệt của công ty)."))
     rows = [{"id": f"{x['metric']}|{x['period']}", "label": x["label"] or x["metric"], "period": x["period"] or "Cả lượt",
              "source_value": float(x["source_value"]), "target_value": float(x["target_value"]),
              "diff": float(x["target_value"]) - float(x["source_value"]), "tolerance": f"± {float(x['tolerance_pct']):g} %", "status": x["status"]}
@@ -292,26 +303,44 @@ async def exceptions(ctx: Ctx, inp: RunIn) -> dict[str, Any]:
 
 class SignIn(Input):
     run_id: UUID = field("Lượt chuyển", hidden=True)
-    note: str = field("Ghi chú khi ký", "", max_length=1000, help="Vd chấp nhận lệch tháng 3 do hệ cũ ghi trùng phiếu thu")
+    note: str = field("Lý do chấp nhận", "", max_length=1000,
+                      help="Bắt buộc khi còn chỉ số lệch hoặc dòng ngoại lệ — vd chấp nhận lệch tháng 3 do hệ cũ ghi trùng phiếu thu")
 
 
-@m.command("sign", resource="onboard", action="manage", title="Ký biên bản đối chiếu", agent="deny",
-           purpose="Xác nhận số liệu chuyển từ hệ cũ đã được đối chiếu và chấp nhận — điều kiện để được chuyển sang Barista.",
-           irreversible=True, effect="Biên bản ghi tên người ký và người duyệt; không gỡ chữ ký được — số lệch về sau phải chạy lượt mới và ký lại.")
-async def sign(ctx: Ctx, inp: SignIn) -> dict[str, Any]:
-    """Ký một lượt đã chạy xong (kể cả còn chỉ số lệch — người ký chấp nhận chúng). Qua chuỗi duyệt ``onboard_signoff`` của công ty; người duyệt ghi tên."""
-    r = await ctx.one("SELECT status, (SELECT count(*) FROM onboard.recon c WHERE c.run_id = r.id AND c.status = 'lech') AS mismatches"
-                      " FROM onboard.runs r WHERE id = %s FOR UPDATE", (inp.run_id,))
+async def _sign_gate(ctx: Ctx, inp: SignIn) -> str:
+    """Kiểm TRƯỚC khi gửi phiếu duyệt (người duyệt không nhận phiếu ký thiếu lý do) và lại ngay trước khi ghi."""
+    r = await _sign_state(ctx, inp.run_id)
+    if (r["mismatches"] or r["exceptions"]) and not inp.note.strip():
+        raise Invalid(f"Còn {r['mismatches']} chỉ số lệch và {r['exceptions']} dòng ngoại lệ — ghi lý do chấp nhận")
+    return f"Ký biên bản đối chiếu ({r['mismatches']} chỉ số lệch, {r['exceptions']} dòng ngoại lệ được chấp nhận)" \
+        if r["mismatches"] or r["exceptions"] else "Ký biên bản đối chiếu (mọi chỉ số khớp, không ngoại lệ)"
+
+
+async def _sign_state(ctx: Ctx, run_id: UUID) -> dict[str, Any]:
+    r = await ctx.one("SELECT status, (SELECT count(*) FROM onboard.recon c WHERE c.run_id = r.id AND c.status = 'lech') AS mismatches,"
+                      " (SELECT count(*) FROM onboard.exceptions e WHERE e.run_id = r.id) AS exceptions"
+                      " FROM onboard.runs r WHERE id = %s FOR UPDATE", (run_id,))
     if r is None:
         raise NotFound("Không có lượt chuyển này")
     if r["status"] != "done":
         raise Invalid("Chỉ ký lượt đã chạy xong")
-    if await ctx.val("SELECT 1 FROM onboard.signoffs WHERE run_id = %s", (inp.run_id,)):
+    if await ctx.val("SELECT 1 FROM onboard.signoffs WHERE run_id = %s", (run_id,)):
         raise Conflict("Lượt này đã ký")
-    await ctx.exec("INSERT INTO onboard.signoffs (run_id, signed_by, approved_by, note, mismatches) VALUES (%s, %s, %s, %s, %s)",
-                   (inp.run_id, ctx.p.user_id, list(ctx.p.approved_by), inp.note.strip(), r["mismatches"]))
-    return {"run_id": inp.run_id, "summary": f"Đã ký biên bản đối chiếu ({r['mismatches']} chỉ số lệch được chấp nhận)" if r["mismatches"]
-            else "Đã ký biên bản đối chiếu (mọi chỉ số khớp)"}
+    return r
+
+
+@m.command("sign", resource="onboard", action="manage", title="Ký biên bản đối chiếu", agent="deny", sensitive=_sign_gate,
+           purpose="Xác nhận số liệu chuyển từ hệ cũ đã được đối chiếu và chấp nhận — điều kiện để được chuyển sang Barista.",
+           irreversible=True, effect="Biên bản ghi tên người ký và người duyệt; không gỡ chữ ký được — số lệch về sau phải chạy lượt mới và ký lại.")
+async def sign(ctx: Ctx, inp: SignIn) -> dict[str, Any]:
+    """Ký một lượt đã chạy xong (kể cả còn chỉ số lệch — người ký chấp nhận chúng). Qua chuỗi duyệt ``onboard_signoff`` của công ty; người duyệt ghi tên."""
+    r = await _sign_state(ctx, inp.run_id)
+    if (r["mismatches"] or r["exceptions"]) and not inp.note.strip():
+        raise Invalid(f"Còn {r['mismatches']} chỉ số lệch và {r['exceptions']} dòng ngoại lệ — ghi lý do chấp nhận")
+    await ctx.exec("INSERT INTO onboard.signoffs (run_id, signed_by, approved_by, note, mismatches, exceptions) VALUES (%s, %s, %s, %s, %s, %s)",
+                   (inp.run_id, ctx.p.user_id, list(ctx.p.approved_by), inp.note.strip(), r["mismatches"], r["exceptions"]))
+    return {"run_id": inp.run_id, "summary": f"Đã ký biên bản đối chiếu (chấp nhận {r['mismatches']} chỉ số lệch, {r['exceptions']} dòng ngoại lệ)"
+            if r["mismatches"] or r["exceptions"] else "Đã ký biên bản đối chiếu (mọi chỉ số khớp, không ngoại lệ)"}
 
 
 # ── Danh sách việc ──
@@ -354,13 +383,18 @@ async def _steps(ctx: Ctx) -> list[dict[str, Any]]:
 async def blockers(ctx: Ctx) -> list[str]:
     """Vì sao CHƯA chuyển được (rỗng = được bấm ngày chuyển). Một nơi tính — màn và lệnh cùng dùng."""
     out = [f"Việc bắt buộc chưa xong: {s['title']}" for s in await _steps(ctx) if s["required"] == "yes" and s["status"] != "done"]
-    final = next((r for r in await _runs_state(ctx) if r["kind"] == "final"), None)
-    if final is None:
+    runs_ = await _runs_state(ctx)   # mới nhất trước
+    sources = list(dict.fromkeys(r["source"] for r in runs_))   # MỌI nguồn đã từng chạy đều phải có lượt cuối đạt
+    if not sources:
         out.append("Chưa có lượt chuyển cuối (final)")
-    elif final["status"] != "done":
-        out.append(f"Lượt chuyển cuối mới nhất {RUN_STATUS[final['status']].lower()} — chạy lại lượt cuối")
-    elif final["mismatches"] and final["signed_at"] is None:
-        out.append(f"Lượt chuyển cuối còn {final['mismatches']} chỉ số lệch chưa ký")
+    for src in sources:
+        final = next((r for r in runs_ if r["source"] == src and r["kind"] == "final"), None)
+        if final is None:
+            out.append(f"Nguồn {src}: chưa có lượt chuyển cuối (final)")
+        elif final["status"] != "done":
+            out.append(f"Nguồn {src}: lượt chuyển cuối mới nhất {RUN_STATUS[final['status']].lower()} — chạy lại lượt cuối")
+        elif not _clean(final) and final["signed_at"] is None:
+            out.append(f"Nguồn {src}: lượt chuyển cuối còn {final['mismatches']} chỉ số lệch, {final['exceptions']} dòng ngoại lệ chưa ký")
     return out
 
 
@@ -467,7 +501,7 @@ async def _run_step(ctx: Ctx, c: registry.Cutover, cut_date: Any) -> dict[str, A
                                     "tạm dừng tự động hoá bằng lệnh sẵn có nếu cần.")
 async def go_live(ctx: Ctx, inp: GoLive) -> dict[str, Any]:
     """Chỉ chủ tài khoản; trợ lý không làm; qua chuỗi duyệt ``onboard_go_live``. Kiểm lại mọi điều kiện, chạy các bước ngày chuyển theo thứ tự trong cùng
-    giao dịch (một bước lỗi ⇒ không bước nào ghi), ghi ngày chuyển + kết quả từng bước."""
+    một transaction DB (một bước lỗi ⇒ không bước nào ghi), ghi ngày chuyển + kết quả từng bước."""
     await ctx.exec("SELECT pg_advisory_xact_lock(hashtextextended('onboard-go-live:' || core.tenant()::text, 0))")
     await _gate(ctx, inp)
     done = [await _run_step(ctx, c, inp.cut_date) for c in cutovers_for(await _on(ctx))]

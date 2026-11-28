@@ -58,7 +58,7 @@ class Problem(Exception):
 class Ids:
     """Tra mã Barista của bản ghi đã nạp: ``ids.get("person", "17")`` ⇒ UUID | None; ``ids.need(...)`` ⇒ UUID, thiếu thì ``Problem("missing_ref")``."""
 
-    def __init__(self, maps: dict[str, dict[str, tuple[UUID, str]]]) -> None:
+    def __init__(self, maps: dict[str, dict[str, tuple[UUID, str, int]]]) -> None:
         self._maps = maps
 
     def get(self, entity: str, source_id: Any) -> UUID | None:
@@ -221,8 +221,8 @@ class _Run:
         if len(self.problems) >= BATCH:
             await self.flush()
 
-    async def put(self, entity: str, source_id: str, target: UUID, fp: str) -> None:
-        self.puts.setdefault(entity, []).append({"source_id": source_id, "target_id": str(target), "fingerprint": fp})
+    async def put(self, entity: str, source_id: str, target: UUID, fp: str, version: int) -> None:
+        self.puts.setdefault(entity, []).append({"source_id": source_id, "target_id": str(target), "fingerprint": fp, "version": version})
         if len(self.puts[entity]) >= BATCH:
             await self.flush()
 
@@ -236,11 +236,13 @@ class _Run:
             self.problems = []
 
 
-def _key(source: str, entity: str, source_id: str, fp: str) -> str:
-    return f"onboard:{source}:{entity}:{hashlib.sha256(source_id.encode()).hexdigest()[:20]}:{fp[:20]}"
+def _key(source: str, entity: str, source_id: str, step: str) -> str:
+    """Khoá chống lặp của MỘT thay đổi: tạo = ``new`` (mỗi mã gốc tạo đúng một lần — chạy lại sau sự cố nhận lại kết quả cũ, không tạo trùng); cập nhật
+    = ``v<lần thứ n>:<dấu>`` — thử lại đúng lần đó dùng lại khoá, lần thay đổi MỚI (kể cả quay về giá trị cũ A → B → A) là số khác ⇒ khoá khác."""
+    return f"onboard:{source}:{entity}:{hashlib.sha256(source_id.encode()).hexdigest()[:20]}:{step}"
 
 
-async def _entity(p: Principal, run: _Run, e: Entity, maps: dict[str, dict[str, tuple[UUID, str]]], extracted: dict[str, set[str]]) -> None:
+async def _entity(p: Principal, run: _Run, e: Entity, maps: dict[str, dict[str, tuple[UUID, str, int]]], extracted: dict[str, set[str]]) -> None:
     ids = Ids(maps)
     seen = extracted.setdefault(e.name, set())
     have = maps.setdefault(e.name, {})
@@ -254,28 +256,33 @@ async def _entity(p: Principal, run: _Run, e: Entity, maps: dict[str, dict[str, 
             await run.problem(e.name, sid, "duplicate", "mã nguồn xuất hiện hai lần trong cùng bản trích")
             continue
         seen.add(sid)
-        fp = fingerprint(rec)
         old = have.get(sid)
-        if old is not None and old[1] == fp:
-            run.count(e.name, "skipped")
-            continue
-        if old is not None and not e.update:
-            await run.problem(e.name, sid, "changed_after_load", "nguồn đổi sau lần nạp trước; thực thể không khai lệnh cập nhật — sửa tay hoặc khai update")
-            continue
         try:
+            # dấu vân tay băm ĐẦU VÀO LỆNH sau ánh xạ + phiên bản ánh xạ ⇒ nguồn đổi HOẶC sửa ánh xạ (to_input / mapping_version) đều là "đổi"
+            base = e.to_input(rec, ids)
+            fp = fingerprint({"mapping": run.conv.mapping_version, "input": base})
+            if old is not None and old[1] == fp:
+                run.count(e.name, "skipped")
+                continue
+            if old is not None and not e.update:
+                await run.problem(e.name, sid, "changed_after_load", "nguồn / ánh xạ đổi sau lần nạp trước; thực thể không khai lệnh cập nhật — sửa tay hoặc khai update")
+                continue
             if old is None:
-                cmd, inp = e.create, e.to_input(rec, ids)
-            elif e.update_input is not None:
-                cmd, inp = e.update, e.update_input(rec, ids, old[0])
+                cmd, inp, version, step = e.create, base, 0, "new"
             else:
-                cmd, inp = e.update, {**e.to_input(rec, ids), e.id_key: str(old[0])}
+                version = old[2] + 1
+                cmd, inp, step = e.update, (e.update_input(rec, ids, old[0]) if e.update_input is not None else {**base, e.id_key: str(old[0])}), \
+                    f"v{version}:{fp[:20]}"
         except Problem as x:
             await run.problem(e.name, sid, x.reason, x.detail)
             continue
         except Exception as x:   # lỗi ánh xạ của bộ chuyển trên một bản ghi ⇒ ngoại lệ của dòng đó, không dừng cả lượt
             await run.problem(e.name, sid, "bad_source", f"ánh xạ lỗi: {type(x).__name__}: {x}")
             continue
-        r = await executor.run(p, cmd, inp, key=_key(src, e.name, sid, fp), historical=True)
+        r = await executor.run(p, cmd, inp, key=_key(src, e.name, sid, step), historical=True)
+        if r.status == "conflict" and old is None:
+            await run.problem(e.name, sid, "retry_conflict", f"{cmd}: lần tạo trước bị ngắt với nội dung khác — kiểm bản ghi ở Barista rồi chạy lại")
+            continue
         if r.status == "pending_approval":
             await run.problem(e.name, sid, "needs_approval", f"{cmd} phải qua duyệt ở công ty này — bỏ luật duyệt trong lúc nạp hoặc nạp bằng vai khác")
             continue
@@ -293,8 +300,10 @@ async def _entity(p: Principal, run: _Run, e: Entity, maps: dict[str, dict[str, 
         else:
             target = old[0]
             run.count(e.name, "updated")
-        have[sid] = (target, fp)
-        await run.put(e.name, sid, target, fp)
+        have[sid] = (target, fp, version)
+        await run.put(e.name, sid, target, fp, version)
+    for sid in sorted(set(have) - seen):   # đã nạp ở lượt trước nhưng bản trích TOÀN BỘ lần này không còn ⇒ chênh lệch cần người xử lý, không tự xoá ở Barista
+        await run.problem(e.name, sid, "missing_at_source", "bản ghi đã nạp không còn trong bản trích của nguồn — xoá ở hệ cũ? Xử lý tay ở Barista nếu cần")
     await run.flush()
 
 
@@ -309,10 +318,10 @@ async def load(tenant_id: UUID, converter: Converter, *, by_email: str, kind: Li
     run = _Run(tenant_id, converter, UUID(str(opened["run_id"])))
     report = Report(run.run_id)
     try:
-        maps: dict[str, dict[str, tuple[UUID, str]]] = {}
+        maps: dict[str, dict[str, tuple[UUID, str, int]]] = {}
         for e in converter.entities:
             got = await _sys(tenant_id, "onboard.source_map", {"source": converter.source, "entity": e.name})
-            maps[e.name] = {r["source_id"]: (UUID(str(r["target_id"])), r["fingerprint"]) for r in got["rows"]}
+            maps[e.name] = {r["source_id"]: (UUID(str(r["target_id"])), r["fingerprint"], int(r["version"])) for r in got["rows"]}
         extracted: dict[str, set[str]] = {}
         for e in converter.entities:
             await _entity(p, run, e, maps, extracted)

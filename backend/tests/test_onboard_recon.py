@@ -97,7 +97,9 @@ async def test_go_live_refuses_until_steps_runs_and_signatures_are_done_then_run
     final = await _run(tid, domain, "final", {"2026-09": 1_000_000, "2026-10": 1_000_000})
     r = await executor.run(gd, "onboard.go_live", {"cut_date": cut})
     assert r.status == "invalid" and "chưa ký" in (r.error or "")
-    await approved(admin, "onboard.sign", run_id=str(final.run_id))
+    r = await executor.run(admin, "onboard.sign", {"run_id": str(final.run_id)})
+    assert r.status == "invalid" and "lý do" in (r.error or "")   # còn lệch ⇒ ký phải ghi lý do chấp nhận
+    await approved(admin, "onboard.sign", run_id=str(final.run_id), note="Chấp nhận lệch tháng 10 (dữ liệu giả)")
     assert await _blockers(gd) == []
     r = await executor.run(gd, "onboard.go_live", {"cut_date": cut, "note": "Theo biên bản go / no-go giả"})
     assert r.status == "ok", r.error   # chủ tài khoản duy nhất ⇒ chạy ngay (nhật ký ghi tự duyệt)
@@ -133,3 +135,28 @@ async def _blockers(who: Any) -> list[str]:
 
     async with db.tenant_tx(who, rollback=True) as conn:
         return await mod.blockers(executor.core_ctx(conn, who, module="onboard"))
+
+
+async def test_exceptions_alone_block_go_live_until_signed_with_a_reason_and_every_source_needs_its_own_final() -> None:
+    """Số khớp nhưng còn dòng ngoại lệ ⇒ lượt CHƯA đạt; ký phải ghi lý do. Hai nguồn dữ liệu ⇒ mỗi nguồn cần lượt cuối đạt của chính nó."""
+    tid, domain = await company()
+    admin, gd = await seed.who(tid, "admin", domain), await seed.who(tid, "gd", domain)
+    await _tick_required(tid, domain)
+    rows = [{"source_id": "1", "name": "Người Giả Một"}]
+    conv = ob.Converter("hecu", (people_entity(rows),))
+    for _ in range(2):
+        await ob.load(tid, conv, by_email=f"admin@{domain}", kind="mock")   # hai lượt thử sạch
+    rows.append({"source_id": "2", "name": "  "})   # lượt cuối: dòng 2 thành ngoại lệ "dữ liệu nguồn sai" — số đếm vẫn khớp phần đã nạp
+    final = await ob.load(tid, conv, by_email=f"admin@{domain}", kind="final")
+    assert final.exceptions == 1
+    blockers = await _blockers(gd)
+    assert any("ngoại lệ chưa ký" in b for b in blockers), blockers
+    r = await executor.run(admin, "onboard.sign", {"run_id": str(final.run_id), "note": "  "})
+    assert r.status == "invalid"
+    await approved(admin, "onboard.sign", run_id=str(final.run_id), note="Dòng 2 không có tên ở hệ cũ — bỏ (dữ liệu giả)")
+    assert await owner_val("SELECT exceptions FROM onboard.signoffs WHERE run_id = %s", (final.run_id,)) == 1
+    assert await _blockers(gd) == []
+    # nguồn thứ hai mới chạy thử ⇒ ngày chuyển lại bị chặn vì nguồn đó chưa có lượt cuối
+    other = ob.Converter("hecu_ketoan", (people_entity([{"source_id": "k1", "name": "Người Giả Kế Toán"}]),))
+    await ob.load(tid, other, by_email=f"admin@{domain}")
+    assert any("hecu_ketoan" in b and "lượt chuyển cuối" in b for b in await _blockers(gd))

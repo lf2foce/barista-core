@@ -74,7 +74,9 @@ NEW_MAINTENANCE = NEW_MAINTENANCE | {"crm/084_campaign_plan_routing.sql"}
 NEW_MAINTENANCE = NEW_MAINTENANCE | {"base/112_team_terms.sql", "hr/068_structure_to_core.sql"}
 # 0258: khoá ngoại theo công ty — mỗi gói một file gọi core.tenant_fks (chỉ siết ràng buộc) ⇒ không bảo trì
 TENANT_FKS = {f"{p}/114_tenant_fks.sql" for p in ("base", "books", "crm", "directory", "finance", "hr", "kpi", "marketing", "meet", "mgmt", "pay", "schedule", "talk", "timekeeping", "training", "word")}
-NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | TENANT_FKS | {"base/115_usage_reads_query.sql",   # 0260: thêm tên truy vấn vào bộ đếm lượt đọc (cột + khoá chính; bản cũ chạy song song chỉ mất số đếm) ⇒ không bảo trì
+NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | TENANT_FKS | {"base/116_onboard.sql",   # 0263: schema mới onboard (bảng mới, bản cũ không đọc) ⇒ không bảo trì
+                                                         "crm/115_lead_steps.sql",   # 0264: chỉ THÊM bảng / cột có mặc định / giá trị CHECK — bản cũ bỏ qua ⇒ không bảo trì
+                                                         "base/115_usage_reads_query.sql",   # 0260: thêm tên truy vấn vào bộ đếm lượt đọc (cột + khoá chính; bản cũ chạy song song chỉ mất số đếm) ⇒ không bảo trì
                                                            "schedule/115_kind_usage.sql",   # đếm "Đã dùng" của loại lịch (hàm mới) ⇒ không bảo trì
                                                            "hr/115_employment_guards.sql",   # mã nhân viên / chồng ngày do ràng buộc loại trừ giữ (chỉ siết) ⇒ không bảo trì
                                                            "base/113_team_term_editors.sql",   # 0256: người sửa theo từng căn cứ (thêm cột + thân hàm trigger) ⇒ không bảo trì riêng
