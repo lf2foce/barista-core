@@ -330,7 +330,7 @@
   - `leadflow.follow_owner` ← `crm`
   - `leadflow.give` ← `leadflow`
   - `leadflow.health_report` ← `health`
-  - `leadflow.invite_for` ← `crm`
+  - `leadflow.invitation_of` ← `crm`
   - `leadflow.lead_sla` ← `crm`
   - `leadflow.move` ← `leadflow`
   - `leadflow.receiver_check` ← `crm`

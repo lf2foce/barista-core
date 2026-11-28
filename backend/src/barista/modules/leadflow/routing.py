@@ -1118,11 +1118,11 @@ class InviteForIn(Input):
     user_id: UUID
 
 
-@m.query("invite_for", resource="leadflow", title="Lời mời nhận lead của một người", internal=True, agent="allow", callers=("crm",),
+@m.query("invitation_of", resource="leadflow", title="Lời mời nhận lead của một người", internal=True, agent="allow", callers=("crm",),
          why="Thẻ khách (crm.journey) hiện nút Nhận lead cho người đang được mời; ghi chăm sóc / đổi chặng của người được mời là nhận lead ngầm (0264). "
              "Trả CHỈ {invited: {lead_id: hạn lời mời}} cho lời mời CÒN MỞ của đúng người đó trên các lead đã nêu — không người được mời khác, không lịch sử."
              " [id: người gọi thấy — lead_ids là dòng crm.leads người xem vừa đọc qua RLS ngay trước đó; user_id = chính người xem (ctx.p.user_id)]")
-async def invite_for(ctx: Ctx, inp: InviteForIn) -> dict[str, dict[str, Any]]:
+async def invitation_of(ctx: Ctx, inp: InviteForIn) -> dict[str, dict[str, Any]]:
     rows = await ctx.all("SELECT lead_id, until FROM leadflow.invites WHERE lead_id = ANY(%s) AND user_id = %s AND status = 'open' AND until > now()",
                          (inp.lead_ids, inp.user_id))
     return {"invited": {str(r["lead_id"]): r["until"] for r in rows}}

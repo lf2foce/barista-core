@@ -319,7 +319,7 @@ async def invited(ctx: Ctx, lead_ids: list[UUID]) -> dict[str, Any]:
     """Lead (trong ``lead_ids`` — bên gọi đã đọc qua RLS) người xem đang được MỜI nhận (ADR 0264): {lead_id: hạn lời mời}."""
     if not lead_ids or ctx.p.user_id is None:
         return {}
-    got: dict[str, Any] = (await ctx.call_system("leadflow.invite_for", lead_ids=lead_ids, user_id=ctx.p.user_id))["invited"]
+    got: dict[str, Any] = (await ctx.call_system("leadflow.invitation_of", lead_ids=lead_ids, user_id=ctx.p.user_id))["invited"]
     return got
 
 
