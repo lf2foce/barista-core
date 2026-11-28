@@ -71,6 +71,8 @@ async def send_code(email: str, *, app: str, client_id: str | None = None, nonce
         return
     if not available():   # điều kiện CHUNG của bản cài, không phụ thuộc email ⇒ không lộ ai có tài khoản
         raise EmailLoginUnavailable("Đăng nhập bằng mã qua email chưa được bật trên hệ thống này")
+    if _review_email(email, client_id):   # người duyệt dùng mã cố định (ADR 0268) — mã gửi thư không dùng được trên đường này ⇒ không gửi
+        return
     async with db.owner.connection() as c:
         cur = await c.execute("""SELECT 1 FROM core.users u WHERE u.email = %s
                                  AND EXISTS (SELECT 1 FROM core.memberships m WHERE m.user_id = u.id AND m.active)""", (email,))
@@ -125,15 +127,24 @@ async def _locked(c: Any, email: str) -> bool:
     return False
 
 
+def is_review(email: str) -> bool:
+    """Email người duyệt App Store (ADR 0268) — bản cài đặt đủ email + mã. Phiên mở bằng mã cố định KHÔNG chứng minh giữ hộp thư ⇒ provider "review"
+    (không thuộc ``oauth.REAL_LOGINS``: không đồng ý được cho ứng dụng first-party, không ra ``email_verified``)."""
+    review = normalize(settings.review_login_email)
+    return bool(review) and bool(settings.review_login_code) and normalize(email) == review
+
+
 def _review_email(email: str, client_id: str | None) -> bool:
-    """Email người duyệt App Store (ADR 0268) — chỉ đường đăng nhập Barista (không cho ứng dụng first-party), chỉ khi bản cài đặt đủ email + mã."""
-    return client_id is None and bool(settings.review_login_code) and email == normalize(settings.review_login_email)
+    """Chỉ đường đăng nhập Barista (ứng dụng first-party luôn có client_id) nhận mã cố định."""
+    return client_id is None and is_review(email)
 
 
 async def _check_review_code(email: str, code: str, refused: CodeRefused) -> UUID:
     """Mã cố định của người duyệt: cùng giới hạn khoá theo email; sai ⇒ ghi một lượt sai (dòng mã đã hết hạn) để ``_locked`` đếm được cả khi chưa từng
-    xin mã — không có đường đoán không giới hạn. Đúng ⇒ xoá đếm sai, trả mã người (vẫn phải là thành viên đang hoạt động)."""
+    xin mã — không có đường đoán không giới hạn. Khoá tư vấn theo email: các lượt đoán cùng lúc xếp hàng, không cùng lọt qua bộ đếm. Đúng ⇒ xoá đếm
+    sai, trả mã người (vẫn phải là thành viên đang hoạt động)."""
     async with db.owner_tx() as c:
+        await c.execute("SELECT pg_advisory_xact_lock(hashtext('review-login:' || %s))", (email,))
         if await _locked(c, email):
             raise refused
         good = len(code) == 6 and code.isdigit() and hmac.compare_digest(code.encode(), settings.review_login_code.encode())

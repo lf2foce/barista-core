@@ -212,9 +212,17 @@ async def test_the_review_account_signs_in_with_its_fixed_code_and_nothing_else_
     cid = f"suite-test-{uuid.uuid4().hex[:6]}"
     await _first_party(cid)
     async with client() as c:
+        await c.post("/v1/auth/email/start", json={"email": reviewer})
+        await email_login.wait_sent()
+        assert not [m for m in outbox if m[0] == reviewer]   # mã cố định ⇒ không gửi thư mã thường cho người duyệt
         r = await c.post("/v1/auth/email/verify", json={"email": reviewer, "code": "246810"})
         assert r.status_code == 200, r.text
         assert [t["id"] for t in r.json()["tenants"]] == [str(tenant)]
+        # phiên KHÔNG phải "đã chứng minh hộp thư": provider riêng, ngoài REAL_LOGINS (không đồng ý được cho ứng dụng first-party)
+        async with db.owner.connection() as conn:
+            prov = await (await conn.execute("""SELECT s.provider FROM core.sessions s JOIN core.users u ON u.id = s.user_id
+                                                WHERE u.email = %s ORDER BY s.created_at DESC LIMIT 1""", (reviewer,))).fetchone()
+        assert prov is not None and prov["provider"] == "review" and "review" not in oauth.REAL_LOGINS
         assert (await c.post("/v1/auth/email/verify", json={"email": reviewer, "code": "246810"})).status_code == 200   # mã cố định, dùng lại được
         assert (await c.post("/v1/auth/email/verify", json={"email": other, "code": "246810"})).status_code == 401      # chỉ đúng email người duyệt
         assert (await c.post("/v1/oauth/email/verify", json={"client_id": cid, "client_secret": SECRET, "email": reviewer, "code": "246810",

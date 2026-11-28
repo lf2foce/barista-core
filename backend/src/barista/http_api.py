@@ -344,7 +344,9 @@ async def auth_email_verify(request: Request, body: Annotated[dict[str, Any], Bo
         tenants = await sessions.tenants_of(conn, uid)
         if not tenants:
             return JSONResponse({"detail": "Tài khoản đã bị khoá ở mọi công ty — liên hệ quản trị"}, status_code=403)
-        token, expires = await sessions.open_session(conn, uid, provider="email", client=request.headers.get("user-agent", ""))
+        # mã cố định của người duyệt (ADR 0268) không chứng minh giữ hộp thư ⇒ provider "review", ngoài oauth.REAL_LOGINS
+        provider = "review" if email_login.is_review(str(body.get("email") or "")) else "email"
+        token, expires = await sessions.open_session(conn, uid, provider=provider, client=request.headers.get("user-agent", ""))
         email = await (await conn.execute("SELECT email FROM core.users WHERE id = %s", (uid,))).fetchone()
     return JSONResponse(executor.jsonable({"token": token, "expires_at": expires, "email": email["email"] if email else "", "tenants": tenants}),
                         headers={"Cache-Control": "no-store"})
