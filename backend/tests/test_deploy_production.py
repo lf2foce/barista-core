@@ -62,7 +62,7 @@ def test_demo_instances_render_exactly_as_before():
     real = ops.known_instances() if ops.instances_dir().is_dir() else []
     found = [i for i in [*ops.known_instances(fixtures), *real] if not ops.production(i)]
     for inst in [*found, BASE, {**BASE, "env": "demo", "api_env": {"BARISTA_WEB_URL": "https://acme.example.vn"}}]:
-        if inst.get("api_env") or inst.get("gate") is False or inst.get("landing") is True:
+        if inst.get("api_env") or inst.get("gate") is False or inst.get("landing") is True or inst.get("support_email"):
             got, want = json.loads(ops.render(TEMPLATE, inst, json_text=True)), json.loads(_legacy_render(TEMPLATE, inst))
             if inst.get("api_env"):
                 want["services"]["api"]["environment"] = {**want["services"]["api"]["environment"], "BARISTA_PUBLIC_API_URL": f"https://{inst['api_host']}",
@@ -77,6 +77,8 @@ def test_demo_instances_render_exactly_as_before():
                 want["services"]["api"]["environment"]["BARISTA_DEMO_OPEN"] = "true"
             if inst.get("landing") is True:   # khác biệt có chủ đích THỨ BA (23/11/2026): trang giới thiệu ở "/" cho người chưa đăng nhập
                 want["services"]["web"]["environment"] = {**want["services"]["web"]["environment"], "BARISTA_WEB_HOME": "landing"}
+            if inst.get("support_email"):   # khác biệt có chủ đích THỨ NĂM (28/11/2026): email liên hệ cho trang công khai /privacy, /support
+                want["services"]["web"]["environment"] = {**want["services"]["web"]["environment"], "BARISTA_SUPPORT_EMAIL": inst["support_email"]}
             assert got == want, inst["name"]
         else:
             assert ops.render(TEMPLATE, inst, json_text=True) == _legacy_render(TEMPLATE, inst), inst["name"]
@@ -135,6 +137,19 @@ def test_landing_adds_only_the_web_home_flag_and_accepts_only_true(tmp_path):
     assert landed["services"]["web"] == plain["services"]["web"]   # (api nhận địa chỉ công khai theo host như mọi bản cài có tuỳ biến — test trên)
     for bad in ({**BASE, "landing": False}, {**BASE, "landing": "yes"}):
         with pytest.raises(ValueError, match="landing"):
+            ops.load_instance("acme", _write(tmp_path, bad))
+
+
+def test_support_email_adds_only_the_web_contact_and_must_be_an_email(tmp_path):
+    """``"support_email"`` (28/11/2026): email liên hệ hiện trên trang công khai /privacy, /support của web (App Store bắt buộc có) — chỉ thêm MỘT biến
+    cho dịch vụ web; lõi không ghi email nào. Vắng ⇒ không có biến (trang hướng người dùng tới quản trị công ty)."""
+    plain = json.loads(ops.render(TEMPLATE, ops.load_instance("acme", _write(tmp_path, BASE)), json_text=True))
+    mailed = json.loads(ops.render(TEMPLATE, ops.load_instance("acme", _write(tmp_path, {**BASE, "support_email": "hotro@acme.example.vn"})), json_text=True))
+    assert "BARISTA_SUPPORT_EMAIL" not in plain["services"]["web"]["environment"]
+    assert mailed["services"]["web"]["environment"].pop("BARISTA_SUPPORT_EMAIL") == "hotro@acme.example.vn"
+    assert mailed["services"]["web"] == plain["services"]["web"]
+    for bad in ({**BASE, "support_email": ""}, {**BASE, "support_email": "hotro"}, {**BASE, "support_email": True}, {**BASE, "support_email": "a b@x.vn"}):
+        with pytest.raises(ValueError, match="support_email"):
             ops.load_instance("acme", _write(tmp_path, bad))
 
 

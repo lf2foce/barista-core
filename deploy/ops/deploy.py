@@ -110,6 +110,8 @@ def load_instance(name: str, directory: Path | None = None) -> dict:
         raise ValueError(f"instances/{name}.json: \"gate\" chỉ nhận false (bỏ cổng mật khẩu) — vắng = có cổng")
     if "landing" in inst and inst["landing"] is not True:
         raise ValueError(f"instances/{name}.json: \"landing\" chỉ nhận true (trang giới thiệu ở / cho người chưa đăng nhập) — vắng = vào thẳng /login")
+    if "support_email" in inst and not (isinstance(inst["support_email"], str) and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", inst["support_email"])):
+        raise ValueError(f"instances/{name}.json: \"support_email\" phải là một địa chỉ email (trang /privacy, /support của web) — vắng = không ghi email")
     if production(inst):
         if missing := [k for k in PRODUCTION_LOGIN if not isinstance(api_env.get(k), str) or not api_env[k].strip()]:
             raise ValueError(f"instances/{name}.json là \"env\": \"production\" nhưng api_env thiếu {', '.join(missing)} — production bắt buộc "
@@ -150,7 +152,7 @@ def render(template: str, inst: dict, *, json_text: bool) -> str:
         v = inst[m.group(1)]
         return json.dumps(v, ensure_ascii=False)[1:-1] if json_text else v
     text = PLACEHOLDER.sub(value, template)
-    if json_text and (inst.get("api_env") or production(inst) or inst.get("gate") is False or inst.get("landing") is True):
+    if json_text and (inst.get("api_env") or production(inst) or inst.get("gate") is False or inst.get("landing") is True or inst.get("support_email")):
         stack = json.loads(text)
         api, web = stack["services"]["api"]["environment"], stack["services"]["web"]["environment"]
         # địa chỉ công khai theo host của bản cài — MỌI bản cài đi nhánh này (không chỉ production): thiếu ⇒ lõi tưởng mình ở localhost:8300 (OAuth /
@@ -162,6 +164,8 @@ def render(template: str, inst: dict, *, json_text: bool) -> str:
             web.update(PRODUCTION_WEB)
         if inst.get("landing") is True:   # trang giới thiệu sản phẩm ở "/" cho người chưa đăng nhập (web/src/proxy.ts); vắng ⇒ "/" về thẳng /login
             web["BARISTA_WEB_HOME"] = "landing"
+        if inst.get("support_email"):   # email liên hệ trên trang công khai /privacy, /support (App Store bắt buộc) — của bản cài, lõi không ghi
+            web["BARISTA_SUPPORT_EMAIL"] = inst["support_email"]
         if inst.get("gate") is False and not production(inst):   # demo CÔNG KHAI ⇒ app gọi thẳng API cũng chọn được vai (không cần khoá demo của BFF)
             api["BARISTA_DEMO_OPEN"] = "true"
         if inst.get("gate") is False:   # bỏ cổng mật khẩu: nhãn basicauth + mắt xích đầu của router web
