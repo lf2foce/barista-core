@@ -1476,7 +1476,7 @@ class Module:
 
 
 # Module của GÓI NỀN (luôn bật, đi cùng lõi): danh sách đóng, nằm trong repo. Gói khác không tự nhận "base" (review 09/11).
-BASE_MODULES = frozenset({"core", "admin", "apps", "asks", "connect", "connectors", "flow", "health", "kb", "memory", "onboard", "papers", "work"})
+BASE_MODULES = frozenset({"core", "admin", "apps", "asks", "connect", "connectors", "flow", "health", "kb", "memory", "onboard", "outbound", "papers", "work"})
 KEY = re.compile(r"[a-z][a-z0-9_]*")      # khoá module / gói — không dấu chấm, không hoa, không rỗng
 WORKSPACE_KEY = re.compile(r"[a-z_]+")    # khoá phân hệ — khớp CHECK của ``core.user_pins.workspace`` (migration base/008)
 NAME = re.compile(r"[a-z_][a-z0-9_]*")     # phần tên của thao tác / bên nghe sau "<module>."
@@ -1488,3 +1488,4 @@ def get(name: str) -> Op | None:
 
 def subscribers_for(event_type: str) -> list[Subscriber]:
     return [s for s in SUBSCRIBERS.values() if s.event_type == event_type or (s.event_type == ANY_TRIGGER and event_type in TRIGGERS)]
+

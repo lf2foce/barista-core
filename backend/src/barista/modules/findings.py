@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from typing import Any, Literal
 from uuid import UUID
 
-from barista.api import Ctx, Day, Input, Invalid, Module, Pack, Screen, Workspace, can_run, field, today, ui
+from barista.api import Ctx, Day, Input, Invalid, Module, Pack, Screen, Workspace, can_run, field, money, today, ui
 from barista.api import findings as fd
 from barista.api.brochure import data as bro_data
 from barista.api.brochure import heading as bro_heading
@@ -191,6 +191,38 @@ async def overview(ctx: Ctx, inp: PeriodIn) -> dict[str, Any]:
     động ước tính, công thức, độ tin cậy, dòng gốc; mục chưa đo được nói rõ vì sao. Số cả công ty; chỉ đọc."""
     f, t = await resolve(ctx, inp.period, inp.date_from, inp.date_to)
     return await _overview(ctx, f, t)
+
+
+class DigestIn(Input):
+    period: Literal["since_start", "last_7", "last_30", "this_month", "last_month"] = field("Kỳ", "last_7", options=PERIODS)
+
+
+def _impact_text(x: fd.Finding) -> str:
+    if not x.impact:
+        return ""
+    v = money(int(x.impact.value)) if x.impact.kind == "money" else f"{x.impact.value:,.0f}".replace(",", ".")
+    return f" — {v} {x.impact.label}"
+
+
+@m.query("digest", resource="findings", title="Tóm tắt phát hiện (luật tự động gửi)", internal=True, agent="deny", callers=("flow",), min_scope="all",
+         why="flow: luật tự động THEO LỊCH “Gửi tóm tắt phát hiện” (ADR 0265 mục 4) gọi bằng QUYỀN NGƯỜI NHẬN (hỏi hộ — principal_of + call_as) để đẩy "
+             "kết quả bộ kiểm thành thông báo trong app thay vì chỉ hiện khi mở màn. Người không xem được báo cáo cả công ty ⇒ bị chặn như mở màn. Trả "
+             "một dòng tiêu đề, một đoạn chữ dựng từ các phát hiện (tên, tác động do module tính) và số mục cần chú ý / đã kiểm / chưa đo được; không dòng gốc.")
+async def digest(ctx: Ctx, inp: DigestIn) -> dict[str, Any]:
+    f, t = await resolve(ctx, inp.period, None, None)
+    r = await collect(ctx, f, t)
+    got = [x for x in r["findings"] if x.measurable]
+    hits = [x for x in got if x.needs_attention]
+    miss = len(r["findings"]) - len(got)
+    head = f"{len(hits)} phát hiện cần chú ý" if hits else "không có phát hiện cần chú ý"
+    lines = [f"{PERIODS[inp.period]} ({f:%d/%m} – {t:%d/%m}): {head}; {len(got) - len(hits)} mục đã kiểm không thấy vấn đề; {miss} mục chưa đo được."]
+    lines += [f"• {x.title}{_impact_text(x)}" for x in hits[:5]]
+    if len(hits) > 5:
+        lines.append(f"… và {len(hits) - 5} phát hiện khác — mở báo cáo để xem đủ.")
+    if r["failed"]:
+        lines.append(f"Chưa đọc được phần của: {', '.join(r['failed'])}.")
+    return {"headline": head[:1].upper() + head[1:], "text": "\n".join(lines), "attention": len(hits), "checked": len(got), "unmeasured": miss,
+            "date_from": f, "date_to": t}
 
 
 m.workspace(Workspace("parallel", "Chạy song song", "arrow.triangle.branch", (

@@ -34,6 +34,7 @@ Pack("base", "Nền",
                                ("papers", "all", "read write"), ("papers.office", "all", "read write manage"), ("papers.templates", "all", "read write manage"), ("flow", "all", "read write manage"),
                                ("flow.templates", "all", "read write manage"), ("flow.automations", "all", "read write manage"),
                                ("asks", "all", "read write"), ("connectors", "all", "read write manage"),
+                               ("outbound", "all", "read write manage"),   # hộp thư đi (ADR 0265): soạn, bấm gửi, tên người gửi của công ty
                                ("work", "all", "read write"),
                                ("onboard", "all", "read write manage"),),   # đưa công ty vào dùng (0263): lượt chuyển, đối chiếu, danh sách việc
                        suggest=(("admin.deliveries", "Có sự kiện nào đang lỗi cần xử lý không?"),
@@ -53,7 +54,7 @@ Pack("base", "Nền",
                                   ("ledger", "all", "read"), ("kb.common", "all", "read write manage"), ("memory.legacy", "all", "read write"),
                                   ("papers", "all", "read write"), ("papers.office", "all", "read write manage"), ("papers.templates", "all", "read write manage"), ("flow", "all", "read write manage"),
                                   ("flow.templates", "all", "read write manage"), ("flow.automations", "all", "read write manage"),
-                               ("asks", "all", "read write"), ("connectors", "all", "read"),
+                               ("asks", "all", "read write"), ("connectors", "all", "read"), ("outbound", "all", "read write manage"),
                                   ("work", "all", "read"),
                                   ("onboard", "all", "read write manage"),),   # chủ công ty bấm ngày chuyển (0263) — chỉ chủ tài khoản, kiểm ở lệnh
                           suggest=(("core.approvals", "Có phiếu nào đang chờ tôi duyệt không?"),)),
@@ -63,7 +64,8 @@ Pack("base", "Nền",
                         picker=("Văn phòng", "Hành chính văn phòng: tài sản, văn phòng phẩm, hợp đồng dịch vụ, giấy tờ công ty — không dữ liệu bán hàng.",
                                 "Tuần này tôi còn việc gì chưa xong?"),
                         grants=(("kb.common", "all", "read write"), ("papers", "team", "read write"),
-                                ("flow", "team", "read write"), ("flow.templates", "all", "read"), ("asks", "all", "read write"),)),
+                                ("flow", "team", "read write"), ("flow.templates", "all", "read"), ("asks", "all", "read write"),
+                                ("outbound", "team", "read write"),)),
          # CÔNG NGHỆ (rà vai 18/11/2026, anh Anh chốt "tuỳ em chọn best practice"): người giữ hệ thống — người dùng, đội, vai, quyền, nhật ký, sức
          # khoẻ dữ liệu, nhập liệu, kết nối, quy trình, cấu trúc danh mục — KHÔNG khách / SĐT / giao dịch / phí / hoa hồng / kế toán / lương. Khác
          # "Quản trị hệ thống" (vai của chủ / giám đốc vận hành, gói nghiệp vụ còn góp quyền xem số). Mọi đổi quyền vẫn qua chủ tài khoản duyệt
@@ -86,7 +88,8 @@ Pack("base", "Nền",
                        picker=("Văn phòng", "Vai chung cho phòng khác (nhân sự, kế hoạch, pháp lý…): việc được giao, quy trình, tài liệu.",
                                "Hôm nay tôi cần làm gì?"),
                        grants=(("kb.common", "all", "read"), ("papers", "own", "read write"),
-                               ("flow", "team", "read write"), ("flow.templates", "all", "read"), ("asks", "all", "read write"),)),
+                               ("flow", "team", "read write"), ("flow.templates", "all", "read"), ("asks", "all", "read write"),
+                               ("outbound", "own", "read write"),)),
      },
      teams=(("QT", "Quản trị hệ thống", "admin"), ("HCNS", "Hành chính – Nhân sự", "department")),
      # 0239 phần 3: sổ cái là thông tin nhạy cảm — chỉ có nghĩa "cả công ty" (chưa định nghĩa "sổ cái của mình")

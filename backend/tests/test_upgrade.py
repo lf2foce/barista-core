@@ -78,6 +78,8 @@ NEW_FILES = NEW_MAINTENANCE | RLS_INITPLAN | TENANT_FKS | {"base/116_onboard.sql
                                                          "base/117_config_bundle.sql",   # 0263 C: bảng mới admin.config_bundles (bản cũ không đọc) ⇒ không bảo trì
                                                          "crm/115_lead_steps.sql",   # 0264: chỉ THÊM bảng / cột có mặc định / giá trị CHECK — bản cũ bỏ qua ⇒ không bảo trì
                                                          "base/115_usage_reads_query.sql",   # 0260: thêm tên truy vấn vào bộ đếm lượt đọc (cột + khoá chính; bản cũ chạy song song chỉ mất số đếm) ⇒ không bảo trì
+                                                         "base/118_outbox.sql",   # ADR 0265: schema mới outbound (hộp thư đi) + thêm dòng quyền — chỉ THÊM ⇒ không bảo trì
+                                                         "base/119_automation_schedule.sql",   # ADR 0265: luật theo lịch — thêm cột / nới CHECK (dòng cũ thoả ràng buộc mới) ⇒ không bảo trì
                                                            "schedule/115_kind_usage.sql",   # đếm "Đã dùng" của loại lịch (hàm mới) ⇒ không bảo trì
                                                            "hr/115_employment_guards.sql",   # mã nhân viên / chồng ngày do ràng buộc loại trừ giữ (chỉ siết) ⇒ không bảo trì
                                                            "base/113_team_term_editors.sql",   # 0256: người sửa theo từng căn cứ (thêm cột + thân hàm trigger) ⇒ không bảo trì riêng

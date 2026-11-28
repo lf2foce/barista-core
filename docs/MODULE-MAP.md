@@ -3,13 +3,13 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-17 gói · 30 module · 1069 thao tác (300 nội bộ) · 21 bên nghe sự kiện.
+17 gói · 31 module · 1084 thao tác (306 nội bộ) · 22 bên nghe sự kiện.
 
 ## Gói
 
 | Gói | Tên | Loại | Bắt buộc | Module |
 |---|---|---|---|---|
-| `base` | Nền | lõi | — | `admin`, `apps`, `asks`, `connect`, `connectors`, `core`, `flow`, `health`, `kb`, `memory`, `onboard`, `papers`, `work` |
+| `base` | Nền | lõi | — | `admin`, `apps`, `asks`, `connect`, `connectors`, `core`, `flow`, `health`, `kb`, `memory`, `onboard`, `outbound`, `papers`, `work` |
 | `books` | Sổ sách & nghĩa vụ | năng lực | — | `books` |
 | `crm` | Khách hàng | năng lực | `directory`, `schedule` | `crm`, `leadflow` |
 | `directory` | Cá nhân & tổ chức | năng lực | — | `parties` |
@@ -40,8 +40,8 @@
 | `connectors` | Kết nối ngoài | `base` | `connectors` | `modules/connectors.py` | 10 | 6 | 6 |
 | `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/plugins.py`, `kernel/rail.py`, `kernel/record_files.py`, `kernel/screen_usage.py` | 37 | 43 | 11 |
 | `crm` | Khách hàng | `crm` | `crm` | `modules/crm/` (18 file) | 25 | 50 | 42 |
-| `findings` | Báo cáo chạy song song | `findings` | — | `modules/findings.py` | 0 | 7 | 1 |
-| `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (17 file) | 37 | 50 | 33 |
+| `findings` | Báo cáo chạy song song | `findings` | — | `modules/findings.py` | 0 | 8 | 2 |
+| `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (18 file) | 39 | 51 | 35 |
 | `health` | Sức khoẻ dữ liệu | `base` | — | `modules/health.py` | 0 | 2 | 1 |
 | `hr` | Hồ sơ làm việc | `hr` | `hr` | `modules/hr/` (2 file) | 13 | 14 | 4 |
 | `kb` | Tài liệu | `base` | `kb` | `modules/kb/` (4 file) | 15 | 23 | 12 |
@@ -52,8 +52,9 @@
 | `mgmt` | Báo cáo quản trị | `mgmt` | `mgmt` | `modules/mgmt.py` | 2 | 3 | 0 |
 | `mkt` | Marketing | `marketing` | `mkt` | `modules/mkt/` (3 file) | 15 | 32 | 16 |
 | `onboard` | Đưa vào dùng | `base` | `onboard` | `modules/onboard.py` | 8 | 7 | 8 |
-| `papers` | Giấy tờ | `base` | `papers` | `modules/papers/` (3 file) | 12 | 16 | 3 |
-| `parties` | Cá nhân & tổ chức | `directory` | `parties` | `modules/parties.py` | 20 | 16 | 19 |
+| `outbound` | Hộp thư đi | `base` | `outbound` | `modules/outbound.py` | 7 | 2 | 2 |
+| `papers` | Giấy tờ | `base` | `papers` | `modules/papers/` (3 file) | 13 | 16 | 3 |
+| `parties` | Cá nhân & tổ chức | `directory` | `parties` | `modules/parties.py` | 20 | 17 | 20 |
 | `pay` | Lương & thù lao | `pay` | `pay` | `modules/pay/` (7 file) | 15 | 17 | 7 |
 | `schedule` | Lịch & nguồn lực | `schedule` | `schedule` | `modules/schedule/` (5 file) | 18 | 16 | 6 |
 | `talk` | Trao đổi | `talk` | `talk` | `modules/talk.py` | 17 | 18 | 7 |
@@ -245,11 +246,13 @@
 ### `findings` — Báo cáo chạy song song
 
 - **Tài nguyên quyền:** `findings`
+- **Hợp đồng quyền hệ thống** (thao tác ← module được gọi):
+  - `findings.digest` ← `flow`
 - **Cắm vào:** `compose.brochure`
 
 ### `flow` — Quy trình & việc
 
-- **Mã:** `flow/__init__.py`, `flow/assign.py`, `flow/automations.py`, `flow/cases.py`, `flow/due_phrase.py`, `flow/evidence.py`, `flow/messages.py`, `flow/plan_import.py`, `flow/plan_logic.py`, `flow/plan_template.py`, `flow/plans.py`, `flow/requests.py`, `flow/schedule_rules.py`, `flow/screens.py`, `flow/starters.py`, `flow/tasks.py`, `flow/timeline.py`
+- **Mã:** `flow/__init__.py`, `flow/assign.py`, `flow/automations.py`, `flow/cases.py`, `flow/due_phrase.py`, `flow/evidence.py`, `flow/messages.py`, `flow/plan_import.py`, `flow/plan_logic.py`, `flow/plan_template.py`, `flow/plans.py`, `flow/requests.py`, `flow/schedule_rules.py`, `flow/screens.py`, `flow/starters.py`, `flow/tasks.py`, `flow/timeline.py`, `flow/timetable.py`
 - **Tài nguyên quyền:** `flow`, `flow.automations`, `flow.templates`
 - **Hợp đồng quyền hệ thống** (thao tác ← module được gọi):
   - `flow.calendar_of` ← `schedule`
@@ -272,12 +275,12 @@
 - **Gọi họ thao tác bằng quyền hệ thống:** `check`, `metric`, `subject`
 - **Cắm vào:** `schedule.markers`, `talk.message_actions`
 - **Sự kiện phát:** `flow.plan_closed`, `flow.plan_created`, `flow.plan_reopened`, `flow.task_cancelled`, `flow.task_done`, `flow.task_reopened`
-- **Nghe sự kiện:** `asks.item_answered` → `flow.brief_answered`, `subject.changed` → `flow.on_subject_changed`, `subject.created` → `flow.on_subject_created`, `(mọi cò)` → `flow.run_automations`, `flow.automation_due` → `flow.run_dated_automation`, `subject.changed` → `flow.wake_checked_tasks`
+- **Nghe sự kiện:** `asks.item_answered` → `flow.brief_answered`, `subject.changed` → `flow.on_subject_changed`, `subject.created` → `flow.on_subject_created`, `(mọi cò)` → `flow.run_automations`, `flow.automation_due` → `flow.run_dated_automation`, `flow.automation_scheduled` → `flow.run_scheduled_automation`, `subject.changed` → `flow.wake_checked_tasks`
 - **Cò tự động hoá:** `flow.plan_closed`
 - **Tìm nhanh:** `flow.search_plans`, `flow.search_tasks`
 - **Đối tượng:** `flow.case`, `flow.plan`, `flow.request`, `flow.task`
 - **Việc theo dõi:** `case`
-- **Vòng quét:** `flow.check_goals`, `flow.check_tasks`, `flow.escalate_requests`, `flow.escalate_stuck`, `flow.remind_due`, `flow.sweep_dated_automations`
+- **Vòng quét:** `flow.check_goals`, `flow.check_tasks`, `flow.escalate_requests`, `flow.escalate_stuck`, `flow.remind_due`, `flow.run_automation_drafts`, `flow.sweep_dated_automations`, `flow.sweep_scheduled_automations`
 
 ### `health` — Sức khoẻ dữ liệu
 
@@ -392,6 +395,11 @@
 ### `onboard` — Đưa vào dùng
 
 - **Tài nguyên quyền:** `onboard`
+
+### `outbound` — Hộp thư đi
+
+- **Tài nguyên quyền:** `outbound`
+- **Vòng quét:** `outbound.deliver`
 
 ### `papers` — Giấy tờ
 

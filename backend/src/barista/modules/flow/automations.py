@@ -1,36 +1,47 @@
 """TỰ ĐỘNG HOÁ "Nếu… thì…" do quản trị đặt (quyết định 0090, ROADMAP K4; mở rộng ADR 0246).
 
-Luật là DỮ LIỆU, có hai kiểu KHI:
+Luật là DỮ LIỆU, có ba kiểu KHI:
 * **Cò sự kiện** module khai (``Module.trigger`` — sự kiện + trường an toàn): lead mới, lead đổi chặng, có tiền về…
 * **Theo ngày** (ADR 0246): một NGUỒN NGÀY module khai (``Module.date_source`` — hạn việc, hẹn chăm sóc lại, hạn khoản phải thu…) + độ lệch
   ("3 ngày sau", "1 ngày trước"). Vòng quét của flow xét luật mỗi giờ; mỗi bản ghi kích MỘT lần cho mỗi giá trị ngày (đổi ngày ⇒ kích lại một lần).
+* **Theo lịch** (ADR 0265): người đặt CHỌN nhịp (hằng ngày / ngày làm việc / hằng tuần thứ … / hằng tháng ngày …) + giờ theo múi giờ CÔNG TY
+  (``timetable``). Vòng quét mỗi phút chọn luật tới hạn (``next_run_at``), mỗi LƯỢT chạy một lần (khoá dòng + chống lặp theo (luật, lượt)); lượt lỡ
+  quá ``STALE`` (máy chủ nghỉ, luật vừa bật lại) ⇒ bỏ, có ghi — không dội bù hàng loạt.
 
 Điều kiện có cấu trúc (trường, phép so, giá trị — không biểu thức, không mã do quản trị viết). THÌ: BÁO người / đội / người phụ trách bản ghi, TẠO
-VIỆC, ĐỀ XUẤT (thẻ đề xuất cho một người — người bấm mới chạy, cùng kho đề xuất của trợ lý), hoặc CHẠY LỆNH — chỉ lệnh module khai an toàn cho luật
-(``Module.command(auto=True)``: ghi rủi ro thấp, đảo được).
+VIỆC, ĐỀ XUẤT (thẻ đề xuất cho một người — người bấm mới chạy, cùng kho đề xuất của trợ lý), CHẠY LỆNH — chỉ lệnh module khai an toàn cho luật
+(``Module.command(auto=True)``: ghi rủi ro thấp, đảo được), NHỜ TRỢ LÝ SOẠN (ADR 0265: trợ lý của TỪNG người nhận chạy không người với lời dặn + bộ
+công cụ hẹp khai cho luật; chỉ đọc và soạn — mọi lệnh ghi thành thẻ đề xuất chờ người đó xác nhận; chạy NGOÀI giao dịch ở vòng ``run_drafts``, đo
+token), hoặc GỬI TÓM TẮT PHÁT HIỆN (bộ kiểm của công ty — số do truy vấn tính bằng quyền người nhận).
 
 Giới hạn có chủ đích: chạy bằng QUYỀN NGƯỜI ĐẶT LUẬT (nạp lại mỗi lần — thôi việc / mất quyền ⇒ không chạy), chạy thử trước, mỗi sự kiện / (bản
 ghi, ngày) một lần, trần số lần / ngày, im với dữ liệu nạp lịch sử và với thứ xảy ra / tới hạn TRƯỚC khi đặt luật, chạy SAU commit qua outbox (lỗi
 thử lại lùi dần, quá ngưỡng thành "hỏng" ở Quản trị), chuỗi luật kích nhau tối đa ``MAX_CHAIN`` tầng, mỗi lần có nhật ký + mã vết ``auto:<luật>`` (0086).
 """
 
+import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
-from barista.api import Ctx, Denied, Event, Input, Invalid, NoInput, NotFound, field, money, notify, today, ui, zone
+from barista.api import Ctx, Denied, Event, Input, Invalid, NoInput, NotFound, Prep, field, money, notify, today, ui, zone
+from barista.db import db
 from barista.kernel import agent_policy, auth, executor, packs, registry, vocab
-from barista.modules.flow import _team_id, m
+from barista.kernel.principal import Principal
+from barista.modules.flow import _team_id, m, timetable
+
+log = logging.getLogger("barista.automations")
 
 OPS = {"eq": "=", "ne": "≠", "ge": "≥", "le": "≤", "contains": "chứa"}
 _OP_WORDS = (("!=", "ne"), ("≠", "ne"), (">=", "ge"), ("≥", "ge"), ("<=", "le"), ("≤", "le"), ("=", "eq"), ("chứa", "contains"), ("contains", "contains"))
-ACTIONS = {"notify": "Báo", "task": "Tạo việc", "propose": "Đề xuất cho người bấm", "command": "Chạy lệnh"}
+ACTIONS = {"notify": "Báo", "task": "Tạo việc", "propose": "Đề xuất cho người bấm", "command": "Chạy lệnh", "draft": "Nhờ trợ lý soạn",
+           "digest": "Gửi tóm tắt phát hiện"}
 RUN_STATUS = {"done": "Đã chạy", "skipped": "Bỏ qua", "failed": "Lỗi", "trial": "Chạy thử (chưa gửi)", "queued": "Đang chờ chạy"}
 RUN_TONE = {"done": "ok", "skipped": "muted", "failed": "bad", "trial": "warn", "queued": "muted"}
 STATE = {"trial": "Chạy thử", "on": "Bật", "off": "Tắt"}
@@ -39,6 +50,29 @@ MAX_CHAIN = 3          # luật kích luật (lệnh của luật A phát cò c�
 FROM_HOUR = 8          # luật theo ngày chỉ chạy từ giờ này (giờ công ty) — không báo / tạo việc lúc nửa đêm
 LOOKBACK_DAYS = 7      # ngày tới hạn bị lỡ (máy chủ nghỉ) vẫn chạy bù trong chừng này ngày; cũ hơn ⇒ im
 DUE_EVENT = "flow.automation_due"
+SCHEDULE_EVENT = "flow.automation_scheduled"
+SCHEDULE = "schedule"  # khoá vế KHI "theo lịch" (không bản ghi, không trường)
+STALE = timedelta(hours=6)   # lượt theo lịch lỡ quá chừng này (máy chủ nghỉ, luật vừa bật lại) ⇒ bỏ, có ghi — không dội bù
+# Nhờ trợ lý soạn (ADR 0265): trần cứng — mỗi lượt gọi model cho TỪNG người nhận nên số người và số lượt / ngày đều có trần, không theo ý người đặt
+DRAFT_MAX_PEOPLE = 5      # quá số này ⇒ lượt lỗi, có ghi (chọn một người hoặc "chỉ trưởng đội")
+DRAFT_DAILY_CAP = 20      # trần "Tối đa mỗi ngày" của luật có hành động này
+DRAFT_MAX_TOOLS = 12      # bộ công cụ hẹp: nhiều hơn là không còn hẹp
+DRAFT_REQUESTS = 6        # số lượt gọi model tối đa của MỘT lần soạn cho một người
+DRAFT_TOKENS = 60_000     # trần token (vào + ra) của MỘT lần soạn cho một người — quá ⇒ dừng, phần đã soạn bỏ, có ghi; hạn mức tháng của công ty vẫn áp
+DRAFT_LEASE_S = 900       # lượt soạn giữ việc chừng này giây; tiến trình chết ⇒ hết thuê, vòng sau làm lại (thẻ / thông báo có khoá chống lặp)
+DRAFTS_PER_SWEEP = 3      # mỗi vòng quét của một công ty soạn tối đa chừng này việc — gọi model chậm, không giữ cả vòng
+DRAFT_STYLE = ("Chỉ ĐỌC và SOẠN: việc cần ghi thì gọi công cụ ghi để thành thẻ đề xuất — người nhận bấm Xác nhận mới chạy. Trả lời ngắn bằng tiếng "
+               "Việt, đi thẳng vào kết quả; số liệu lấy từ công cụ, không tự nghĩ ra số.")
+DIGEST_PERIOD = "last_7"
+DRAFT_MODEL: Any = None   # test tiêm model giả; None ⇒ model của hạng trợ lý người nhận (agent.llm.model_for)
+clock: Callable[[], datetime] = lambda: datetime.now(UTC)   # noqa: E731 — đồng hồ của vòng quét theo lịch (test ghim)
+
+class Outcome(NamedTuple):
+    """Kết quả MỘT lần luật khớp cho nhật ký lần chạy. ``job``: việc chờ trợ lý soạn (hành động "nhờ trợ lý soạn") — vòng ``run_automation_drafts`` làm."""
+    status: str
+    note: str = ""
+    job: dict[str, Any] | None = None
+
 
 m.trigger("flow.plan_closed", "Kế hoạch đóng (xong / huỷ)", {"status": "Trạng thái"}, open=("flow.plan", {"plan_id": "plan_id"}))
 
@@ -56,7 +90,9 @@ class When:
     date_label: str = ""  # nguồn ngày: tên ngày ("hạn việc") — "" = cò sự kiện
 
 
-def when_of(trigger: str | None, date_source: str | None) -> When | None:
+def when_of(trigger: str | None, date_source: str | None, schedule: str | None = None) -> When | None:
+    if schedule:
+        return When(SCHEDULE, "Theo lịch", m.key, {}, (), "", None)
     if trigger:
         t = registry.TRIGGERS.get(trigger)
         return When(t.event_type, t.label, t.module, t.fields, t.ids, t.owner, t.open) if t else None
@@ -154,6 +190,8 @@ def offset_text(offset: int, date_label: str) -> str:
 def when_text(w: When | None, r: Mapping[str, Any]) -> str:
     if w is None:
         return f"{r.get('trigger') or r.get('date_source')} (gói tắt / cò bỏ)"
+    if w.key == SCHEDULE:
+        return f"Theo lịch: {timetable.describe(r['schedule'], r['run_at'])}"
     return w.label if not w.date_label else f"{w.label}: {offset_text(r['offset_days'], w.date_label)}"
 
 
@@ -241,28 +279,56 @@ async def command_options(ctx: Ctx, inp: CommandOptionsIn) -> list[dict[str, str
     return [{"value": op.name, "label": op.title} for op in sorted(ops, key=lambda o: o.title)]
 
 
+def draft_tool_ok(op: registry.Op) -> bool:
+    """Công cụ khai được cho "nhờ trợ lý soạn" (ADR 0265): truy vấn trợ lý dùng được, hoặc lệnh ghi mà trợ lý CHỈ SOẠN THẺ (``agent_policy.decide`` ra
+    "propose"). Lệnh trợ lý được làm thẳng ("allow") không vào bộ — lượt không người không bao giờ tự ghi (lệnh công ty nới thì ``decide`` hạ về đề xuất
+    vì không có người; lệnh vốn được làm thẳng thì loại ở đây)."""
+    if op.internal or op.public is not None or op.name.endswith("_options") or op.name in executor.DECISIONS or registry.tool_kind(op) == "builder":
+        return False
+    mode = agent_policy.decide(op, agent_policy.Caller(via="agent"), agent_policy.Company()).mode   # một nơi quyết chế độ trợ lý (0144)
+    return mode != "deny" and (op.kind == "query" or mode == "propose")
+
+
+@m.query("draft_tool_options", resource="flow.automations", title="Công cụ trợ lý dùng được cho luật")
+async def draft_tool_options(ctx: Ctx, inp: NoInput) -> list[dict[str, str]]:
+    """Ô "Trợ lý được dùng" của hành động "nhờ trợ lý soạn": truy vấn + lệnh soạn đề xuất của các gói đang bật mà NGƯỜI ĐẶT chạy được. Lúc chạy, trợ
+    lý của từng người nhận chỉ mang phần người đó cũng chạy được."""
+    on = await packs.enabled(ctx.conn, ctx.p.tenant_id)
+    ops = [op for op in registry.OPS.values() if packs.module_on(on, op.module) and draft_tool_ok(op) and executor.allowed(ctx.p, op)]
+    name = lambda o: registry.MODULES.get(o.module, o.module)   # noqa: E731
+    return [{"value": op.name, "label": f"{name(op)} · {op.title}" + (" (soạn đề xuất)" if op.kind == "command" else "")}
+            for op in sorted(ops, key=lambda o: (name(o), o.title))]
+
+
 class SaveAutomation(Input):
     automation_id: UUID | None = field("Luật", None, hidden=True)
     name: str = field("Tên luật", max_length=120, example="Lead mới từ nguồn ngoài ⇒ báo trưởng team A")
     trigger: str = field("Khi (một việc xảy ra)", "", options_query="flow.trigger_options",
-                         help="Chọn MỘT: việc xảy ra (ô này) hoặc theo ngày (ô bên dưới)")
+                         help="Chọn MỘT: việc xảy ra (ô này), theo ngày, hoặc theo lịch (các ô bên dưới)")
     date_source: str = field("Hoặc theo ngày", "", options_query="flow.date_source_options",
                              help="Hạn việc, hẹn chăm sóc lại, hạn khoản phải thu… — luật chạy N ngày trước / sau ngày đó, mỗi bản ghi một lần cho mỗi ngày")
     direction: Literal["after", "before", "on"] = field("Lúc nào", "after", options=DIRECTION, help="Chỉ cho luật theo ngày")
     days: int = field("Số ngày", 1, ge=0, le=365, help="Chỉ cho luật theo ngày: bao nhiêu ngày trước / sau")
+    repeat: str = field("Hoặc theo lịch", "", options={"": "Không", **timetable.REPEAT},
+                        help="Chạy theo nhịp cố định (giờ của công ty): báo cáo đầu tuần, nhắc cuối tháng, tóm tắt mỗi sáng…")
+    weekday: str = field("Vào thứ", "MO", options=timetable.WEEKDAY, help="Chỉ cho lịch hằng tuần")
+    month_day: str = field("Ngày trong tháng", "1", options=timetable.MONTH_DAY, help="Chỉ cho lịch hằng tháng")
+    at: str = field("Lúc", "08:00", options=timetable.AT, help="Chỉ cho luật theo lịch — giờ của công ty")
     conditions: str = field("Và điều kiện", "", kind="textarea", max_length=1000, example="[[offering]] quan tâm = HSR\nNguồn = ads",
                             help="Mỗi dòng: trường phép giá trị (=, ≠, ≥, ≤, chứa). Trống = mọi lần cò xảy ra.")
-    action: Literal["notify", "task", "propose", "command"] = field("Thì", "notify", options=ACTIONS)
+    action: Literal["notify", "task", "propose", "command", "draft", "digest"] = field("Thì", "notify", options=ACTIONS)
     command: str = field("Lệnh", "", options_query="flow.command_options", options_with=("action", "trigger", "date_source"),
                          help="Chỉ cho “Đề xuất” / “Chạy lệnh”: lệnh về chính bản ghi (ô mã điền tự động)")
     params: str = field("Giá trị cho lệnh", "", kind="textarea", max_length=1000, example="Chặng = unreachable",
                         help="Mỗi dòng: ô = giá trị cho ô của lệnh mà bản ghi không tự điền. {tên trường} lấy giá trị từ bản ghi")
+    tools: list[str] = field("Trợ lý được dùng", [], kind="multiselect", options_query="flow.draft_tool_options",
+                             help=f"Chỉ cho “Nhờ trợ lý soạn”: bộ công cụ HẸP (tối đa {DRAFT_MAX_TOOLS}) — trợ lý chỉ đọc và soạn thẻ đề xuất, không tự ghi")
     to_owner: bool = field("Cho người phụ trách bản ghi", False, help="Sale giữ lead, người làm việc, người phụ trách khoản thu…")
     team_code: str = field("Hoặc cho đội", "", options_query="admin.team_options")
     leads_only: bool = field("Chỉ trưởng đội", False, group="Thêm chi tiết")
     user_email: str = field("Hoặc cho một người", "", options_query="admin.member_options", group="Thêm chi tiết")
     message: str = field("Nội dung", "", kind="textarea", max_length=500, example="Lead mới {[[offering]] quan tâm} (nguồn {Nguồn}) — gọi trong 15 phút",
-                         help="{tên trường} lấy giá trị từ sự kiện. Đề xuất: lý do hiện trên thẻ; chạy lệnh: ghi chú")
+                         help="{tên trường} lấy giá trị từ sự kiện. Đề xuất: lý do hiện trên thẻ; chạy lệnh: ghi chú; nhờ trợ lý soạn: lời dặn trợ lý")
     due_days: int | None = field("Hạn việc (sau … ngày)", None, ge=0, le=60, group="Thêm chi tiết")
     daily_cap: int = field("Tối đa mỗi ngày", 20, ge=1, le=500, help="Chặn bão thông báo / việc khi dữ liệu nhập ồ ạt", group="Thêm chi tiết")
     trial: bool = field("Chạy thử trước (chỉ ghi, chưa gửi)", True,
@@ -270,9 +336,14 @@ class SaveAutomation(Input):
 
 
 async def _when_for_save(ctx: Ctx, inp: SaveAutomation) -> When:
-    trig, src = inp.trigger.strip(), inp.date_source.strip()
-    if bool(trig) == bool(src):
-        raise Invalid("Chọn MỘT vế “Khi”: một việc xảy ra, hoặc theo ngày")
+    trig, src, rep = inp.trigger.strip(), inp.date_source.strip(), inp.repeat.strip()
+    if bool(trig) + bool(src) + bool(rep) != 1:
+        raise Invalid("Chọn MỘT vế “Khi”: một việc xảy ra, theo ngày, hoặc theo lịch")
+    if rep:
+        timetable.build(rep, inp.weekday, inp.month_day)   # lựa chọn lạ ⇒ Invalid nêu lựa chọn dùng được
+        sw = when_of(None, None, rep)
+        assert sw is not None
+        return sw
     w = when_of(trig or None, src or None)
     if w is None or not packs.module_on(await packs.enabled(ctx.conn, ctx.p.tenant_id), w.module):
         # nói luôn cò / ngày nào dùng được (mã — nhãn — trường): người / trợ lý sửa trong MỘT bước, không đoán lại (eval 0095: đoán 3 lần rồi bỏ cuộc)
@@ -290,6 +361,24 @@ async def save_automation(ctx: Ctx, inp: SaveAutomation) -> dict[str, Any]:
     tay ai ⇒ leadflow__set_rule). Luật mới chạy thử trước; chạy bằng QUYỀN NGƯỜI ĐẶT (người lưu sau cùng). Trợ lý chỉ đề xuất — người bấm mới lưu."""
     w = await _when_for_save(ctx, inp)
     fields, also = _fields(w, ctx.p.vocab), _neutral(w)
+    if w.key == SCHEDULE and inp.conditions.strip():
+        raise Invalid("Luật theo lịch không có điều kiện trên bản ghi — chạy đúng giờ đã chọn; cần lọc ⇒ dặn trong lời dặn trợ lý")
+    if inp.action == "digest" and w.key != SCHEDULE:
+        raise Invalid("“Gửi tóm tắt phát hiện” chỉ cho luật theo lịch (vd 8 giờ mỗi sáng thứ Hai)")
+    tools: list[str] = []
+    if inp.action == "draft":
+        allowed = {o["value"] for o in await draft_tool_options(ctx, NoInput())}
+        tools = list(dict.fromkeys(t.strip() for t in inp.tools if t.strip()))
+        if not tools or len(tools) > DRAFT_MAX_TOOLS:
+            raise Invalid(f"“Nhờ trợ lý soạn” cần chọn 1–{DRAFT_MAX_TOOLS} công cụ trợ lý được dùng (bộ hẹp cho đúng việc này)")
+        if bad_tools := [t for t in tools if t not in allowed]:
+            raise Invalid(f"Công cụ không dùng được cho trợ lý soạn (hoặc anh/chị không chạy được): {', '.join(bad_tools)} — chọn trong danh sách")
+        if not inp.message.strip():
+            raise Invalid("Cần lời dặn trợ lý (ô Nội dung): soạn gì, cho ai, dựa vào số nào")
+        if inp.daily_cap > DRAFT_DAILY_CAP:
+            raise Invalid(f"Nhờ trợ lý soạn: tối đa {DRAFT_DAILY_CAP} lần mỗi ngày (mỗi lần gọi model cho từng người nhận)")
+    elif inp.tools:
+        raise Invalid("“Trợ lý được dùng” chỉ cho hành động Nhờ trợ lý soạn")
     conds = parse_conditions(inp.conditions, fields, also)
     known = {*fields, *fields.values(), *also.values()}
     if bad := [x for x in re.findall(r"\{([^{}]+)\}", inp.message + inp.params) if x.strip() not in known]:
@@ -329,23 +418,32 @@ async def save_automation(ctx: Ctx, inp: SaveAutomation) -> dict[str, Any]:
     if inp.action in ("notify", "task") and not inp.message.strip():
         raise Invalid("Cần nội dung báo / tên việc")
     offset = 0 if not w.date_label or inp.direction == "on" else inp.days * (1 if inp.direction == "after" else -1)
-    row = (inp.name.strip(), w.key if not w.date_label else None, w.key if w.date_label else None, offset, Jsonb(conds), inp.action, command,
-           Jsonb(params), team, inp.leads_only and team is not None, user, inp.to_owner and inp.action != "command",
-           inp.message.strip() or inp.name.strip(), inp.due_days if inp.action == "task" else None, inp.daily_cap, inp.trial)
+    schedule = run_at = next_run = None
+    if w.key == SCHEDULE:
+        schedule, run_at = timetable.build(inp.repeat, inp.weekday, inp.month_day), timetable.clock_of(inp.at)
+        next_run = timetable.next_after(schedule, run_at, clock())
+    row = (inp.name.strip(), w.key if not w.date_label and w.key != SCHEDULE else None, w.key if w.date_label else None, offset, Jsonb(conds),
+           inp.action, command, Jsonb(params), team, inp.leads_only and team is not None, user, inp.to_owner and inp.action != "command",
+           inp.message.strip() or inp.name.strip(), inp.due_days if inp.action == "task" else None, inp.daily_cap, inp.trial,
+           schedule, run_at, next_run, Jsonb(tools))
     if inp.automation_id:
         aid = await ctx.val("""UPDATE flow.automations SET name = %s, trigger = %s, date_source = %s, offset_days = %s, conditions = %s, action = %s,
                                    command = %s, params = %s, team_id = %s, leads_only = %s, user_id = %s, to_owner = %s, message = %s, due_days = %s,
-                                   daily_cap = %s, trial = %s, owner_id = core.me(), swept_at = NULL, updated_at = now()
+                                   daily_cap = %s, trial = %s, schedule = %s, run_at = %s, next_run_at = %s, tools = %s, owner_id = core.me(),
+                                   swept_at = NULL, updated_at = now()
                                WHERE id = %s RETURNING id""", (*row, inp.automation_id))
         if aid is None:
             raise NotFound("Không thấy luật")
     else:
         aid = await ctx.val("""INSERT INTO flow.automations (name, trigger, date_source, offset_days, conditions, action, command, params, team_id,
-                                                             leads_only, user_id, to_owner, message, due_days, daily_cap, trial, owner_id)
-                               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, core.me()) RETURNING id""", row)
+                                                             leads_only, user_id, to_owner, message, due_days, daily_cap, trial, schedule, run_at,
+                                                             next_run_at, tools, owner_id)
+                               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, core.me()) RETURNING id""", row)
     then = ACTIONS[inp.action].lower() + (f" “{registry.OPS[command].title}”" if command else "")
-    return {"automation_id": aid, "summary": f"Luật “{inp.name.strip()}”: khi {when_text(w, {'offset_days': offset}).lower()} ({describe(conds, fields)}) ⇒ "
-                                            f"{then}" + (" — đang CHẠY THỬ (chỉ ghi, chưa gửi)" if inp.trial else "")}
+    when = when_text(w, {"offset_days": offset, "schedule": schedule, "run_at": run_at}).lower()
+    first = f" — lần đầu {next_run.astimezone(zone()):%H:%M %d/%m/%Y}" if next_run else ""
+    return {"automation_id": aid, "summary": f"Luật “{inp.name.strip()}”: khi {when} ({describe(conds, fields)}) ⇒ {then}{first}"
+                                            + (" — đang CHẠY THỬ (chỉ ghi, chưa gửi)" if inp.trial else "")}
 
 
 class AutomationRef(Input):
@@ -360,11 +458,15 @@ class SetActive(Input):
 
 @m.command("set_automation", resource="flow.automations", action="manage", title="Bật / tắt / chạy thật luật tự động", agent="propose")
 async def set_automation(ctx: Ctx, inp: SetActive) -> dict[str, Any]:
-    """Chạy thật cần người quản lý luật bấm (trợ lý chỉ đề xuất); người bấm thành người đặt luật — luật chạy bằng quyền người đó."""
+    """Chạy thật cần người quản lý luật bấm (trợ lý chỉ đề xuất); người bấm thành người đặt luật — luật chạy bằng quyền người đó. Bật lại luật theo lịch
+    ⇒ lượt kế tiếp tính từ BÂY GIỜ (các lượt lúc tắt không chạy bù)."""
     r = await ctx.one("""UPDATE flow.automations SET active = coalesce(%s, active), trial = coalesce(%s, trial), owner_id = core.me(), updated_at = now()
-                         WHERE id = %s RETURNING name, active, trial""", (inp.active, inp.trial, inp.automation_id))
+                         WHERE id = %s RETURNING name, active, trial, schedule, run_at""", (inp.active, inp.trial, inp.automation_id))
     if r is None:
         raise NotFound("Không thấy luật")
+    if inp.active and r["schedule"]:
+        await ctx.exec("UPDATE flow.automations SET next_run_at = %s WHERE id = %s",
+                       (timetable.next_after(r["schedule"], r["run_at"], clock()), inp.automation_id))
     return {"summary": f"Luật “{r['name']}”: {STATE['off' if not r['active'] else 'trial' if r['trial'] else 'on'].lower()}"}
 
 
@@ -395,7 +497,7 @@ async def automations(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
                             FROM flow.automations a JOIN core.users u ON u.id = a.owner_id ORDER BY a.active DESC, a.name""")
     out = []
     for r in rows:
-        w = when_of(r["trigger"], r["date_source"])
+        w = when_of(r["trigger"], r["date_source"], r["schedule"])
         fields = _fields(w, ctx.p.vocab) if w else {}
         out.append({"id": r["id"], "name": r["name"], "when": when_text(w, r),
                     "if": describe(r["conditions"], fields), "then": f"{_then(r)} — {await _target(ctx, r)}",
@@ -416,7 +518,7 @@ async def automation(ctx: Ctx, inp: AutomationRef) -> dict[str, Any]:
     r = await ctx.one("SELECT a.*, u.name AS owner FROM flow.automations a JOIN core.users u ON u.id = a.owner_id WHERE a.id = %s", (inp.automation_id,))
     if r is None:
         raise NotFound("Không thấy luật")
-    w = when_of(r["trigger"], r["date_source"])
+    w = when_of(r["trigger"], r["date_source"], r["schedule"])
     fields = _fields(w, ctx.p.vocab) if w else {}
     runs = await ctx.all("SELECT status, note, created_at FROM flow.automation_runs WHERE automation_id = %s ORDER BY id DESC LIMIT 20", (r["id"],))
     op = registry.get(r["command"]) if r["command"] else None
@@ -425,6 +527,8 @@ async def automation(ctx: Ctx, inp: AutomationRef) -> dict[str, Any]:
                            f"Thì {_then(r).lower()} — {await _target(ctx, r)}: “{r['message']}”"
                            + (f" — hạn sau {r['due_days']} ngày" if r["due_days"] is not None else ""),
                            facts=[f"Chạy bằng quyền {r['owner']}", f"Tối đa {r['daily_cap']} lần / ngày",
+                                  *([f"Lần tới: {r['next_run_at'].astimezone(zone()):%H:%M %d/%m/%Y}"] if r["next_run_at"] and r["active"] else []),
+                                  *([f"Trợ lý được dùng: {', '.join(registry.OPS[t].title if t in registry.OPS else t for t in r['tools'])}"] if r["tools"] else []),
                                   *[f"{labels.get(k, k)} = {v}" for k, v in r["params"].items()]]),
               ui.b_list([{"title": RUN_STATUS[x["status"]], "subtitle": f"{x['created_at'].astimezone(zone()):%d/%m %H:%M}" + (f" · {x['note']}" if x["note"] else ""),
                           "tone": RUN_TONE[x["status"]]} for x in runs], "Các lần chạy gần đây")]
@@ -437,7 +541,8 @@ async def automation(ctx: Ctx, inp: AutomationRef) -> dict[str, Any]:
             "direction": "after" if off > 0 else "before" if off < 0 else "on", "days": abs(off), "action": r["action"], "command": r["command"] or "",
             "params": "\n".join(f"{labels.get(k, k)} = {v}" for k, v in r["params"].items()), "to_owner": r["to_owner"], "message": r["message"],
             "conditions": "\n".join(f"{fields.get(c['field'], c['field'])} {OPS[c['op']]} {c['value']}" for c in r["conditions"]),
-            "leads_only": r["leads_only"], "daily_cap": r["daily_cap"]}
+            "leads_only": r["leads_only"], "daily_cap": r["daily_cap"], "tools": list(r["tools"]),
+            **({**timetable.choices(r["schedule"]), "at": f"{r['run_at']:%H:%M}"} if r["schedule"] else {})}
     state = "off" if not r["active"] else "trial" if r["trial"] else "on"
     actions = [ui.act("flow.set_automation", "Chạy thật", {"automation_id": str(r["id"]), "trial": False}, "primary")] if state == "trial" else []
     actions += [ui.act("flow.save_automation", "Sửa luật", {**edit, "trial": r["trial"]}),
@@ -448,9 +553,9 @@ async def automation(ctx: Ctx, inp: AutomationRef) -> dict[str, Any]:
 
 # ── Chạy ──
 
-async def _record(ctx: Ctx, rule: UUID, event_id: int, status: str, note: str = "") -> None:
-    await ctx.exec("INSERT INTO flow.automation_runs (automation_id, event_id, status, note) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                   (rule, event_id, status, note[:500]))
+async def _record(ctx: Ctx, rule: UUID, event_id: int, status: str, note: str = "", job: dict[str, Any] | None = None) -> None:
+    await ctx.exec("INSERT INTO flow.automation_runs (automation_id, event_id, status, note, job) VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                   (rule, event_id, status, note[:500], Jsonb(job) if job is not None else None))
 
 
 async def _used_today(ctx: Ctx, rule: UUID) -> int:
@@ -471,20 +576,23 @@ async def _recipients(ctx: Ctx, r: Mapping[str, Any], data: Mapping[str, Any]) -
 
 
 async def _execute(ctx: Ctx, r: Mapping[str, Any], w: When, data: dict[str, Any], key: str, depth: int,
-                   terms: Mapping[str, str] | None) -> tuple[str, str]:
-    """MỘT lần luật khớp ⇒ (trạng thái, ghi chú) cho nhật ký lần chạy. Bằng quyền NGƯỜI ĐẶT LUẬT nạp lại ngay lúc này; mọi lệnh qua executor (một cửa)
-    với khoá chống lặp ``key`` ⇒ giao lại không thành hai việc. Lệnh của luật chạy trong ``chained(depth + 1)`` ⇒ cò nó phát mang độ sâu chuỗi."""
+                   terms: Mapping[str, str] | None) -> Outcome:
+    """MỘT lần luật khớp ⇒ kết quả cho nhật ký lần chạy. Bằng quyền NGƯỜI ĐẶT LUẬT nạp lại ngay lúc này; mọi lệnh qua executor (một cửa)
+    với khoá chống lặp ``key`` ⇒ giao lại không thành hai việc. Lệnh của luật chạy trong ``chained(depth + 1)`` ⇒ cò nó phát mang độ sâu chuỗi.
+    "Nhờ trợ lý soạn" không gọi model ở đây (đang giữ phiên ghi DB): trả việc ``job`` đã chốt (người nhận, lời dặn) — vòng ``run_automation_drafts`` soạn."""
     # động cơ tự động hoá (gói nền) CHẠY LỆNH bằng quyền người đặt luật ⇒ nạp như lõi (CORE), không qua principal_of (chỉ để hỏi hộ — 0130)
     owner = await auth.load(ctx.conn, ctx.p.tenant_id, user_id=r["owner_id"])
     if owner is None or not owner.can("flow.automations", "manage"):
-        return "skipped", "Người đặt luật không còn hoạt động / không còn quyền quản lý luật — đặt lại luật"
+        return Outcome("skipped", "Người đặt luật không còn hoạt động / không còn quyền quản lý luật — đặt lại luật")
     text = render(r["message"], data, _fields(w, terms), _neutral(w))
     op = registry.get(r["command"]) if r["command"] else None
     if r["action"] in ("command", "propose") and (op is None or not _fits(op, r["action"], w)):
-        return "failed", f"Lệnh {r['command']} không còn dùng được cho luật — sửa luật"
+        return Outcome("failed", f"Lệnh {r['command']} không còn dùng được cho luật — sửa luật")
     users = await _recipients(ctx, r, data) if r["action"] != "command" else []
     if r["action"] != "command" and not users:
-        return "failed", "Không có người nhận (bản ghi chưa có người phụ trách / đội không còn ai)"
+        return Outcome("failed", "Không có người nhận (bản ghi chưa có người phụ trách / đội không còn ai)")
+    if r["action"] == "draft" and len(users) > DRAFT_MAX_PEOPLE:
+        return Outcome("failed", f"Nhờ trợ lý soạn tối đa {DRAFT_MAX_PEOPLE} người một lần (đích đang có {len(users)} người) — chọn một người hoặc “chỉ trưởng đội”")
     who = await _target(ctx, r)
     inp = command_input(op, w, data, r["params"], terms) if op else {}
     if r["trial"]:   # chạy thử: ghi đúng thứ SẼ làm (người nhận / đích việc + nội dung), không gửi, không tạo
@@ -492,17 +600,28 @@ async def _execute(ctx: Ctx, r: Mapping[str, Any], w: When, data: dict[str, Any]
             with executor.tracing(f"auto:{r['id']}"):
                 pre = await executor.propose(owner, op.name, inp)
             if pre.status != "proposed":
-                return "failed", f"Chạy thử “{op.title}” không được: {pre.error or pre.status}"
+                return Outcome("failed", f"Chạy thử “{op.title}” không được: {pre.error or pre.status}")
             summary = pre.output["brief"]["title"] if isinstance(pre.output, dict) and pre.output.get("brief") else ""
-            return "trial", f"Sẽ chạy “{op.title}”" + (f": {summary}" if summary else "")
+            return Outcome("trial", f"Sẽ chạy “{op.title}”" + (f": {summary}" if summary else ""))
         if r["action"] == "propose" and op:
-            return "trial", f"Sẽ đề xuất “{op.title}” cho {who}: “{text}”"
-        return "trial", f"Sẽ {'báo' if r['action'] == 'notify' else 'tạo việc cho'} {who}: “{text}”"
+            return Outcome("trial", f"Sẽ đề xuất “{op.title}” cho {who}: “{text}”")
+        if r["action"] == "draft":
+            return Outcome("trial", f"Sẽ nhờ trợ lý của {who} soạn: “{text}”")
+        if r["action"] == "digest":
+            return Outcome("trial", f"Sẽ gửi tóm tắt phát hiện cho {who}")
+        return Outcome("trial", f"Sẽ {'báo' if r['action'] == 'notify' else 'tạo việc cho'} {who}: “{text}”")
+    if r["action"] == "draft":
+        return Outcome("queued", f"Chờ trợ lý soạn cho {who}", {"users": [str(u) for u in users], "text": text, "key": key})
     open_ = {"query": w.open[0], "input": {k: str(data.get(v)) if data.get(v) is not None else None for k, v in w.open[1].items()}} if w.open else None
     try:
         with executor.tracing(f"auto:{r['id']}"), executor.chained(depth + 1):
             if r["action"] == "notify":
                 await notify.send(ctx.conn, users, kind="automation", title=r["name"], body=text, push=text[:120], open=open_, key=key, actor=None)
+            elif r["action"] == "digest":
+                sent, errors = await _digest(ctx, r, users, key)
+                if not sent:
+                    raise Invalid("; ".join(errors) or "không gửi được tóm tắt cho ai")
+                return Outcome("done", f"Đã gửi tóm tắt cho {sent} người" + (f" (bỏ qua: {'; '.join(errors)})" if errors else ""))
             elif r["action"] == "task":
                 # lệnh CẤP NGOÀI bằng quyền người đặt luật: có nhật ký + mã vết; khoá chống lặp theo (luật, sự kiện) ⇒ giao lại không thành hai việc
                 team_code = await ctx.val("SELECT code FROM core.teams WHERE id = %s", (r["team_id"],)) if r["team_id"] else ""
@@ -518,15 +637,33 @@ async def _execute(ctx: Ctx, r: Mapping[str, Any], w: When, data: dict[str, Any]
                 if not res.ok:
                     raise Invalid(res.error or res.status)
                 if res.status == "pending_approval":
-                    return "done", f"“{op.title}” đã gửi duyệt"
+                    return Outcome("done", f"“{op.title}” đã gửi duyệt")
             elif op:   # đề xuất: thẻ trong kho đề xuất của người nhận — cùng đường Xác nhận / Bỏ với đề xuất của trợ lý (chạy bằng quyền NGƯỜI bấm)
                 filed, errors = await _propose(ctx, r, op, inp, users, key, text)
                 if not filed:
                     raise Invalid("; ".join(errors) or "không soạn được đề xuất")
-                return "done", f"Đã đề xuất “{op.title}” cho {filed} người" + (f" (bỏ qua: {'; '.join(errors)})" if errors else "")
+                return Outcome("done", f"Đã đề xuất “{op.title}” cho {filed} người" + (f" (bỏ qua: {'; '.join(errors)})" if errors else ""))
     except (Invalid, Denied, NotFound) as e:
-        return "failed", str(e)
-    return "done", ""
+        return Outcome("failed", str(e))
+    return Outcome("done")
+
+
+async def _digest(ctx: Ctx, r: Mapping[str, Any], users: list[UUID], key: str) -> tuple[int, list[str]]:
+    """Tóm tắt bộ kiểm (báo cáo phát hiện) cho từng người nhận — số do truy vấn của gói tính bằng QUYỀN NGƯỜI NHẬN (hỏi hộ, ``principal_of``): người
+    không xem được báo cáo cả công ty / công ty chưa bật gói ⇒ không có bản tóm tắt (ghi lý do). Thông báo trong app, mở thẳng báo cáo."""
+    sent, errors = 0, []
+    for uid in users:
+        who = await ctx.principal_of(uid)
+        if who is None:
+            continue
+        got = await ctx.call_as_optional("findings.digest", who, period=DIGEST_PERIOD)
+        if got is None:
+            errors.append(f"{who.name}: không xem được báo cáo phát hiện (gói chưa bật hoặc không đủ quyền xem cả công ty)")
+            continue
+        await notify.send(ctx.conn, [uid], kind="automation", title=f"{r['name']}: {got['headline']}"[:300], body=got["text"],
+                          push="Tóm tắt phát hiện mới", open={"query": "findings.overview", "input": {"period": DIGEST_PERIOD}}, key=f"{key}:{uid}", actor=None)
+        sent += 1
+    return sent, errors
 
 
 async def _propose(ctx: Ctx, r: Mapping[str, Any], op: registry.Op, inp: dict[str, Any], users: list[UUID], key: str, text: str) -> tuple[int, list[str]]:
@@ -582,8 +719,8 @@ async def run_automations(ctx: Ctx, event: Event) -> None:
         if await _used_today(ctx, r["id"]) >= r["daily_cap"]:
             await _record(ctx, r["id"], event.id, "skipped", f"Đã chạm trần {r['daily_cap']} lần hôm nay")
             continue
-        status, note = await _execute(ctx, r, w, {**data, **payload}, f"auto:{r['id']}:{event.id}", depth, terms)
-        await _record(ctx, r["id"], event.id, status, note)
+        out = await _execute(ctx, r, w, {**data, **payload}, f"auto:{r['id']}:{event.id}", depth, terms)
+        await _record(ctx, r["id"], event.id, out.status, out.note, out.job)
 
 
 # ── Luật theo ngày (ADR 0246) ──
@@ -639,16 +776,184 @@ async def run_dated_automation(ctx: Ctx, event: Event) -> None:
     Lỗi hệ thống ⇒ ném ra: outbox thử lại, hàng vẫn "Đang chờ chạy" (khoá chống lặp ⇒ thử lại không nhân đôi)."""
     if ctx.historical:
         return
-    run = await ctx.one("SELECT * FROM flow.automation_runs WHERE id = %s AND status = 'queued' FOR UPDATE", (event.payload["run_id"],))
+    run = await ctx.one("SELECT * FROM flow.automation_runs WHERE id = %s AND status = 'queued' AND job IS NULL FOR UPDATE", (event.payload["run_id"],))
     if run is None:
-        return
+        return   # đã chạy (sự kiện giao lại), hoặc đã thành việc chờ trợ lý soạn
     r = await ctx.one("SELECT * FROM flow.automations WHERE id = %s", (run["automation_id"],))
     w = when_of(None, r["date_source"]) if r else None
     if r is None or not r["active"] or w is None:
-        status, note = "skipped", "Luật đã tắt / nguồn ngày không còn"
+        out = Outcome("skipped", "Luật đã tắt / nguồn ngày không còn")
     else:
         terms = await vocab.terms(ctx.conn, ctx.p.tenant_id)
         data = dict(event.payload.get("data") or {})
-        status, note = await _execute(ctx, r, w, data, f"auto:{r['id']}:{run['ref']}:{run['on_date']}",
-                                      int(event.payload.get(executor.CHAIN_KEY) or 0), terms)
-    await ctx.exec("UPDATE flow.automation_runs SET status = %s, note = %s WHERE id = %s", (status, note[:500], run["id"]))
+        out = await _execute(ctx, r, w, data, f"auto:{r['id']}:{run['ref']}:{run['on_date']}", int(event.payload.get(executor.CHAIN_KEY) or 0), terms)
+    await _finish_run(ctx, run["id"], out)
+
+
+async def _finish_run(ctx: Ctx, run_id: int, out: Outcome) -> None:
+    await ctx.exec("UPDATE flow.automation_runs SET status = %s, note = %s, job = %s WHERE id = %s",
+                   (out.status, out.note[:500], Jsonb(out.job) if out.job is not None else None, run_id))
+
+
+# ── Luật theo lịch (ADR 0265 mục 1) ──
+
+@m.command("sweep_scheduled_automations", resource="flow.automations", title="Xét luật tự động theo lịch", internal=True, agent="deny",
+           sweep="SELECT DISTINCT tenant_id FROM flow.automations WHERE active AND schedule IS NOT NULL AND next_run_at <= now()")
+async def sweep_scheduled_automations(ctx: Ctx, inp: NoInput) -> dict[str, int]:
+    """Vòng quét mỗi phút (quyền hệ thống): luật theo lịch tới hạn ⇒ khoá dòng luật (``SKIP LOCKED`` — hai tiến trình không lấy trùng), đẩy
+    ``next_run_at`` sang lượt kế SAU BÂY GIỜ trong cùng phiên ghi, giữ chỗ (luật, lượt) — chỉ mục duy nhất ⇒ một lượt chạy một lần — rồi phát
+    ``flow.automation_scheduled``: phần chạy ở bên nghe (sau commit, thử lại lùi dần như mọi sự kiện). Lượt lỡ quá ``STALE`` (máy chủ nghỉ) ⇒ ghi
+    "bỏ qua", không chạy; nhiều lượt lỡ ⇒ chỉ lượt đến hạn sớm nhất được xét, các lượt giữa bị nhảy qua — không dội bù hàng loạt."""
+    if ctx.historical:
+        return {"queued": 0}
+    now = clock()
+    rules = await ctx.all("""SELECT * FROM flow.automations WHERE active AND schedule IS NOT NULL AND next_run_at <= %s
+                             ORDER BY next_run_at FOR UPDATE SKIP LOCKED""", (now,))
+    queued = 0
+    for r in rules:
+        slot = r["next_run_at"]
+        await ctx.exec("UPDATE flow.automations SET next_run_at = %s WHERE id = %s", (timetable.next_after(r["schedule"], r["run_at"], now), r["id"]))
+        if now - slot > STALE:
+            await ctx.exec("""INSERT INTO flow.automation_runs (automation_id, slot_at, status, note) VALUES (%s, %s, 'skipped', %s)
+                              ON CONFLICT DO NOTHING""",
+                           (r["id"], slot, f"Bỏ lượt {slot.astimezone(zone()):%H:%M %d/%m} — máy chủ nghỉ / luật tắt quá {int(STALE.total_seconds() // 3600)} giờ, "
+                                           "không chạy bù"))
+            continue
+        full = await _used_today(ctx, r["id"]) >= r["daily_cap"]
+        run_id = await ctx.val("""INSERT INTO flow.automation_runs (automation_id, slot_at, status, note) VALUES (%s, %s, %s, %s)
+                                  ON CONFLICT DO NOTHING RETURNING id""",
+                               (r["id"], slot, "skipped" if full else "queued", f"Đã chạm trần {r['daily_cap']} lần hôm nay" if full else ""))
+        if run_id is None or full:
+            continue
+        queued += 1
+        ctx.emit(SCHEDULE_EVENT, run_id=run_id, automation_id=r["id"])
+    return {"queued": queued}
+
+
+@m.on(SCHEDULE_EVENT)
+async def run_scheduled_automation(ctx: Ctx, event: Event) -> None:
+    """MỘT lượt của luật theo lịch: hành động bằng quyền người đặt luật (nạp lại lúc này), kết quả ghi vào đúng hàng đã giữ chỗ. Lỗi hệ thống ⇒ ném ra:
+    outbox thử lại, hàng vẫn "Đang chờ chạy" (khoá chống lặp theo (luật, lượt) ⇒ thử lại không nhân đôi)."""
+    if ctx.historical:
+        return
+    run = await ctx.one("SELECT * FROM flow.automation_runs WHERE id = %s AND status = 'queued' AND job IS NULL FOR UPDATE", (event.payload["run_id"],))
+    if run is None:
+        return
+    r = await ctx.one("SELECT * FROM flow.automations WHERE id = %s", (run["automation_id"],))
+    w = when_of(None, None, r["schedule"]) if r else None
+    if r is None or not r["active"] or w is None:
+        out = Outcome("skipped", "Luật đã tắt / không còn theo lịch")
+    else:
+        out = await _execute(ctx, r, w, {}, f"auto:{r['id']}:{run['slot_at'].isoformat()}", int(event.payload.get(executor.CHAIN_KEY) or 0), None)
+    await _finish_run(ctx, run["id"], out)
+
+
+# ── Nhờ trợ lý soạn (ADR 0265 mục 1): trợ lý của TỪNG người nhận, không người, bộ công cụ hẹp — chỉ ra thẻ đề xuất + một lời báo ──
+
+async def _agent_draft(rp: Principal, rule: Mapping[str, Any], job: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    """Một lần soạn cho MỘT người (mẫu ``work._agent_exception``): quyền của chính người đó (trợ lý = người gọi thứ hai), chỉ công cụ luật khai ∩ công cụ
+    người đó dùng được, lượt KHÔNG NGƯỜI ⇒ lệnh ghi thành thẻ đề xuất (``agent_policy.decide``; lệnh trợ lý vốn tự làm không vào bộ — ``draft_tool_ok``).
+    Trần số lượt gọi model + token mỗi lần; đo token (kể cả khi lỗi) vào lượt dùng AI của người đó."""
+    from pydantic_ai import Agent, UsageLimits
+    from pydantic_ai.usage import RunUsage
+
+    from barista.agent import chat
+    from barista.agent import usage as metering
+    from barista.agent.llm import CHAT_SETTINGS, model_for
+
+    async def emit(_: dict[str, Any]) -> None:
+        return None
+
+    wanted = set(rule["tools"])
+    ops = [(op, mode) for op, mode in await chat.catalog(rp) if op.name in wanted and draft_tool_ok(op)]
+    if not ops:
+        raise Invalid("không còn công cụ nào của luật mà người này dùng được")
+    run = chat.ToolRun(rp, emit, f"auto:{job['key']}:{rp.user_id}", recent_modules=tuple(sorted({op.module for op, _ in ops})))
+    tools = run.tools(ops)
+    if run.plan is not None:   # bộ HẸP của luật mang đủ ngay từ đầu — không để lớp "tìm công cụ theo câu hỏi" cắt bớt (lượt này không có câu hỏi)
+        run.plan.visible |= {op.name for op, _ in ops}
+    model = model_for(rp, DRAFT_MODEL)
+    agent = Agent(model, instructions=await chat.instructions(rp), tools=tools, model_settings=CHAT_SETTINGS)
+    task = f"[Luật tự động “{rule['name']}” chạy theo lịch — không có ai đang chat] {job['text']} {DRAFT_STYLE}"
+    used, ok, msgs = RunUsage(), False, []
+    try:
+        with executor.tracing(f"auto:{rule['id']}"):
+            result = await agent.run(chat.with_facts(task, await chat.turn_facts(rp)), usage=used,
+                                     usage_limits=UsageLimits(request_limit=DRAFT_REQUESTS, total_tokens_limit=DRAFT_TOKENS))
+        ok, msgs = True, result.new_messages()
+        return str(result.output).strip(), [c for c in run.cards if c.get("kind") == "proposal"]
+    finally:
+        await metering.record(rp, surface="work", category="auto:draft", modules=metering.category_of(run.steps)[1], usage=used,
+                              model=getattr(model, "model_name", ""), messages=msgs, ok=ok, steps=run.steps)
+
+
+async def _draft_for(sysp: Principal, rule: Mapping[str, Any], job: Mapping[str, Any], user_id: UUID) -> dict[str, Any]:
+    from barista.agent import morning
+
+    async with db.tenant_tx(sysp, read_only=True) as conn:
+        rp = await auth.load(conn, sysp.tenant_id, user_id=user_id)
+    if rp is None:
+        raise Invalid("người nhận không còn hoạt động trong công ty")
+    if not rp.ai:
+        raise Invalid(f"{rp.name}: công ty tắt trợ lý")
+    try:
+        text, cards = await _agent_draft(rp, rule, job)
+    except Exception as e:   # model lỗi / hết hạn mức / quá trần token ⇒ lần soạn này hỏng, có ghi; người khác trong cùng lượt vẫn được soạn
+        raise Invalid(f"{rp.name}: {e}") from e
+    filed = await morning.file_cards(rp, f"{morning.AUTO}:{job['key']}:{user_id}", cards, f"Luật tự động “{rule['name']}”")
+    return {"user_id": str(user_id), "name": rp.name, "text": text, "filed": filed}
+
+
+async def _prepare_drafts(prep: Prep, inp: NoInput) -> list[dict[str, Any]]:
+    """Bước chuẩn bị (ngoài phiên ghi) của vòng soạn: thuê tối đa ``DRAFTS_PER_SWEEP`` việc chờ soạn (phiên ghi ngắn), gọi model cho từng người nhận — không giữ kết
+    nối / khoá dòng nào lúc chờ model. Tiến trình chết giữa chừng ⇒ hết thuê, lượt sau làm lại (thẻ và thông báo có khoá chống lặp)."""
+    async with db.tenant_tx(prep.p) as conn:
+        cur = await conn.execute(
+            """UPDATE flow.automation_runs SET lease_until = now() + make_interval(secs => %s)
+               WHERE id IN (SELECT id FROM flow.automation_runs WHERE status = 'queued' AND job IS NOT NULL
+                            AND (lease_until IS NULL OR lease_until < now()) ORDER BY id LIMIT %s FOR UPDATE SKIP LOCKED)
+               RETURNING id, automation_id, job, lease_until""", (DRAFT_LEASE_S, DRAFTS_PER_SWEEP))
+        jobs = await cur.fetchall()
+        if not jobs:
+            return []
+        cur = await conn.execute("SELECT id, name, tools, active FROM flow.automations WHERE id = ANY(%s)", ([j["automation_id"] for j in jobs],))
+        rules = {r["id"]: r for r in await cur.fetchall()}
+    out = []
+    for j in jobs:
+        rule = rules.get(j["automation_id"])
+        res: dict[str, Any] = {"run_id": j["id"], "lease": j["lease_until"], "name": rule["name"] if rule else "", "people": [], "errors": []}
+        if rule is None or not rule["active"]:
+            res["errors"].append("luật đã tắt")
+        else:
+            for uid in j["job"]["users"]:
+                try:
+                    res["people"].append(await _draft_for(prep.p, rule, j["job"], UUID(uid)))
+                except Exception as e:
+                    log.warning("luật %s: trợ lý soạn cho %s lỗi: %r", rule["id"], uid, e)
+                    res["errors"].append(str(e)[:200])
+        out.append(res)
+    return out
+
+
+@m.command("run_automation_drafts", resource="flow.automations", title="Trợ lý soạn theo luật tự động", internal=True, agent="deny",
+           prepare=_prepare_drafts,
+           sweep="""SELECT DISTINCT tenant_id FROM flow.automation_runs WHERE status = 'queued' AND job IS NOT NULL
+                    AND (lease_until IS NULL OR lease_until < now())""")
+async def run_automation_drafts(ctx: Ctx, inp: NoInput) -> dict[str, int]:
+    """Vòng quét (quyền hệ thống): ghi kết quả lượt soạn — chỉ khi việc còn đúng lượt thuê của lượt này — rồi báo từng người nhận (lời trợ lý + số thẻ
+    đề xuất chờ họ xác nhận). Không có đường nào từ đây tới lệnh ghi chạy thật: thẻ chỉ chạy khi người nhận bấm Xác nhận, bằng quyền của họ."""
+    done = 0
+    for x in ctx.prepared or []:
+        people, errors = x["people"], x["errors"]
+        cards = sum(p["filed"] for p in people)
+        note = (f"Trợ lý đã soạn cho {len(people)} người, {cards} thẻ đề xuất" if people else "Không soạn được") + (f" — lỗi: {'; '.join(errors)}" if errors else "")
+        n = await ctx.exec("UPDATE flow.automation_runs SET status = %s, note = %s, lease_until = NULL WHERE id = %s AND status = 'queued' AND lease_until = %s",
+                           ("done" if people else "failed", note[:500], x["run_id"], x["lease"]))
+        if not n:
+            continue
+        done += 1
+        for p in people:
+            body = p["text"][:1800] + (f"\n\n{p['filed']} đề xuất chờ bạn xác nhận ở “Trợ lý soạn sẵn”." if p["filed"] else "")
+            await notify.send(ctx.conn, [UUID(p["user_id"])], kind="automation", title=f"{x['name']}: trợ lý đã soạn", body=body or "Không có gì cần báo.",
+                              push="Trợ lý đã soạn xong một việc theo lịch", key=f"auto:draft:{x['run_id']}:{p['user_id']}", actor=None)
+    return {"drafted": done}

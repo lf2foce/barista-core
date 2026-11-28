@@ -614,6 +614,23 @@ async def contact_card(ctx: Ctx, inp: ClusterIn) -> dict[str, Any]:
     return {"contacts": contacts, "consents": consents}
 
 
+@m.query("mail_contact", resource="parties.contacts", title="Email và sự đồng ý của người nhận (hộp thư đi)", internal=True, agent="deny")
+async def mail_contact(ctx: Ctx, inp: ClusterIn) -> dict[str, Any] | None:
+    """Hộp thư đi (``outbound`` — ADR 0265) soạn / bấm gửi một tin ra ngoài: chốt địa chỉ người nhận và kiểm sự đồng ý khi tin là chăm sóc / tiếp thị.
+    CHỈ gọi bằng QUYỀN NGƯỜI SOẠN / NGƯỜI BẤM GỬI (``call_as`` ctx.p — không hợp đồng quyền hệ thống): RLS liên hệ của chính người đó áp, không thấy
+    liên hệ ⇒ không có địa chỉ. Trả tên hiển thị, các email (gộp mọi định danh của người đó) và trạng thái đồng ý HIỆU LỰC theo mục đích; không SĐT,
+    không ngày sinh, không người giám hộ."""
+    name = await ctx.val("SELECT display_name FROM parties.parties WHERE id = %s", (inp.party_id,))
+    if name is None:
+        return None
+    ids = await _cluster(ctx, inp.party_id)
+    emails = [r["value"] for r in await ctx.all("SELECT value FROM parties.identifiers WHERE party_id = ANY(%s) AND kind = 'email' ORDER BY created_at, value",
+                                                (ids,))]
+    s = await consent_states(ctx, inp.party_id)
+    return {"name": name, "emails": list(dict.fromkeys(emails)), "consent": {c["purpose"]: c["state"] for c in s["consents"]},
+            "consent_labels": {c["purpose"]: c["state_label"] for c in s["consents"]}}
+
+
 class CallConsentIn(ClusterIn):
     purpose: Literal["marketing", "care", "data_processing"]
 

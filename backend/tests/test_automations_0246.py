@@ -111,7 +111,7 @@ async def test_rule_editor_offers_lists_not_codes(who: Who) -> None:
     form = {f["key"]: f for f in field_specs(registry.OPS["flow.save_automation"])}   # form do server vẽ: chọn từ danh sách, không gõ mã
     assert form["trigger"]["options_query"] == "flow.trigger_options" and form["date_source"]["options_query"] == "flow.date_source_options"
     assert form["command"]["options_query"] == "flow.command_options" and list(form["command"]["options_with"]) == ["action", "trigger", "date_source"]
-    assert {o["value"] for o in form["action"]["options"]} == {"notify", "task", "propose", "command"}
+    assert {o["value"] for o in form["action"]["options"]} == {"notify", "task", "propose", "command", "draft", "digest"}   # 0265: hai hành động mới
 
 
 async def _tech(who: Who) -> Principal:

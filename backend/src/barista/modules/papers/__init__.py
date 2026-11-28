@@ -358,11 +358,11 @@ def issue_action(d: dict[str, Any], basis: str = "") -> dict[str, Any]:
 
 
 def tail_actions(ctx: Ctx, d: dict[str, Any]) -> list[dict[str, Any]]:
-    """Nút phụ của trang giấy: chỉ "Cho hết hiệu lực" trên giấy đã cấp số (người có thẩm quyền). Bỏ bản chưa cấp số là nút của DÒNG ở danh sách —
+    """Nút phụ của trang giấy: "Gửi cho …" (Hộp thư đi — ADR 0265) + "Cho hết hiệu lực" trên giấy đã cấp số (người có thẩm quyền). Bỏ bản chưa cấp số là nút của DÒNG ở danh sách —
     thanh trên của tờ giấy chỉ giữ nút chính + Tải (anh Anh 21/11/2026)."""
     ref = {"paper_id": str(d["id"])}
-    if d["status"] == "issued" and can_issue(ctx, d):
-        return [ui.act("papers.void", VOID, ref, "destructive")]
+    if d["status"] == "issued" and can_issue(ctx, d):   # "Gửi cho …" (ADR 0265): cùng thẩm quyền với ban hành; người chỉ đọc không có nút ghi nào
+        return ([ui.act("papers.send_to", "Gửi cho …", ref)] if can_run(ctx.p, "outbound.send") else []) + [ui.act("papers.void", VOID, ref, "destructive")]
     return []
 
 
@@ -759,6 +759,45 @@ async def _store_issued(ctx: Ctx, paper_id: UUID) -> None:
 async def _issued_file(ctx: Ctx, paper_id: UUID) -> tuple[str, bytes] | None:
     f = await ctx.one("SELECT file_id, filename FROM papers.files WHERE document_id = %s AND role = 'issued'", (paper_id,))
     return None if f is None else (f["filename"], await files.read(ctx, f["file_id"]))
+
+
+# ── Gửi giấy đã ban hành ra ngoài (ADR 0265): soạn thư nháp trong Hộp thư đi ──
+
+class SendTo(Input):
+    paper_id: UUID = field("Giấy", hidden=True)
+    party_id: UUID = field("Gửi cho", options_query="parties.options")
+    note: str = field("Lời nhắn", "", kind="textarea", max_length=2000, example="Kính gửi anh/chị văn bản đã ban hành, xin xác nhận giúp khi nhận được.")
+
+
+@m.command("send_to", resource="papers", title="Gửi giấy tờ cho người ngoài", agent="propose", shows=("outbound.message", "message_id"))
+async def send_to(ctx: Ctx, inp: SendTo) -> dict[str, Any]:
+    """Người có thẩm quyền ban hành / phát hành loại giấy: giấy đã ban hành ⇒ soạn sẵn MỘT thư NHÁP trong Hộp thư đi (ADR 0265) gửi người / tổ chức trong danh mục: kèm TỆP BẢN BAN HÀNH đóng
+    băng lúc cấp số (.docx — cùng tệp tải về); giấy chưa có tệp đóng băng (cấp số trước khi cất tệp) ⇒ thân thư là nội dung giấy. Chưa gửi gì: người bấm
+    Gửi ở thư mới đi; gửi lại cho cùng người ⇒ mở lại đúng thư cũ (khoá chống lặp)."""
+    d = await ctx.one("SELECT * FROM papers.documents WHERE id = %s", (inp.paper_id,))
+    if d is None:
+        raise NotFound("Không thấy giấy tờ")
+    await compose.require_seen(ctx, d)
+    if not can_issue(ctx, d):   # gửi ra ngoài nhân danh công ty = cùng thẩm quyền với ban hành / phát hành loại giấy này (ADR 0251)
+        raise Denied(f"Bạn không có thẩm quyền gửi loại giấy này ra ngoài ({authority_label(d['authority'])})")
+    if d["status"] != "issued":
+        raise Invalid(f"Chỉ gửi được giấy đã {FAMILIES[family_of(d['authority'])]['status']['issued'].lower()} — giấy này: {status_label(d).lower()}")
+    label = f"{d['kind_label']} số {d['symbol']}" if d["symbol"] else d["kind_label"]
+    kept = await ctx.one("SELECT file_id, filename FROM papers.files WHERE document_id = %s AND role = 'issued'", (d["id"],))
+    attachments = []
+    if kept is not None:   # quyền lấy tệp MỘT lần cho hộp thư đi, đúng người bấm — đã kiểm người bấm thấy giấy (require_seen) và tệp (files.grant)
+        attachments = [{"file_id": kept["file_id"], "grant_id": await files.grant(ctx, kept["file_id"], "outbound"), "filename": kept["filename"]}]
+        body = f"Kính gửi {{ten_nguoi_nhan}},\n\nXin gửi kèm {label}" + (f" — {d['summary']}" if d["summary"] else "") + f".\nTệp đính kèm: {kept['filename']}."
+    else:
+        c = d["content"] or {}
+        text = "\n\n".join([*c.get("paragraphs", []), *c.get("after", [])]).strip()
+        body = f"Kính gửi {{ten_nguoi_nhan}},\n\n{label}" + (f" — {d['summary']}" if d["summary"] else "") + (f":\n\n{text}" if text else ".")
+    if inp.note.strip():
+        body = f"{inp.note.strip()}\n\n{body}"
+    out = await ctx.call_as("outbound.compose", ctx.p, party_id=inp.party_id, purpose="transactional", subject=label, body=body,
+                            source="papers", source_ref=str(d["id"]), dedupe_key=f"papers:{d['id']}:{inp.party_id}", template="papers.issued",
+                            attachments=attachments)
+    return {"message_id": out["message_id"], "summary": out["summary"]}
 
 
 # ── HTTP của Giấy tờ (``Module.route``): tải .docx / xem như BẢN IN (PDF đổi từ chính file .docx — một mẫu cho xem trước lẫn file gửi đi) ──
