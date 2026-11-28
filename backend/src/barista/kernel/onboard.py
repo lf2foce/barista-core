@@ -391,6 +391,15 @@ class _Run:
         return st
 
 
+async def _deliver() -> int:
+    """Giao HẾT sự kiện đang tới hạn bằng đúng hàm giao của lõi. ``events.drain`` dừng sau một số vòng cố định (một thực thể vài chục nghìn lệnh phát nhiều
+    hơn thế) ⇒ gọi tới khi một lượt không còn gì; sự kiện giao lỗi đã được lõi lùi hạn nên vòng này luôn dừng."""
+    total = 0
+    while n := await events.drain():
+        total += n
+    return total
+
+
 _FP_TARGET = UUID(int=0)   # mã đích giả CHỈ để băm đầu vào cập nhật (không bao giờ gửi đi)
 
 
@@ -478,7 +487,7 @@ async def _record(run: _Run, e: Entity, p: Principal, ids: Ids, reader: Reader, 
             await run.put(e.name, sid, *landed)
             del waiting[sid]
             if e.settle:
-                run.delivered += await events.drain()
+                run.delivered += await _deliver()
             if w.fingerprint == fp:
                 return
         elif w.fingerprint == fp and (status == "rejected" or (status == "failed" and not run.approvers)):
@@ -534,7 +543,7 @@ async def _record(run: _Run, e: Entity, p: Principal, ids: Ids, reader: Reader, 
     await run.put(e.name, sid, target, fp, version)
     waiting.pop(sid, None)
     if e.settle:   # thực thể sau (hoặc bản ghi kế) cần kết quả của bên nghe sự kiện lệnh này phát
-        run.delivered += await events.drain()
+        run.delivered += await _deliver()
 
 
 async def _entity(run: _Run, e: Entity, ids: Ids, maps: dict[str, dict[str, Loaded]], waits: dict[str, dict[str, _Waiting]],
@@ -562,7 +571,7 @@ async def _entity(run: _Run, e: Entity, ids: Ids, maps: dict[str, dict[str, Load
         await run.problem(e.name, sid, "missing_at_source", "bản ghi đã nạp không còn trong bản trích của nguồn — xoá ở hệ cũ? Xử lý tay ở Barista nếu cần")
     await run.flush()
     # sự kiện các lệnh của thực thể này phát (bên nghe lập bản ghi mà thực thể SAU cần) — đúng hàm giao của lõi, cùng chế độ nạp lịch sử theo dấu của sự kiện
-    run.delivered += await events.drain()
+    run.delivered += await _deliver()
 
 
 def _report(run: _Run, report: Report, extracted: dict[str, set[str]], seconds: dict[str, float]) -> None:

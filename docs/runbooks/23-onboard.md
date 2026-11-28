@@ -1,6 +1,7 @@
 # Runbook 23 · Đưa một công ty vào dùng (onboard)
 
-Người soạn: Claude Opus 5.5 (Anthropic), 28/11/2026. Quyết định nền: ADR 0263 (nạp lịch sử: 0185, đầu kỳ / khoá kỳ: 0119, bản cài production: 0194).
+Người soạn: Claude Opus 5.5 (Anthropic), 28/11/2026; bổ sung sau diễn tập trên dữ liệu cỡ thật (mã đích, phiếu duyệt, người chạy theo thực thể, sự kiện,
+thông báo): Claude Fable 5.2 (Anthropic), 28/11/2026. Quyết định nền: ADR 0263 (nạp lịch sử: 0185, đầu kỳ / khoá kỳ: 0119, bản cài production: 0194).
 Viết cho người làm onboard: đọc một lượt là biết đang ở chặng nào, thiếu gì, bấm gì. Mã trong runbook là dữ liệu GIẢ.
 
 Một công ty chuyển từ hệ cũ sang Barista đi qua **7 chặng**. Mỗi chặng có **đầu ra phải có** — thiếu đầu ra thì chưa sang chặng sau. Trạng thái nằm ở màn
@@ -35,9 +36,13 @@ uv run python -m barista.operator create-company --name "Công ty Mẫu" --admin
   giám đốc của khách: `--admin-role director`. Người đó đăng nhập bằng Google với ĐÚNG email này (runbook 09).
 - Trợ lý AI mặc định TẮT; bật bằng `--ai` khi khách đã đồng ý.
 - Lần trước lỗi giữa chừng (công ty cùng tên chưa có ai) ⇒ chạy lại lệnh, nó làm tiếp. Công ty cùng tên đã có người ⇒ từ chối.
+- Tham số chung của cửa nhà vận hành đứng TRƯỚC tên lệnh con (vd `python -m barista.operator --tenant <mã công ty> set-grant …`); `create-company` không
+  cần `--tenant`. Lệnh chạy được cả trên bản thử (không chỉ bản `production`).
 - Kệ tài liệu không tự tạo: quản trị tạo kệ ở Tài liệu sau khi vào.
 
-Sau đó người làm onboard được mời với vai có quyền **Đưa vào dùng · quản lý** (mặc định: Quản trị hệ thống, Giám đốc) và quyền chạy các lệnh mà bộ chuyển dùng.
+Sau đó người làm onboard được mời với vai có quyền **Đưa vào dùng · quản lý** (mặc định: Quản trị hệ thống, Giám đốc). KHÔNG vai mặc định nào chạy được mọi
+lệnh của một bộ chuyển có tiền (quản trị không ghi sổ, kế toán không mời người) — và không nên có: mời thêm **người chạy theo vai** (kế toán cho chứng từ tiền,
+marketing cho chiến dịch…) và một **người duyệt** khác họ, xem "Người chạy, người duyệt" ở mục 3.
 
 ## 1–2. Khảo sát, cấu hình
 
@@ -72,6 +77,18 @@ Quy tắc:
 - **Tên bảng / cột của hệ cũ chỉ sống trong `extract()`** (bất biến 11). Bản ghi trung tính dùng tên của Barista, có `source_id` (mã ở hệ cũ, chuỗi).
 - **Không tự điền dữ liệu thiếu.** Thiếu / sai ⇒ `raise Problem("bad_source", "…")`; tham chiếu chưa nạp ⇒ `ids.need(...)` tự ném `missing_ref`.
 - **Thực thể theo thứ tự phụ thuộc**: người trước, khách sau, giao dịch sau cùng.
+- **Mã đích — khai đúng MỘT trong ba** cho mỗi thực thể:
+  - `id_key="party_id"`: lệnh tạo trả mã (UUID) ở khoá đó;
+  - `target=lambda output, input, ids: …`: hàm lấy mã khi lệnh không trả thẳng — lệnh hành động trên bản ghi đã nạp (mã chính là bản ghi đó, lấy từ
+    `input` / `ids`), lệnh lúc trả mã lúc không (trả `None` = dòng này không có mã);
+  - `keyless=True`: lệnh chỉ GHI NHẬN (ký, ghi nhận một lần thanh toán, đặt một dòng cấu hình tiên quyết) — sổ mã gốc ghi dòng không mã đích. Thực thể
+    khác hỏi "đã nạp chưa" bằng `ids.require("ky_hop_dong", rec["deal_id"])` / `ids.has(…)`; gọi `ids.need` / `ids.get` trên thực thể này là lỗi cấu hình.
+  Khai sai (lệnh không trả mã như `id_key` nói, hàm `target` lỗi, tham chiếu thực thể không có trong bộ chuyển) ⇒ `ConverterError`, lượt DỪNG ngay ở dòng đầu
+  — sửa bộ chuyển rồi chạy lại; lệnh đã ghi không bị tạo lần hai (khoá chống lặp trả kết quả cũ).
+- **Cấu hình tiên quyết** mà bộ chuyển dựa vào (pháp nhân, điều khoản có ngày hiệu lực trong quá khứ…) khai thành thực thể `keyless` đứng đầu bộ chuyển: chạy ở
+  chế độ nạp lịch sử như mọi lệnh khác, có sổ, chạy lại không lặp. Không viết bước cấu hình riêng ngoài khung.
+- **Cần đọc phía Barista để dựng đầu vào** (vd lệnh xác nhận đòi mã + phiên bản của bản ghi Barista đã lập): `lookup=async (rec, input, reader) -> input` —
+  truy vấn bằng quyền người chạy thực thể, chỉ chạy khi lệnh sắp chạy thật, KHÔNG vào dấu vân tay (phía Barista đổi không làm dòng thành "đổi sau khi nạp").
 - **Chỉ dùng lệnh có sẵn** của Barista (`create` / `update`). Thiếu lệnh nhập lịch sử cho một loại dữ liệu ⇒ dừng loại đó và ghi rõ là chưa nạp — không ghi
   thẳng bảng, không mượn lệnh "hôm nay" phát lại phí / hoa hồng theo chính sách hiện tại.
 - **Chỉ số đối chiếu** tính cùng một đại lượng ở hai phía (đếm, tổng tiền), theo tháng nếu được; phía Barista đọc bằng TRUY VẤN (`reader.query`), không SQL.
@@ -124,8 +141,11 @@ from barista.db import db
 async def main():
     await db.open(settings.database_url, settings.owner_database_url)
     try:
-        r = await ob.load(UUID("<mã công ty>"), CONVERTER, by_email="nguoi-lam-onboard@congty.vn", kind="mock")
+        r = await ob.load(UUID("<mã công ty>"), CONVERTER, by_email="nguoi-lam-onboard@congty.vn", kind="mock",
+                          actors={"ke_toan": "ketoan@congty.vn"},          # người chạy của các thực thể khai actor="ke_toan"
+                          approver_email="giamdoc@congty.vn")              # người THỨ HAI quyết phiếu duyệt lượt này sinh ra (tuỳ chọn)
         print(r.status, r.created, r.updated, r.skipped, r.exceptions, [x for x in r.mismatches])
+        print(r.entities, r.reasons, r.warnings)    # số + giây theo thực thể, ngoại lệ gộp theo (thực thể, lý do), cảnh báo trước lượt
     finally:
         await db.close()
 
@@ -140,16 +160,48 @@ Bộ chạy làm gì với từng bản ghi:
 | Có, dấu vân tay (băm ĐẦU VÀO LỆNH sau ánh xạ — cả lệnh tạo lẫn lệnh cập nhật — + `mapping_version`) giữ nguyên | bỏ qua (không gọi lệnh) |
 | Có, dấu vân tay đổi (nguồn đổi HOẶC sửa ánh xạ), thực thể khai `update` | chạy `update`, tăng số lần cập nhật, cập nhật dấu |
 | Có, dấu vân tay đổi, không khai `update` | ngoại lệ "Nguồn đổi sau khi nạp" — sửa tay hoặc khai `update` |
-| Thiếu `source_id` / trùng mã trong cùng bản trích / `Problem` / lệnh từ chối / lệnh phải qua duyệt | ngoại lệ ghi lý do + chi tiết, không ghi gì |
+| Thiếu `source_id` / trùng mã trong cùng bản trích / `Problem` / lệnh từ chối | ngoại lệ ghi lý do + chi tiết, không ghi gì |
+| Lệnh phải qua duyệt, lượt có `approver_email` | người duyệt đó quyết phiếu ngay (đúng `core.decide`); lệnh chạy ⇒ ghi sổ như thường |
+| Lệnh phải qua duyệt, lượt không có người duyệt (hoặc người đó không có tên ở bước duyệt) | mã phiếu ghi vào sổ phiếu chờ; dòng là ngoại lệ "Lệnh đang chờ duyệt" |
+| Lượt sau, phiếu của dòng ĐÃ được duyệt và lệnh đã chạy | GHI NHẬN vào sổ mã gốc (tính là tạo / cập nhật của lượt này) — không chạy lại, không còn là ngoại lệ |
+| Lượt sau, phiếu bị từ chối (hoặc duyệt xong mà lệnh không chạy được) | ngoại lệ "Lệnh từ chối" kèm lý do; chỉ gửi phiếu mới khi nguồn / ánh xạ của dòng đổi (hoặc đổi `mapping_version`) |
 | Đã nạp ở lượt trước nhưng bản trích lần này không còn | ngoại lệ "Không còn ở nguồn" — KHÔNG tự xoá ở Barista, người xử lý tay |
 
 - Chạy lại **cùng nguồn bao nhiêu lần cũng không tạo trùng**: khoá chống lặp theo LẦN THAY ĐỔI — tạo một khoá cố định mỗi mã gốc, cập nhật mang số lần (`v1`, `v2`…). Chết giữa chừng chạy lại an toàn; giá trị đổi rồi quay về (A → B → A) vẫn được cập nhật đúng.
 - **Lượt đạt** = không chỉ số lệch và không dòng ngoại lệ, hoặc có người ký chấp nhận — ký khi còn lệch / ngoại lệ phải ghi lý do. Có nhiều nguồn (vd hệ bán hàng + hệ kế toán) thì ngày chuyển đòi lượt cuối đạt của TỪNG nguồn.
 - Thay đổi phát hiện bằng **so dấu vân tay trên toàn bộ bản kéo lại**, không dựa vào cột "ngày sửa" của hệ cũ (không tin được).
-- Mọi lệnh chạy chế độ nạp lịch sử: không thông báo, không việc theo dõi, lead nằm đỗ (runbook 16). Vẫn chạy **kiểm im** (`scripts/check_quiet_after_load.py`)
-  trên bản sao DB trước khi cho máy chủ trỏ vào.
-- Người chạy (`by_email`) phải có quyền chạy từng lệnh của bộ chuyển; lệnh công ty bắt duyệt ⇒ dòng thành ngoại lệ "cần duyệt" (bỏ luật duyệt trong lúc nạp, hoặc
-  nạp bằng vai khác).
+- Mọi lệnh chạy chế độ nạp lịch sử: không thông báo (kể cả phiếu "xin duyệt" / "tự duyệt" sinh trong lượt), không việc theo dõi, lead nằm đỗ (runbook 16).
+  Vẫn chạy **kiểm im** (`scripts/check_quiet_after_load.py`) trên bản sao DB trước khi cho máy chủ trỏ vào — nó đếm cả thông báo sinh TRONG các lượt chuyển
+  (phải là 0).
+- **Sự kiện giữa các lệnh:** khung tự giao hết sự kiện đang chờ sau mỗi THỰC THỂ (bên nghe lập bản ghi mà thực thể sau cần — không cần máy chủ đang chạy, không
+  viết vòng giao riêng). Bản ghi kế tiếp trong CÙNG thực thể cần kết quả của bên nghe ⇒ khai `settle=True` (giao sau mỗi lệnh; chậm hơn một nhịp mỗi dòng).
+- **Một chỉ số đối chiếu lỗi khi tính** ⇒ riêng chỉ số đó ghi "Không tính được" (kèm lý do) và chặn như một dòng lệch cho tới khi sửa / ký; lượt vẫn xong.
+- **Ngoại lệ đọc đủ:** màn / truy vấn `onboard.exceptions` luôn nêu TỔNG số dòng, lọc theo lý do + thực thể, chia trang ở máy chủ (`limit` / `offset`).
+
+### Người chạy, người duyệt
+
+- **Người chạy lượt** (`by_email`): cần quyền Đưa vào dùng · quản lý; chạy các thực thể không khai `actor`.
+- **Người chạy theo thực thể:** bộ chuyển khai `Entity(…, actor="ke_toan")` (khoá do bộ chuyển đặt: `ke_toan`, `marketing`, `kinh_doanh`…); lúc chạy nêu
+  `actors={"ke_toan": "<email>"}`. Mỗi nhóm thực thể chạy bằng quyền của đúng người giữ vai đó — nhật ký ghi đúng người. **Không tạo vai "toàn quyền", không
+  cấp quyền tạm cho người chạy.** `Metric(…, actor=…)` tương tự cho truy vấn đối chiếu cần quyền riêng.
+- **Kiểm trước:** trước khi mở lượt, khung kiểm quyền từng (người chạy, lệnh) và báo MỘT danh sách thiếu (`PermissionError`, chưa ghi gì). Lệnh đang có luật
+  duyệt mà lượt không khai người duyệt ⇒ ghi ở `Report.warnings`.
+- **Đổi người chạy giữa chừng không tạo trùng:** khoá chống lặp thuộc lượt nạp của công ty (nguồn × thực thể × mã gốc × lần thay đổi), không thuộc người.
+- **Lệnh công ty bắt duyệt** (chuỗi duyệt là dữ liệu của công ty — không bỏ luật trong lúc nạp):
+  - cách 1 — `approver_email="<người thứ hai>"` (hoặc danh sách, khi chuỗi có nhiều bước: một người không quyết hai bước của một phiếu): người đó phải là
+    thành viên thật, có tên ở bước duyệt theo chuỗi, và KHÔNG là người chạy nào của lượt (người xin không tự duyệt — bất biến 6). Khung quyết các phiếu của
+    lượt bằng đúng lệnh duyệt của lõi: phiếu + nhật ký ghi tên người duyệt, lệnh đích chạy bằng quyền người xin. Không có quyền hệ thống, không cửa sau;
+  - cách 2 — không khai: phiếu nằm ở hộp duyệt, người duyệt bấm trong app (không có thông báo — báo họ ngoài app); lượt chạy lại sau đó ghi nhận các phiếu
+    đã duyệt.
+  Lối quyết phiếu trong tiến trình chỉ có ở lớp nạp (`executor.decide_in_load`): không có ở HTTP, trợ lý không dùng được.
+
+### Chứng từ tiền không có lệnh sửa
+
+Chứng từ tiền (phiếu thu, đợt phí, lần đã chi…) chỉ THÊM và ĐẢO — đúng thiết kế, không có lệnh `update`. Hệ quả cho lượt chuyển:
+- **Lượt chuyển THẬT kéo lại TOÀN BỘ từ nguồn vào một công ty MỚI** (trống). Các lượt thử chạy trên bản thử / bản sao; lợi ích "chỉ nạp phần đổi" là của dữ liệu
+  có lệnh sửa (người, danh mục, lịch) và của việc chạy lại trong buổi chuyển.
+- Chạy lại trên công ty đã nạp mà nguồn sửa một chứng từ tiền ⇒ ngoại lệ **"Nguồn đổi sau khi đã nạp"** (`changed_after_load`). Đó là việc của NGƯỜI: kế toán
+  xem chứng từ ở Barista và ghi bút toán đảo / điều chỉnh bằng lệnh nghiệp vụ; khung không tự sửa tiền.
 
 ## 3 (tiếp). Đọc và ký đối chiếu
 
