@@ -44,7 +44,7 @@ export function Landing() {
         {/* ---- đầu trang: chữ lớn, rồi chính sản phẩm đang chạy ---- */}
         <section className="mx-auto grid max-w-6xl items-center gap-12 px-4 pt-12 sm:px-6 md:pt-20 lg:grid-cols-[minmax(0,1fr)_400px]">
           <div>
-            <a href="#du-an" className="t12m inline-flex items-center gap-2 rounded-full border border-hairline bg-surface py-1 pr-3 pl-1 text-muted-foreground hover:text-foreground">
+            <a href="#du-an" className="bl-small inline-flex items-center gap-2 rounded-full border border-hairline bg-surface py-1 pr-3 pl-1 font-medium text-muted-foreground hover:text-foreground">
               <span className="rounded-full bg-primary/12 px-2 py-0.5 text-primary">Mới</span>
               Quản trị dự án từ file Excel đang có
               <ArrowRight className="size-3.5" />
@@ -54,7 +54,7 @@ export function Landing() {
               <br />
               <span className="text-muted-foreground">Bạn duyệt.</span>
             </h1>
-            <p className="mt-6 max-w-xl text-[17px] leading-relaxed text-muted-foreground sm:text-[19px]">
+            <p className="bl-lead mt-6 max-w-xl text-muted-foreground">
               Một nền tảng cho bán hàng, thu chi, kế toán, dự án và văn bản. Trợ lý AI làm việc trên dữ liệu thật của doanh nghiệp, tự xử lý trong hạn mức được giao và chuẩn bị sẵn những việc cần bạn phê duyệt.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -78,8 +78,8 @@ export function Landing() {
             {PRINCIPLES.map((p) => (
               <div key={p.title}>
                 <p.icon className="size-5 text-primary" aria-hidden />
-                <h3 className="t16 mt-3">{p.title}</h3>
-                <p className="t14 mt-1.5 leading-relaxed text-muted-foreground">{p.text}</p>
+                <h3 className="bl-title mt-3">{p.title}</h3>
+                <p className="bl-body mt-1.5 text-muted-foreground">{p.text}</p>
               </div>
             ))}
           </div>
@@ -96,7 +96,7 @@ export function Landing() {
               {/* ảnh minh hoạ do AI tạo — không phải người thật có danh tính */}
               <Image src="/landing/duyet.webp" alt="" fill sizes="(max-width: 860px) 100vw, 380px" className="bl-photo" />
               <p className="bl-statement">Duyệt luôn là người.</p>
-              <p className="bl-photo__note t14 leading-relaxed">Trợ lý chạy thử mọi đề xuất trên dữ liệu thật trước khi đưa bạn xem. Bấm Duyệt mới ghi.</p>
+              <p className="bl-photo__note bl-body">Trợ lý chạy thử mọi đề xuất trên dữ liệu thật trước khi đưa bạn xem. Bấm Duyệt mới ghi.</p>
             </div>
             <Tile lead="Nhắc nợ như người thật." rest="Lời nhắc soạn riêng từng khách; bạn đọc lại rồi gửi.">
               <RemindPicture />
@@ -114,7 +114,7 @@ export function Landing() {
           <SectionTitle lead="Bên trong một lượt của trợ lý." rest="Đọc nguồn, thử từng khả năng, rồi mới quyết việc nào tự làm, việc nào chờ bạn." />
           <div className="mt-12">
             <AgentStage />
-            <p className="t12 mt-3 text-muted-foreground">Tên khách, số tiền, số đơn trên trang này đều là ví dụ minh hoạ.</p>
+            <p className="bl-small mt-3 text-muted-foreground">Tên khách, số tiền, số đơn trên trang này đều là ví dụ minh hoạ.</p>
           </div>
         </section>
 
@@ -124,9 +124,9 @@ export function Landing() {
             <ol className="mt-12 grid gap-px overflow-hidden rounded-2xl border border-hairline bg-hairline md:grid-cols-3">
               {STEPS.map((s, i) => (
                 <li key={s.title} className="bg-surface p-6 md:p-8">
-                  <span className="tnum t14m text-primary">0{i + 1}</span>
-                  <h3 className="t16 mt-6">{s.title}</h3>
-                  <p className="t14 mt-1.5 leading-relaxed text-muted-foreground">{s.text}</p>
+                  <span className="tnum bl-small font-medium text-primary">0{i + 1}</span>
+                  <h3 className="bl-title mt-6">{s.title}</h3>
+                  <p className="bl-body mt-1.5 text-muted-foreground">{s.text}</p>
                 </li>
               ))}
             </ol>
@@ -147,7 +147,7 @@ export function Landing() {
       </main>
 
       <footer className="border-t border-hairline">
-        <div className="t12 mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-8 text-muted-foreground sm:px-6">
+        <div className="bl-small mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-8 text-muted-foreground sm:px-6">
           <Wordmark small />
           <nav className="flex flex-wrap items-center gap-5" aria-label="Liên kết cuối trang">
             <a href="#tinh-nang" className="hover:text-foreground">Tính năng</a>

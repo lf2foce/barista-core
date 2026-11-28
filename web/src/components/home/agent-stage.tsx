@@ -66,11 +66,11 @@ export function AgentStage() {
             );
           })}
         </div>
-        <span className="t12 text-muted-foreground">Dành cho {flow.who.toLowerCase()}</span>
+        <span className="bl-small text-muted-foreground">Dành cho {flow.who.toLowerCase()}</span>
       </div>
 
       <div className="grid gap-3 border-b border-hairline">
-        <ol className="t12 flex flex-wrap items-center gap-x-1.5 gap-y-1" aria-label={`Các khâu của quy trình ${flow.title}`}>
+        <ol className="bl-small flex flex-wrap items-center gap-x-1.5 gap-y-1" aria-label={`Các khâu của quy trình ${flow.title}`}>
           {flow.chain.map((c, i) => (
             <li key={c} className="flex items-center gap-1.5">
               <span className={scen.chain.includes(i) ? "font-medium text-primary" : "text-muted-foreground"}>{c}</span>
@@ -303,11 +303,11 @@ function Play({ scen, onReplay }: { scen: Scenario; onReplay: () => void }) {
     <div className="grid gap-3">
       {/* lời kể của trợ lý: một dòng trên nền thẻ như các khối khác của trang; chấm xanh nhịp khi đang chạy */}
       <div className="flex min-h-[52px] flex-wrap items-center gap-3 rounded-2xl border border-hairline bg-surface px-4 py-3">
-        <span className="t12m inline-flex items-center gap-2 text-primary">
+        <span className="bl-small inline-flex items-center gap-2 font-medium text-primary">
           <span className={cn("size-2 rounded-full bg-primary", busy && "animate-pulse")} aria-hidden /> {busy ? "Trợ lý đang xử lý" : "Trợ lý đã xong"}
         </span>
-        <p className="t14 min-w-0 flex-[1_1_320px]" aria-live="polite">{say}</p>
-        <button type="button" onClick={onReplay} className="t12m inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-foreground hover:bg-surface2">
+        <p className="bl-body min-w-0 flex-[1_1_320px]" aria-live="polite">{say}</p>
+        <button type="button" onClick={onReplay} className="t14m inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-foreground hover:bg-surface2">
           <RotateCcw className="size-3.5" /> Chạy lại
         </button>
       </div>
@@ -512,7 +512,7 @@ const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 function Key({ n, label, line }: { n: number; label: string; line: string }) {
   return (
-    <li className="t12 inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-muted-foreground">
+    <li className="bl-small inline-flex items-center gap-2 rounded-full bg-surface px-3 py-1.5 text-muted-foreground">
       <span className={cn("h-0.5 w-5 rounded-full", line)} aria-hidden />
       <b className="t14m tnum text-foreground">{n}</b> {label}
     </li>

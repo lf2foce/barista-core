@@ -201,16 +201,18 @@ export function HeroDemo() {
   const [run, setRun] = useState(0);   // bấm "Xem lại" ⇒ dựng lại sân khấu từ đầu (bộ dựng không có lệnh phát lại)
   return (
     <div>
-      <div className="t12 mb-3 flex items-center justify-between gap-4 px-4 text-muted-foreground sm:px-6">
+      <div className="bl-small mb-3 flex items-center justify-between gap-4 px-4 text-muted-foreground sm:px-6">
         <span>Tiền về → trợ lý đối chiếu và đề xuất → bạn bấm Duyệt</span>
-        <button type="button" onClick={() => setRun((n) => n + 1)} className="t12m inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-foreground hover:bg-surface2">
+        <button type="button" onClick={() => setRun((n) => n + 1)} className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 font-medium text-foreground hover:bg-surface2">
           <RotateCcw className="size-3.5" /> Xem lại
         </button>
       </div>
       {/* chạy cả khi máy bật "giảm chuyển động" — như sơ đồ trợ lý (anh Anh chọn 23/11/2026): chuyển động nhẹ là phần chính của trang giới thiệu */}
-      <StillContext.Provider value={false}>
-        <HeroStage key={run} dark={dark} />
-      </StillContext.Provider>
+      <div className="bh-wrap">
+        <StillContext.Provider value={false}>
+          <HeroStage key={run} dark={dark} />
+        </StillContext.Provider>
+      </div>
     </div>
   );
 }
@@ -220,7 +222,8 @@ function HeroStage({ dark }: { dark: boolean }) {
     <Stage<S>
       width={1152}
       height={480}
-      compact={{ below: 760, width: 358, height: 640 }}
+      compact={{ below: 900, width: 358, height: 640 }}
+      fill
       theme={dark ? "dark" : "light"}
       accent="var(--primary)"
       tokens={{ "--ss-font": "var(--font-sans)", "--ss-success": "var(--ok)", "--ss-warning": "var(--warn)" }}
