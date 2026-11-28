@@ -186,6 +186,8 @@ Bộ chạy làm gì với từng bản ghi:
   cấp quyền tạm cho người chạy.** `Metric(…, actor=…)` tương tự cho truy vấn đối chiếu cần quyền riêng.
 - **Kiểm trước:** trước khi mở lượt, khung kiểm quyền từng (người chạy, lệnh) và báo MỘT danh sách thiếu (`PermissionError`, chưa ghi gì). Lệnh đang có luật
   duyệt mà lượt không khai người duyệt ⇒ ghi ở `Report.warnings`.
+  Kiểm trước ở mức LỆNH (tài nguyên × hành động × phạm vi). Điều kiện lệnh tự kiểm thêm trong thân (vd tạo bản ghi rồi GIAO cho người khác đòi quyền quản lý)
+  chỉ lộ khi chạy — thành ngoại lệ "Lệnh từ chối" của từng dòng; chạy thử trên bản thử trước và giao thực thể đó cho vai có quyền quản lý.
 - **Đổi người chạy giữa chừng không tạo trùng:** khoá chống lặp thuộc lượt nạp của công ty (nguồn × thực thể × mã gốc × lần thay đổi), không thuộc người.
 - **Lệnh công ty bắt duyệt** (chuỗi duyệt là dữ liệu của công ty — không bỏ luật trong lúc nạp):
   - cách 1 — `approver_email="<người thứ hai>"` (hoặc danh sách, khi chuỗi có nhiều bước: một người không quyết hai bước của một phiếu): người đó phải là
