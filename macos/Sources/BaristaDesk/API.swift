@@ -39,6 +39,11 @@ struct API: Sendable {
     static let shippedBase = "http://127.0.0.1:8300"
     #endif
 
+    /// Máy chủ chạy trên chính máy này (dev) — màn đăng nhập ghi rõ "dev"; máy chủ khác thì không.
+    static var isLocalServer: Bool {
+        ["localhost", "127.0.0.1", "::1"].contains(defaultBase.host() ?? "")
+    }
+
     /// Thứ tự: biến BARISTA_URL (dev) → địa chỉ người dùng nhập ở Cài đặt (iPhone) → ``shippedBase``.
     static var defaultBase: URL {
         let saved = UserDefaults.standard.string(forKey: "baseURL") ?? ""

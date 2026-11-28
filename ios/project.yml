@@ -9,7 +9,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1"
+    MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
     TARGETED_DEVICE_FAMILY: "1,2"
     DEVELOPMENT_TEAM: ""
@@ -40,7 +40,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.phenau.barista   # hồ sơ app sẵn có trên App Store Connect (TestFlight từ 23/10/2026) — bên khác dựng lại: đổi thành bundle của mình
         PRODUCT_NAME: Barista
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Barista
+        INFOPLIST_KEY_CFBundleDisplayName: Barista Work
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon   # icon vẽ bằng mã (AppIcon.swift), xuất bằng `swift run BaristaDesk --render-icon`
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"

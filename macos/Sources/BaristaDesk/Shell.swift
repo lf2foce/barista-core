@@ -106,7 +106,8 @@ struct LoginView: View {
                 }
                 if config?.dev ?? true, grant == nil, !logins.isEmpty {
                     if config?.google != nil || config?.email == true {
-                        Text("Đăng nhập dev — chỉ trên máy chạy core").font(.t12m).foregroundStyle(.secondary).padding(.top, 8)
+                        // máy chủ thật mở chọn vai = bản demo công khai (dữ liệu mẫu) ⇒ tên sản phẩm, không chữ "dev" trước mặt người xem / người duyệt App Store
+                        Text(API.isLocalServer ? "Đăng nhập dev — chỉ trên máy chạy core" : "Barista Cloud").font(.t12m).foregroundStyle(.secondary).padding(.top, 8)
                     }
                     ForEach(groups, id: \.0) { group, rows in
                         VStack(alignment: .leading, spacing: 8) {
@@ -322,6 +323,9 @@ struct MainView: View {
             }
         }
         .environment(desk)
+        .sheet(isPresented: Binding(get: { desk.askingAIConsent }, set: { if !$0 && desk.askingAIConsent { desk.decideAIConsent(false) } })) {
+            AIConsentSheet { desk.decideAIConsent($0) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .baristaPushToken)) { n in
             if let t = n.object as? String { Task { await desk.registerPush(token: t) } }
         }

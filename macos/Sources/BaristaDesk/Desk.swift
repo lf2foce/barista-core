@@ -90,6 +90,9 @@ final class Desk {
     var shareTarget: ShareTarget?   // "Hỏi trợ lý" từ một khối trao đổi ⇒ câu trả lời có nút "Chia sẻ vào trao đổi" (0046)
     // chế độ Siri nổi trên Mac (SiriFloat.swift): cửa sổ chính lui đi, khối Siri + ngăn thẻ nổi
     var voiceMode = false
+    // xin phép gửi dữ liệu cho AI bên thứ ba (AIConsent.swift): việc bị chặn chờ người dùng chọn — đồng ý ⇒ chạy tiếp, để sau ⇒ bỏ
+    var askingAIConsent = false
+    private var afterAIConsent: (() -> Void)?
     var voiceOpened: [String] = []   // thứ trợ lý mở ra trong lúc nói chuyện ⇒ tab của ngăn thẻ
     // khung kiểu Lark trên Mac (Rail.swift): thanh bên trái chọn mục → cột giữa đổi theo; khung làm việc bên phải giữ nguyên
     var section: RailSection = .assistant
@@ -217,7 +220,26 @@ final class Desk {
 
     // MARK: trò chuyện
 
+    /// Đã đồng ý gửi cho AI ⇒ true; chưa ⇒ hiện màn xin phép, nhớ việc để chạy tiếp khi đồng ý, trả false (bên gọi dừng, không gửi gì).
+    private func aiConsented(then work: @escaping () -> Void) -> Bool {
+        if AIConsent.accepted { return true }
+        afterAIConsent = work
+        askingAIConsent = true
+        return false
+    }
+
+    func decideAIConsent(_ ok: Bool) {
+        askingAIConsent = false
+        let work = afterAIConsent
+        afterAIConsent = nil
+        if ok {
+            AIConsent.accepted = true
+            work?()
+        }
+    }
+
     func send(_ override: String? = nil) {
+        guard aiConsented(then: { [weak self] in self?.send(override) }) else { return }   // câu hỏi vẫn nằm trong ô nhập
         var text = (override ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         let images = override == nil ? draftImages : []
         if text.isEmpty && !images.isEmpty { text = "Cập nhật từ ảnh này giúp em" }
@@ -388,6 +410,7 @@ final class Desk {
     /// Bật / tắt giọng nói. Câu hỏi nói ra thành một lượt chat thật ở backend; bước, thẻ, câu trả lời hiện y như gõ chữ.
     func toggleVoice() {
         if voice.isOn { voice.stop(); return }
+        guard aiConsented(then: { [weak self] in self?.toggleVoice() }) else { return }
         voice.onChatStart = { [weak self] q in
             guard let self else { return }
             self.messages.append(ChatMessage(role: "user", text: q))
