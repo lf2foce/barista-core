@@ -46,7 +46,8 @@ async def lead_sla(ctx: Ctx, inp: LeadIdsIn) -> dict[str, dict[str, Any]]:
 async def contact_gate(ctx: Ctx, inp: LeadIdsIn) -> dict[str, list[str]]:
     """Lead nào đang CHE liên hệ: chờ bấm nhận (``offered``) và bản chụp luật lúc chia có bật ``hide_contact``. Nhận rồi / thu hồi sang người mới mà luật
     không che / về hàng chờ ⇒ không che (hàng chờ: người điều phối không mở được thẻ khách — 0153)."""
-    rows = await ctx.all("SELECT lead_id FROM leadflow.lead_state WHERE lead_id = ANY(%s) AND status = 'offered' AND (rule ->> 'hide_contact')::boolean",
+    rows = await ctx.all("SELECT lead_id FROM leadflow.lead_state WHERE lead_id = ANY(%s) AND (rule ->> 'hide_contact')::boolean"
+                         " AND (status = 'offered' OR (status = 'queued' AND queue_reason = 'invited'))",   # đang mời nhiều người (0264): chưa ai nhận
                          (inp.lead_ids,))
     return {"gated": [str(r["lead_id"]) for r in rows]}
 
@@ -367,7 +368,10 @@ async def mine(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
                          " WHERE holder_id = %s AND status = ANY(%s) AND imported_at IS NULL ORDER BY first_call_due LIMIT 50", (ctx.p.user_id, list(OPEN)))
     back = await ctx.all("SELECT DISTINCT ON (lead_id) lead_id, at, data FROM leadflow.sla_events WHERE kind = 'returned' AND user_id = %s"
                          " AND at >= now() - interval '7 days' ORDER BY lead_id, at DESC", (ctx.p.user_id,))
-    cards = await ctx.call_system("crm.lead_cards", lead_ids=[r["lead_id"] for r in rows] + [b["lead_id"] for b in back]) if rows or back else {}
+    asked = await ctx.all("SELECT i.lead_id, i.until, s.offering_code FROM leadflow.invites i JOIN leadflow.lead_state s ON s.lead_id = i.lead_id"
+                          " WHERE i.user_id = %s AND i.status = 'open' AND i.until > now() ORDER BY i.until LIMIT 20", (ctx.p.user_id,))   # 0264
+    ids = [r["lead_id"] for r in rows] + [b["lead_id"] for b in back] + [a["lead_id"] for a in asked]
+    cards = await ctx.call_system("crm.lead_cards", lead_ids=ids) if ids else {}
     offered = [r for r in rows if r["status"] == "offered"]
     late = [r for r in rows if r["first_call_due"] and r["first_call_due"] < now]
     soon = [r for r in rows if r["first_call_due"] and now <= r["first_call_due"] <= now + timedelta(minutes=30)]
@@ -375,7 +379,13 @@ async def mine(ctx: Ctx, inp: NoInput) -> dict[str, Any]:
         ui.kpi("Chờ bấm nhận", len(offered), tone="orange" if offered else None),
         ui.kpi("Quá hạn liên hệ", len(late), tone="red" if late else None),
         ui.kpi("Sắp tới hạn (≤ 30 phút)", len(soon), tone="orange" if soon else None),
-        ui.kpi("Khách quay lại (7 ngày)", len(back), tone="blue" if back else None)])]
+        ui.kpi("Khách quay lại (7 ngày)", len(back), tone="blue" if back else None),
+        *([ui.kpi("Được mời nhận", len(asked), tone="orange")] if asked else [])])]
+    for a in asked:   # mời nhiều người (0264): ai nhận trước giữ — chưa phải lead của mình
+        c = cards.get(str(a["lead_id"]), {})
+        blocks.append(ui.b_callout("warn", f"{c.get('customer', '—')}{' · ' + a['offering_code'] if a['offering_code'] else ''}",
+                                   f"Được mời nhận — ai nhận trước giữ (trước {a['until'].astimezone(zone()):%H:%M %d/%m})",
+                                   actions=[ui.act("leadflow.claim", "Nhận lead", {"lead_id": str(a["lead_id"])}, "primary")]))
     for r in rows[:12]:
         c = cards.get(str(r["lead_id"]), {})
         due = r["accept_due"] if r["status"] == "offered" else r["first_call_due"]

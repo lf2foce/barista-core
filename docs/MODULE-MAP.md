@@ -3,7 +3,7 @@
 > Sinh từ code — KHÔNG sửa tay. Sinh lại: `cd backend && uv run python scripts/module_map.py`; `tests/test_module_map.py` đỏ khi file này lệch code.
 > Vì sao chia như vậy: [OVERVIEW.md](OVERVIEW.md), ADR 0045, 0056, 0088.
 
-17 gói · 29 module · 1026 thao tác (287 nội bộ) · 21 bên nghe sự kiện.
+17 gói · 29 module · 1035 thao tác (290 nội bộ) · 21 bên nghe sự kiện.
 
 ## Gói
 
@@ -39,14 +39,14 @@
 | `connect` | Ứng dụng kết nối | `base` | — | `modules/connect.py` | 9 | 3 | 4 |
 | `connectors` | Kết nối ngoài | `base` | `connectors` | `modules/connectors.py` | 10 | 6 | 6 |
 | `core` | Lõi | `base` | `core` | `kernel/ai_hints.py`, `kernel/ai_skills.py`, `kernel/ai_tiers.py`, `kernel/ai_tools.py`, `kernel/core_ops.py`, `kernel/docread_policy.py`, `kernel/embed_policy.py`, `kernel/form_draft.py`, `kernel/history.py`, `kernel/idempotency_log.py`, `kernel/import_log.py`, `kernel/plugins.py`, `kernel/rail.py`, `kernel/record_files.py`, `kernel/screen_usage.py` | 37 | 42 | 10 |
-| `crm` | Khách hàng | `crm` | `crm` | `modules/crm/` (18 file) | 24 | 49 | 42 |
+| `crm` | Khách hàng | `crm` | `crm` | `modules/crm/` (18 file) | 25 | 50 | 42 |
 | `findings` | Báo cáo chạy song song | `findings` | — | `modules/findings.py` | 0 | 7 | 1 |
 | `flow` | Quy trình & việc | `base` | `flow` | `modules/flow/` (17 file) | 37 | 49 | 33 |
 | `health` | Sức khoẻ dữ liệu | `base` | — | `modules/health.py` | 0 | 2 | 1 |
 | `hr` | Hồ sơ làm việc | `hr` | `hr` | `modules/hr/` (2 file) | 13 | 14 | 4 |
 | `kb` | Tài liệu | `base` | `kb` | `modules/kb/` (4 file) | 15 | 23 | 12 |
 | `kpi` | KPI & xếp hạng | `kpi` | `kpi` | `modules/kpi.py` | 4 | 6 | 2 |
-| `leadflow` | Chia lead & hạn xử lý | `crm` | `leadflow` | `modules/leadflow/` (7 file) | 16 | 21 | 14 |
+| `leadflow` | Chia lead & hạn xử lý | `crm` | `leadflow` | `modules/leadflow/` (7 file) | 21 | 23 | 17 |
 | `meet` | Gọi video | `meet` | `meet` | `modules/meet.py` | 17 | 11 | 4 |
 | `memory` | Trí nhớ | `base` | `memory` | `modules/memory.py` | 4 | 4 | 1 |
 | `mgmt` | Báo cáo quản trị | `mgmt` | `mgmt` | `modules/mgmt.py` | 2 | 3 | 0 |
@@ -323,16 +323,19 @@
 - **Tài nguyên quyền:** `leadflow`
 - **Hợp đồng quyền hệ thống** (thao tác ← module được gọi):
   - `leadflow.contact_gate` ← `crm`
+  - `leadflow.drop` ← `leadflow`
   - `leadflow.findings_report` ← `findings`
   - `leadflow.follow_owner` ← `crm`
   - `leadflow.give` ← `leadflow`
   - `leadflow.health_report` ← `health`
+  - `leadflow.invite_for` ← `crm`
   - `leadflow.lead_sla` ← `crm`
   - `leadflow.move` ← `leadflow`
   - `leadflow.receiver_check` ← `crm`
   - `leadflow.returned` ← `leadflow`
   - `leadflow.route` ← `leadflow`
   - `leadflow.score_rows` ← `leadflow`
+  - `leadflow.take` ← `leadflow`
 - **Mở cho gói ngoài** (thao tác → họ; gói khai `consumes`):
   - `leadflow.external_lead_days` → `company_figures`
 - **Gọi họ thao tác bằng quyền hệ thống:** `plug`

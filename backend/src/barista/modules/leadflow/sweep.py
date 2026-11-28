@@ -49,7 +49,9 @@ from barista.modules.leadflow.routing import (
     follow,
     handover,
     ineligible,
+    invites_due,
     rehome_departed,
+    step_up,
 )
 
 # bản chụp luật trên lead chia TRƯỚC 0152 không có các khoá này ⇒ hành vi cũ
@@ -221,13 +223,22 @@ async def _age_queue(ctx: Ctx, st: dict[str, Any], now: datetime, digest: Digest
     return 1
 
 
+async def _steps_past_hold(ctx: Ctx, st: dict[str, Any], cache: dict[Any, list[dict[str, Any]]]) -> bool:
+    """Lead đã hết hạn giữ của bậc có phải sang bậc kế không (0264): bậc hiện tại đẩy cả lead đã liên hệ (``include_contacted``), hoặc lead chưa được liên
+    hệ. Bậc không đẩy lead đã liên hệ ⇒ lead ở lại với người đang chăm (vòng quét chỉ theo dõi hạn chăm sóc lại như cũ)."""
+    if st["rule_id"] not in cache:
+        cache[st["rule_id"]] = await ctx.all("SELECT seq, include_contacted FROM leadflow.steps WHERE rule_id = %s", (st["rule_id"],))
+    cur = next((x for x in cache[st["rule_id"]] if x["seq"] == st["step_seq"]), None)
+    return st["status"] in OPEN or bool(cur and cur["include_contacted"])
+
+
 @m.command("enforce_sla", resource="leadflow", title="Chấm hạn xử lý lead", internal=True,
            sweep="SELECT DISTINCT tenant_id FROM leadflow.lead_state WHERE status IN ('offered', 'waiting', 'contacted', 'queued') AND imported_at IS NULL")
 async def enforce_sla(ctx: Ctx, inp: NoInput) -> dict[str, int]:
     """Một vòng quét của MỘT công ty: người giữ còn được giữ không, đồng bộ người giữ, liên hệ đầu, nghỉ phép, bấm nhận, chấm hạn, nhắc, báo trưởng
     nhóm, thu hồi, tuổi hàng chờ, lead của người đã nghỉ, rồi chia lại hàng chờ."""
     out = {"met": 0, "breached": 0, "recalled": 0, "queued": 0, "followup": 0, "closed": 0, "reminded": 0, "escalated": 0, "handed_over": 0,
-           "accept_missed": 0, "resynced": 0, "queue_escalated": 0}
+           "accept_missed": 0, "resynced": 0, "queue_escalated": 0, "stepped": 0, "invites": 0}
     now = lf.clock()
     digest = Digest()
     picked = await ctx.all("SELECT * FROM leadflow.lead_state WHERE status IN ('offered', 'waiting', 'contacted', 'queued') AND imported_at IS NULL"
@@ -242,6 +253,7 @@ async def enforce_sla(ctx: Ctx, inp: NoInput) -> dict[str, int]:
                                  since=[s["assigned_at"] if s["status"] in OPEN else None for s in states]) if states else {}
     pbx = await _pbx(ctx, [s for s in first if "pbx" in s["rule"]["contact_proof"]])
     gone = await away(ctx, {s["holder_id"] for s in first if s["holder_id"]})
+    steps_of: dict[Any, list[dict[str, Any]]] = {}
     unfit = await ineligible(ctx, states)
     for st in states:
         i = info.get(str(st["lead_id"]))
@@ -257,6 +269,10 @@ async def enforce_sla(ctx: Ctx, inp: NoInput) -> dict[str, int]:
         if (why := unfit.get(lid)) is not None:   # nghỉ việc / mất quyền / rời đội / rời [[offering|l]]: chuyển NGAY, không tính thu hồi
             await handover(ctx, st, why)
             out["handed_over"] += 1
+            continue
+        if st["hold_until"] is not None and now >= st["hold_until"] and await _steps_past_hold(ctx, st, steps_of):
+            await step_up(ctx, st)   # 0264: hết hạn giữ của bậc, lead chưa chốt ⇒ chuyển giao sang bậc kế (không tính thu hồi, không lùi bậc)
+            out["stepped"] += 1
             continue
         hours = hours_of(rule)
         hs = clock_of(rule, st["duty"])   # lead chia đội trực: giờ trực ∪ giờ làm việc
@@ -328,6 +344,10 @@ async def enforce_sla(ctx: Ctx, inp: NoInput) -> dict[str, int]:
                 if rule["escalate"]:
                     out["escalated"] += await _escalate(ctx, st, "followup", fdue, {"followup": True, "due": fdue.isoformat()}, digest)
     for st in picked:
+        if st["status"] == "queued" and st["queue_reason"] == "invited" and st["step_seq"]:
+            if await invites_due(ctx, st, now):   # 0264: lời mời hết hạn không ai nhận ⇒ mời lượt kế / sang bậc kế
+                out["invites"] += 1
+                continue
         if st["status"] == "queued":
             out["queue_escalated"] += await _age_queue(ctx, st, now, digest)
     await _tell_campaign_owners(ctx, digest)
