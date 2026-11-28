@@ -175,6 +175,10 @@ class Settings(BaseSettings):
     # Gửi email hệ thống (0205 §5c — mã đăng nhập): SMTP chuẩn (kernel/mailer.py). Trống ⇒ không đăng nhập bằng mã email được (máy dev: mã ghi ra log).
     smtp_url: str = ""                    # smtps://<user>:<mật khẩu / khoá API>@<host>:465 — Resend: smtps://resend:<khoá>@smtp.resend.com:465
     mail_from: str = ""                   # "Công ty <no-reply@vi-du.test>" — tên miền gửi phải khai SPF / DKIM
+    # Tài khoản người duyệt App Store (ADR 0268): đúng MỘT email nhận mã 6 số cố định (người duyệt không đọc được hộp thư) — bí mật của bản cài
+    # (runtime.env), không git. Vẫn phải là thành viên đang hoạt động; nhập sai tính vào giới hạn khoá theo email như mọi người. Trống ⇒ tắt.
+    review_login_email: str = ""
+    review_login_code: str = ""
     voice_model: str = "gemini-3.8-live"   # Gemini Live — lớp giọng nói (quyết định 0042)
     # Phiên giọng nói (ADR 0193): kiểm lại tư cách + công tắc AI + hạn mức và ghi chi phí Live mỗi chừng này giây; khoảng nào Gemini Live không báo số token
     # ⇒ ghi ƯỚC TÍNH theo phút (thận trọng — cao hơn mức thường gặp: 32 token âm thanh / giây; gemini-3.8-live 3 USD / 12 USD mỗi triệu token âm thanh vào / ra ⇒ vào + ra liên tục cả phút ≈ 0,03 USD)

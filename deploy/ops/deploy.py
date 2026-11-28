@@ -112,10 +112,14 @@ def load_instance(name: str, directory: Path | None = None) -> dict:
         raise ValueError(f"instances/{name}.json: \"landing\" chỉ nhận true (trang giới thiệu ở / cho người chưa đăng nhập) — vắng = vào thẳng /login")
     if "support_email" in inst and not (isinstance(inst["support_email"], str) and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", inst["support_email"])):
         raise ValueError(f"instances/{name}.json: \"support_email\" phải là một địa chỉ email (trang /privacy, /support của web) — vắng = không ghi email")
+    if "email_login" in inst and inst["email_login"] is not True:
+        raise ValueError(f"instances/{name}.json: \"email_login\" chỉ nhận true (production đăng nhập bằng mã email thay Google — ADR 0268) — vắng = cần Google")
     if production(inst):
-        if missing := [k for k in PRODUCTION_LOGIN if not isinstance(api_env.get(k), str) or not api_env[k].strip()]:
+        # đăng nhập thật: Google trong api_env, HOẶC khai "email_login": true (mã qua email — thư cấu hình ở runtime.env; lõi tự chặn khởi động nếu thiếu)
+        missing = [k for k in PRODUCTION_LOGIN if not isinstance(api_env.get(k), str) or not api_env[k].strip()]
+        if missing and inst.get("email_login") is not True:
             raise ValueError(f"instances/{name}.json là \"env\": \"production\" nhưng api_env thiếu {', '.join(missing)} — production bắt buộc "
-                             "đăng nhập Google thật (runbook 09; runbook 11 mục \"Chế độ production\")")
+                             "đăng nhập thật: Google (runbook 09) hoặc khai \"email_login\": true (ADR 0268; runbook 11 mục \"Chế độ production\")")
         if bad := [k for k in ("BARISTA_PUBLIC_API_URL", "BARISTA_WEB_URL") if k in api_env and not str(api_env[k]).startswith("https://")]:
             raise ValueError(f"instances/{name}.json: {', '.join(bad)} của bản production phải là https:// (vắng ⇒ lấy từ api_host / web_host)")
     return inst

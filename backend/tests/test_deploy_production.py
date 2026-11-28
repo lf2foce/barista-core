@@ -259,6 +259,31 @@ def test_core_production_check():
         assert why in err
 
 
+def test_core_production_accepts_email_login_instead_of_google_and_checks_the_review_account():
+    """ADR 0268: production cần đăng nhập THẬT — Google hoặc mã qua email (đã cấu hình thư); tài khoản người duyệt phải đủ email + mã 6 số."""
+    mail = {"google_web_client_id": "", "smtp_url": "smtps://u:p@smtp.example.vn:465", "mail_from": "Barista <no-reply@example.vn>"}
+    assert production.errors(_settings(**mail)) == []
+    for half in ({"smtp_url": ""}, {"mail_from": ""}):   # thư nửa vời ⇒ không có đăng nhập thật nào
+        (err,) = production.errors(_settings(**{**mail, **half}))
+        assert "GOOGLE_WEB_CLIENT_ID" in err and "SMTP_URL" in err
+    assert production.errors(_settings(**mail, review_login_email="reviewer@example.vn", review_login_code="123456")) == []
+    for bad in ({"review_login_email": "reviewer@example.vn", "review_login_code": ""}, {"review_login_email": "", "review_login_code": "123456"},
+                {"review_login_email": "reviewer@example.vn", "review_login_code": "12345"}, {"review_login_email": "reviewer@example.vn", "review_login_code": "abcdef"}):
+        (err,) = production.errors(_settings(**mail, **bad))
+        assert "REVIEW_LOGIN" in err
+
+
+def test_production_instance_may_declare_email_login_instead_of_google(tmp_path):
+    """ADR 0268: file bản cài production khai ``"email_login": true`` thì không đòi Google (lõi tự chặn khởi động nếu thư chưa cấu hình); chỉ nhận true."""
+    inst = ops.load_instance("acme", _write(tmp_path, {**PROD, "api_env": {}, "email_login": True}))
+    stack = json.loads(ops.render(TEMPLATE, inst, json_text=True))
+    api, web = stack["services"]["api"]["environment"], stack["services"]["web"]["environment"]
+    assert api["BARISTA_DEV_AUTH"] == "false" and web["BARISTA_WEB_DEV_LOGIN"] == "0" and "BARISTA_DEMO_OPEN" not in api
+    for bad in ({**PROD, "email_login": False}, {**PROD, "email_login": "yes"}):
+        with pytest.raises(ValueError, match="email_login"):
+            ops.load_instance("acme", _write(tmp_path, bad))
+
+
 async def test_api_refuses_to_start_in_production_with_dev_login_before_touching_the_database(monkeypatch):
     monkeypatch.setattr(settings, "env", "production")
     monkeypatch.setattr(settings, "dev_auth", True)

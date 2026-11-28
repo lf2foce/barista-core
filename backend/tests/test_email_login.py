@@ -199,3 +199,36 @@ async def test_a_right_code_clears_the_wrong_guess_count(who: Who, outbox: Outbo
     async with db.owner.connection() as conn:
         n = await (await conn.execute("SELECT coalesce(sum(attempts), 0) AS n FROM core.login_codes WHERE email = %s", (email,))).fetchone()
     assert n is not None and n["n"] == 0
+
+
+async def test_the_review_account_signs_in_with_its_fixed_code_and_nothing_else_does(who: Who, outbox: Outbox,
+                                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR 0268 — tài khoản người duyệt App Store: đúng email cấu hình + mã cố định mở phiên thật (không cần xin mã); email khác không dùng được mã
+    đó; đường ứng dụng first-party không nhận mã đó; sai mã vẫn tính vào giới hạn khoá theo email (khoá rồi thì mã đúng cũng bị từ chối)."""
+    reviewer, tenant = await _invite(who, "duyet")
+    other, _ = await _invite(who, "khac")
+    monkeypatch.setattr(settings, "review_login_email", reviewer.upper())
+    monkeypatch.setattr(settings, "review_login_code", "246810")
+    cid = f"suite-test-{uuid.uuid4().hex[:6]}"
+    await _first_party(cid)
+    async with client() as c:
+        r = await c.post("/v1/auth/email/verify", json={"email": reviewer, "code": "246810"})
+        assert r.status_code == 200, r.text
+        assert [t["id"] for t in r.json()["tenants"]] == [str(tenant)]
+        assert (await c.post("/v1/auth/email/verify", json={"email": reviewer, "code": "246810"})).status_code == 200   # mã cố định, dùng lại được
+        assert (await c.post("/v1/auth/email/verify", json={"email": other, "code": "246810"})).status_code == 401      # chỉ đúng email người duyệt
+        assert (await c.post("/v1/oauth/email/verify", json={"client_id": cid, "client_secret": SECRET, "email": reviewer, "code": "246810",
+                                                             "nonce": "n", "tenant_id": str(tenant)})).status_code != 200  # không cho ứng dụng
+        for i in range(10):
+            ratelimit.reset()   # giới hạn theo địa chỉ ở bộ nhớ — thứ đang thử là bộ đếm sai theo email trong DB
+            assert (await c.post("/v1/auth/email/verify", json={"email": reviewer, "code": f"{i:06d}"})).status_code == 401
+        ratelimit.reset()
+        assert (await c.post("/v1/auth/email/verify", json={"email": reviewer, "code": "246810"})).status_code == 401   # đang khoá
+    async with db.owner_tx() as conn:   # hết cửa sổ khoá ⇒ mã đúng lại vào được; người duyệt bị gỡ khỏi công ty ⇒ hết vào
+        await conn.execute("UPDATE core.login_codes SET created_at = now() - interval '2 days' WHERE email = %s", (reviewer,))
+    async with client() as c:
+        assert (await c.post("/v1/auth/email/verify", json={"email": reviewer, "code": "246810"})).status_code == 200
+    async with db.owner_tx() as conn:
+        await conn.execute("UPDATE core.memberships SET active = false WHERE user_id = (SELECT id FROM core.users WHERE email = %s)", (reviewer,))
+    async with client() as c:
+        assert (await c.post("/v1/auth/email/verify", json={"email": reviewer, "code": "246810"})).status_code == 401

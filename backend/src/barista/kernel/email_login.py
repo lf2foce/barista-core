@@ -125,10 +125,39 @@ async def _locked(c: Any, email: str) -> bool:
     return False
 
 
+def _review_email(email: str, client_id: str | None) -> bool:
+    """Email người duyệt App Store (ADR 0268) — chỉ đường đăng nhập Barista (không cho ứng dụng first-party), chỉ khi bản cài đặt đủ email + mã."""
+    return client_id is None and bool(settings.review_login_code) and email == normalize(settings.review_login_email)
+
+
+async def _check_review_code(email: str, code: str, refused: CodeRefused) -> UUID:
+    """Mã cố định của người duyệt: cùng giới hạn khoá theo email; sai ⇒ ghi một lượt sai (dòng mã đã hết hạn) để ``_locked`` đếm được cả khi chưa từng
+    xin mã — không có đường đoán không giới hạn. Đúng ⇒ xoá đếm sai, trả mã người (vẫn phải là thành viên đang hoạt động)."""
+    async with db.owner_tx() as c:
+        if await _locked(c, email):
+            raise refused
+        good = len(code) == 6 and code.isdigit() and hmac.compare_digest(code.encode(), settings.review_login_code.encode())
+        if not good:
+            row_id = uuid.uuid4()
+            await c.execute("""INSERT INTO core.login_codes (id, email, code_hash, client_id, nonce_hash, expires_at, attempts)
+                               VALUES (%s, %s, %s, NULL, NULL, now(), 1)""", (row_id, email, _hash(row_id, secrets.token_hex(8))))
+            user = None
+        else:
+            await c.execute("UPDATE core.login_codes SET attempts = 0 WHERE email = %s AND attempts > 0", (email,))
+            cur = await c.execute("""SELECT u.id FROM core.users u WHERE u.email = %s
+                                     AND EXISTS (SELECT 1 FROM core.memberships m WHERE m.user_id = u.id AND m.active)""", (email,))
+            user = await cur.fetchone()
+    if user is None:
+        raise refused
+    return user["id"]
+
+
 async def check_code(email: str, code: str, *, client_id: str | None = None, nonce: str | None = None) -> UUID:
     """Đúng mã (mới nhất, chưa dùng, còn hạn, đúng ứng dụng + trình duyệt) ⇒ mã dùng xong, trả mã người. Sai ⇒ tăng số lần thử (lưu lại), ``CodeRefused``."""
     email, code = normalize(email), (code or "").strip()
     refused = CodeRefused("Mã không đúng hoặc đã hết hạn — xin mã mới rồi thử lại")
+    if _review_email(email, client_id):
+        return await _check_review_code(email, code, refused)
     async with db.owner_tx() as c:
         cur = await c.execute("""SELECT id, code_hash, nonce_hash, attempts FROM core.login_codes
                                  WHERE email = %s AND client_id IS NOT DISTINCT FROM %s AND used_at IS NULL AND expires_at > now()
