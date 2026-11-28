@@ -64,7 +64,10 @@ def test_the_sample_install_renders_byte_identical_to_the_pinned_files():
                   '        "BARISTA_META_ADS_SCOPES": "${BARISTA_META_ADS_SCOPES}",\n',
                   # đăng nhập bằng mã qua email (0205 §5c): máy chủ thư + địa chỉ gửi; trống ⇒ trang đăng nhập không hiện ô email
                   '        "BARISTA_SMTP_URL": "${BARISTA_SMTP_URL}",\n',
-                  '        "BARISTA_MAIL_FROM": "${BARISTA_MAIL_FROM}",\n'):
+                  '        "BARISTA_MAIL_FROM": "${BARISTA_MAIL_FROM}",\n',
+                  # tài khoản người duyệt App Store (ADR 0268): một email + mã 6 số cố định, bí mật ở runtime.env; trống ⇒ tắt
+                  '        "BARISTA_REVIEW_LOGIN_EMAIL": "${BARISTA_REVIEW_LOGIN_EMAIL}",\n',
+                  '        "BARISTA_REVIEW_LOGIN_CODE": "${BARISTA_REVIEW_LOGIN_CODE}",\n'):
         assert stack.count(added) == 1, added
         stack = stack.replace(added, "")
     # cổng mật khẩu web đặt lại 11/11/2026 (bỏ 04/11 lúc demo còn dữ liệu giả; bản cài đầu nay có dữ liệu thật) — xem test_every_instance_web_router_sits_behind_the_password_gate
