@@ -285,6 +285,17 @@ async def template(ctx: Ctx, inp: TemplateRef) -> dict[str, Any]:
         ask={"title": "Nhờ trợ lý sửa quy trình", "prompt": f"Sửa quy trình “{t['name']}”: "})
 
 
+@m.query("config_templates", resource="flow.templates", title="Cấu hình: mẫu quy trình", agent="deny")
+async def config_templates(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    """Gói cấu hình công ty (ADR 0263 C): phiên bản ĐANG ÁP của mỗi mẫu, đúng dạng đầu vào ``flow.set_template`` (bản chữ — đội / vai nhắc bằng mã). Nhập
+    chỉ ghi khi khác ⇒ phiên bản mới; hồ sơ đang mở giữ phiên bản của mình."""
+    return [{"key": r["key"], "name": r["name"], "subject_kind": r["subject_kind"], "auto_open": r["auto_open"], "follow": r["follow"], "source": r["source"]}
+            for r in await ctx.all("SELECT key, name, subject_kind, auto_open, follow, source FROM flow.templates WHERE is_active ORDER BY key")]
+
+
+m.config("templates", "Mẫu quy trình", read="flow.config_templates", write="flow.set_template", order=100, match=("key",))
+
+
 async def _active_template(ctx: Ctx, key: str) -> dict[str, Any]:
     t = await ctx.one("SELECT * FROM flow.templates WHERE key = %s AND is_active", (key,))
     if t is None:

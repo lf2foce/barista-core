@@ -9,7 +9,7 @@ Một công ty chuyển từ hệ cũ sang Barista đi qua **7 chặng**. Mỗi 
 | Chặng | Làm gì | Đầu ra bắt buộc | Barista lo bằng |
 |---|---|---|---|
 | 1. Khảo sát theo chuẩn | Cho khách xem quy trình CÓ SẴN của gói, chỉ ghi phần lệch | Bảng fit-gap (chuẩn / cấu hình / phát triển), quy trình vận hành đã ký | Việc `base.fit_gap`, `base.process_signed` |
-| 2. Cấu hình | Lệch nào giải được bằng dữ liệu thì cấu hình (vai, quyền, chuỗi duyệt, cài đặt, từ vựng, mẫu quy trình, luật chia lead) | Cấu hình xong, người dùng thật đã mời | Việc `base.configured`, `base.people`; màn Quản trị |
+| 2. Cấu hình | Lệch nào giải được bằng dữ liệu thì cấu hình (vai, quyền, chuỗi duyệt, cài đặt, từ vựng, mẫu quy trình, luật chia lead) | Cấu hình xong, người dùng thật đã mời | Việc `base.configured`, `base.config_imported`, `base.people`; màn Quản trị; gói cấu hình (xuất ở bản thử, nhập ở công ty thật — dưới đây) |
 | 3. Chuyển dữ liệu thử | Ít nhất 2 lượt chuyển thử, mỗi lượt đọc đối chiếu | 2 lượt thử ĐẠT (không lệch, hoặc lệch đã ký) | Bộ chuyển (`barista.api.onboard`) + màn Lượt chuyển dữ liệu; việc `base.mock_runs` tự kiểm |
 | 4. Kiểm thử chấp nhận | Người dùng thật chạy trọn nghiệp vụ trên dữ liệu đã chuyển | Biên bản kiểm thử | Việc `base.uat` |
 | 5. Đào tạo theo vai | Mỗi vai một buổi trên màn của vai | Danh sách người đã học | Việc `base.training` |
@@ -43,6 +43,25 @@ Sau đó người làm onboard được mời với vai có quyền **Đưa vào
 
 Làm trong app. Mỗi việc xong ⇒ ở màn Đưa công ty vào dùng bấm **Đã xong** trên dòng đó và ghi **bằng chứng** (đường dẫn biên bản / tệp, số đếm, người rà) — người
 khác đọc là kiểm lại được. Việc bắt buộc không bỏ qua được; việc "Nên có" bấm **Bỏ qua** được. Sai thì **Mở lại**.
+
+### Mang cấu hình từ bản thử sang công ty thật (gói cấu hình — ADR 0263 mục C)
+
+Cấu hình làm và duyệt trên bản thử không phải làm tay lại:
+
+1. Ở bản thử: **Quản trị › Cấu hình công ty** › **Tải tệp cấu hình (.json)**. Tệp gồm mỗi phần cấu hình của các gói đang bật một khối và `config_version` (băm
+   nội dung — hai công ty cấu hình giống hệt nhau có cùng số). Không có khách, giao dịch, tài khoản người dùng; người duyệt / thành viên ghi bằng email.
+2. Ở công ty thật: **Quản trị › Tệp cấu hình đã tải lên** › **Tải tệp cấu hình lên** (tệp sửa tay sau khi xuất bị từ chối — xuất lại). Bấm dòng vừa tải để xem
+   **so khác**: thêm / đổi / giữ nguyên / khác nhưng không ghi đè / chờ mời người, theo từng phần. Mục chỉ có ở công ty thật được đếm, không xoá.
+3. Email chưa là thành viên công ty thật ⇒ "Cần mời … người trước": mời ở Quản trị › Người dùng (không tự tạo tài khoản), rồi nhập lại cùng tệp.
+4. Bấm **Nhập cấu hình này** ⇒ MỘT phiếu chủ tài khoản cho cả tệp (chuỗi "Thay đổi quyền truy cập"; phiếu liệt kê mục thêm / đổi). Sau duyệt, Barista gọi đúng
+   các lệnh sẵn có (thêm vai, đặt quyền, chuỗi duyệt, cài đặt, mẫu quy trình, luật chia lead…) theo thứ tự (vai trước quyền, đội trước luật, luật duyệt sau
+   cùng); mục lỗi ghi lý do trên thẻ so khác, mục khác vẫn vào. Nhập lại cùng tệp không đổi gì; xong thì dòng hiện "Đã khớp".
+5. Đánh dấu việc `base.config_imported` kèm `config_version`.
+
+Phần nhập được: vai, cây đơn vị (trừ đội gốc = chính công ty), quyền, chuỗi duyệt, luật duyệt, cài đặt công ty, từ vựng, trường riêng, mẫu quy trình (khác ⇒
+phiên bản mới), luật chia lead (chỉ thêm — luật cùng phạm vi + ngày hiệu lực mà khác thì không ghi đè), thành viên chia lead. **Chưa** mang theo: bậc chia lead
+(khoá theo mã luật nội bộ), luật tự động (luật chạy bằng quyền người đặt — làm lại tay để người đặt là người ở công ty thật), thành viên đội / trưởng đội (là
+người, không phải cấu hình).
 
 ## 3. Viết một bộ chuyển dữ liệu
 
@@ -184,3 +203,7 @@ Chưa có lệnh — làm tay theo danh sách việc (không bịa bước tự 
 - **Bước ngày chuyển** (việc làm được bằng cơ chế sẵn có của module): `@m.cutover("buoc", "Nhãn", order=30, resource="<tài nguyên>", why="…")` trên hàm
   `async (ctx, inp: CutoverIn) -> {"summary": …, "skipped"?: True}` — lệnh nội bộ `<module>.cutover_buoc`, chỉ `onboard` gọi; phải chạy lại an toàn (đã làm ⇒
   `skipped`). Chưa có lệnh thật ⇒ khai việc tay ở `onboard_steps`, không khai bước.
+- **Tài nguyên cấu hình** (gói cấu hình công ty): `m.config("khoa", "Nhãn", read="<module>.config_khoa", write="<module>.<lệnh ghi sẵn có>", order=…,
+  match=("ô khoá tự nhiên", …))` — truy vấn đọc (không đầu vào, `agent="deny"`) trả danh sách mục ĐÚNG dạng đầu vào của lệnh ghi: khoá tự nhiên, người theo
+  email, không UUID của công ty nguồn, không dữ liệu nghiệp vụ, đã chuẩn hoá như lệnh lưu (xuất lại sau khi nhập phải ra đúng mục đó). Lệnh ghi chỉ thêm, không
+  sửa được bản cũ ⇒ `mutable=False`. Thứ tự: thứ mình trỏ tới (vai, đội) có `order` nhỏ hơn.

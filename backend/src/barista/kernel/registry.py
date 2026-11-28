@@ -381,7 +381,28 @@ class Cutover:
 
 
 CUTOVERS: dict[str, Cutover] = {}
-STAGES = {1: "Khảo sát theo chuẩn", 2: "Cấu hình", 3: "Chuyển dữ liệu thử", 4: "Kiểm thử chấp nhận", 5: "Đào tạo theo vai", 6: "Ngày chuyển",
+
+
+@dataclass(frozen=True)
+class ConfigResource:
+    """Một TÀI NGUYÊN CẤU HÌNH công ty (ADR 0263 mục C) do module tự khai (``Module.config``): gói cấu hình xuất / so / nhập (``admin.export_config`` /
+    ``admin.import_config``) đọc bằng truy vấn ``read`` và ghi bằng lệnh ``write`` sẵn có — không đường ghi riêng. ``read`` (không đầu vào) trả DANH SÁCH
+    mục, mỗi mục ĐÚNG dạng đầu vào của ``write``: khoá tự nhiên (mã vai, mã đội, mã chuỗi…), người ghi theo EMAIL, không mã nội bộ (UUID) của công ty
+    nguồn, không dữ liệu nghiệp vụ; cùng cấu hình ⇒ cùng mục (thứ tự cố định, giá trị đã chuẩn hoá như ``write`` lưu). ``match``: các ô làm khoá tự nhiên
+    (mục trùng khoá ở công ty đích: giống hệt ⇒ giữ, khác ⇒ đổi bằng ``write``). ``mutable=False``: mục đã có mà khác thì KHÔNG ghi đè (vd luật có ngày
+    hiệu lực chỉ thêm) — báo để người làm tay. ``order``: thứ tự nhập (nhỏ trước — vai trước quyền, đội trước luật trỏ đội)."""
+    key: str          # <module>.<khoá>
+    label: str
+    module: str
+    read: str
+    write: str
+    order: int
+    match: tuple[str, ...]
+    mutable: bool = True
+
+
+CONFIGS: dict[str, ConfigResource] = {}
+STAGES ={1: "Khảo sát theo chuẩn", 2: "Cấu hình", 3: "Chuyển dữ liệu thử", 4: "Kiểm thử chấp nhận", 5: "Đào tạo theo vai", 6: "Ngày chuyển",
           7: "Trực sau chuyển"}   # 7 chặng onboard (ADR 0263 mục A) — chặng của việc trong danh sách (``OnboardStep.stage``)
 
 
@@ -796,6 +817,14 @@ def validate() -> None:
     bad += [f"gói {p.key}: từ vựng {k} chưa khai (Module.term) hoặc nhãn không hợp lệ" for p in PACKS.values() for k, v in p.vocab.items()
             if k not in vocab.TERMS or not vocab.clean(v) or len(v) > vocab.MAX_LABEL or "[[" in v]
     bad += _tool_entries_bad()
+    for c in CONFIGS.values():   # gói cấu hình (0263 C): đọc = truy vấn của chính module; ghi = lệnh người gọi sẵn có, khoá tự nhiên là ô của lệnh
+        r, w = OPS.get(c.read), OPS.get(c.write)
+        if r is None or r.kind != "query" or r.module != c.module:
+            bad.append(f"tài nguyên cấu hình {c.key}: truy vấn đọc {c.read} lạ / không phải truy vấn của module {c.module}")
+        if w is None or w.kind != "command" or w.internal:
+            bad.append(f"tài nguyên cấu hình {c.key}: lệnh ghi {c.write} lạ / nội bộ")
+        elif miss := sorted(set(c.match) - set(w.input.model_fields)):
+            bad.append(f"tài nguyên cấu hình {c.key}: khoá {miss} không phải ô của {c.write}")
     if "base" not in PACKS:
         bad.append("thiếu gói base")
     bad += [f"gói {p.key}: luôn bật nhưng requires gói không luôn bật ({', '.join(sorted(set(p.requires) - always_on()))})"
@@ -1303,6 +1332,22 @@ class Module:
             raise ValueError(f"bước ngày chuyển {full}: khoá chữ thường_gạch_dưới")
         CUTOVERS[full] = Cutover(full, label, self.key, order, f"{self.key}.cutover_{step}")
         return self.command(f"cutover_{step}", resource=resource, title=f"Ngày chuyển: {label}", internal=True, agent="deny", callers=("onboard",), why=why)
+
+    def config(self, key: str, label: str, *, read: str, write: str, order: int, match: tuple[str, ...], mutable: bool = True) -> None:
+        """Khai một TÀI NGUYÊN CẤU HÌNH của module cho gói cấu hình công ty (ADR 0263 mục C, api 1.86): ``read`` = truy vấn CỦA CHÍNH module (không đầu
+        vào) trả danh sách mục ở dạng đầu vào của lệnh ``write`` (lệnh người gọi sẵn có — nhập cấu hình gọi đúng lệnh này qua executor, bằng quyền người
+        nhập). Mục ghi khoá tự nhiên + email người, không UUID của công ty nguồn, không dữ liệu nghiệp vụ. ``match``: ô làm khoá tự nhiên; ``mutable=False``:
+        không ghi đè mục đã có; ``order``: nhỏ nhập trước. Truy vấn / lệnh kiểm ở ``validate`` (sau khi nạp hết gói)."""
+        full = f"{self.key}.{key}"
+        if full in CONFIGS:
+            raise ValueError(f"tài nguyên cấu hình {full} khai hai lần")
+        if not NAME.fullmatch(key):
+            raise ValueError(f"tài nguyên cấu hình {full}: khoá chữ thường_gạch_dưới")
+        if not read.startswith(self.key + "."):
+            raise ValueError(f"tài nguyên cấu hình {full}: truy vấn đọc phải của chính module {self.key}")
+        if not match:
+            raise ValueError(f"tài nguyên cấu hình {full}: cần match= (ô làm khoá tự nhiên)")
+        CONFIGS[full] = ConfigResource(full, label, self.key, read, write, order, tuple(match), mutable)
 
     def webhook(self, name: str, event_type: str, *, ids: tuple[str, ...], resource: str, label: str) -> None:
         """Công bố sự kiện ``event_type`` của module này cho app từ xa dưới tên ``name`` (0140). Thân webhook chỉ mang các khoá ``ids`` (mã), loại,

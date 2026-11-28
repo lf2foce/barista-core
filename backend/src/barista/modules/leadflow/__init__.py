@@ -587,6 +587,46 @@ async def members(ctx: Ctx, inp: MembersIn) -> dict[str, Any]:
         empty_actions=[ui.act("leadflow.set_member", "Thêm thành viên", style="primary")])
 
 
+# ── Gói cấu hình công ty (ADR 0263 C): luật chia + thành viên ở dạng đầu vào của lệnh ghi (đội theo mã, người theo email) ──
+
+def _days_key(days: list[int] | tuple[int, ...]) -> str | None:
+    return next((k for k, (v, _) in DAY_PRESETS.items() if tuple(v) == tuple(days)), None)
+
+
+@m.query("config_rules", resource="leadflow", title="Cấu hình: luật chia lead", agent="deny")
+async def config_rules(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    """Mọi luật chia (kể cả luật cũ — lịch sử theo ngày hiệu lực), đúng dạng đầu vào ``leadflow.set_rule``. Luật chỉ THÊM ⇒ luật trùng phạm vi + ngày ở
+    công ty đích mà khác thì không ghi đè (thêm luật ngày hiệu lực mới bằng tay). Bậc của luật (0264) chưa mang theo — bậc khoá theo mã luật nội bộ."""
+    rows = await ctx.all("""SELECT r.*, ct.code AS coord_code, t.code AS team_code, dt.code AS duty_code FROM leadflow.rules r
+                            LEFT JOIN core.teams ct ON ct.id = r.coord_team_id LEFT JOIN core.teams t ON t.id = r.team_id
+                            LEFT JOIN core.teams dt ON dt.id = r.duty_team_id
+                            ORDER BY r.effective_from, r.offering_code, r.source, r.plan_code""")
+    return [{"name": r["name"], "source": r["source"], "offering_code": r["offering_code"], "effective_from": r["effective_from"], "mode": r["mode"],
+             "coord_team_code": r["coord_code"] or "", "receivers": r["receivers"], "team_code": r["team_code"] or "", "roles": sorted(r["roles"]),
+             "strategy": r["strategy"], "cap_uncalled": r["cap_uncalled"], "first_call_min": r["first_call_min"], "contact_proof": list(r["contact_proof"]),
+             "min_talk_s": r["min_talk_s"], "remind_before_min": r["remind_before_min"], "escalate": r["escalate"], "grace_min": r["grace_min"],
+             "accept_min": r["accept_min"], "hide_contact": r["hide_contact"], "followup_hours": r["followup_hours"], "max_recalls": r["max_recalls"],
+             "queue_escalate_min": r["queue_escalate_min"], "days": _days_key(r["work_days"]), "open_at": hm(r["work_open_min"]),
+             "close_at": hm(r["work_close_min"]), "calendar": r["calendar"], "off_hours": r["off_hours"], "duty_team_code": r["duty_code"] or "",
+             "duty_days": _days_key(r["duty_days"]), "duty_open_at": hm(r["duty_open_min"]), "duty_close_at": hm(r["duty_close_min"]),
+             "plan_code": r["plan_code"], "reopen_lost": r["reopen_lost"], "max_open": r["max_open"], "release_free": r["release_free"]} for r in rows]
+
+
+@m.query("config_members", resource="leadflow", title="Cấu hình: thành viên chia lead", agent="deny")
+async def config_members(ctx: Ctx, inp: NoInput) -> list[dict[str, Any]]:
+    rows = await ctx.all("""SELECT m.offering_code, m.plan_code, u.email, m.tier, m.weight, m.active, m.note, m.step, t.code AS team_code
+                            FROM leadflow.members m JOIN core.users u ON u.id = m.user_id LEFT JOIN core.teams t ON t.id = m.team_id
+                            ORDER BY m.offering_code, m.plan_code, u.email""")
+    return [{"offering_code": r["offering_code"], "plan_code": r["plan_code"], "user_email": r["email"], "tier": r["tier"], "weight": r["weight"],
+             "active": r["active"], "note": r["note"], "step": r["step"], "team_code": r["team_code"] or ""} for r in rows]
+
+
+m.config("rules", "Luật chia lead", read="leadflow.config_rules", write="leadflow.set_rule", order=120,
+         match=("offering_code", "source", "plan_code", "effective_from"), mutable=False)
+m.config("members", "Thành viên chia lead", read="leadflow.config_members", write="leadflow.set_member", order=130,
+         match=("offering_code", "plan_code", "user_email"))
+
+
 # ── Bậc của luật (0264): mỗi bậc giữ lead tối đa N ngày, quá hạn chưa chốt ⇒ sang bậc kế; bậc mời nhiều người ⇒ ai nhận trước giữ ──
 
 class SetStep(Input):
