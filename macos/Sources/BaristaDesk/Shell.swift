@@ -78,8 +78,8 @@ struct LoginView: View {
                 VStack(spacing: 10) {
                     Image("Logo").resizable().scaledToFit().frame(width: 84, height: 84)
                         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    Text("Barista Work").font(.system(size: 28, weight: .semibold))
-                    Text("Mỗi người một trợ lý AI — thấy đúng phần dữ liệu của mình.")
+                    Text("Barista").font(.system(size: 28, weight: .semibold))
+                    Text("Mỗi người một trợ lý AI.")
                         .font(.t14).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity).padding(.top, 36).padding(.bottom, 8)
@@ -133,15 +133,9 @@ struct LoginView: View {
                         .font(.t12).foregroundStyle(.secondary).textSelection(.enabled)
                 }
                 #if os(iOS)
-                // chân màn: máy chủ (bấm / lắc máy để đổi — công ty có máy chủ riêng) + chính sách quyền riêng tư
-                VStack(spacing: 6) {
-                    Button { NotificationCenter.default.post(name: .baristaOpenServerSettings, object: nil) } label: {
-                        Text(API.defaultBase.host() ?? API.defaultBase.absoluteString).font(.t12)
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.tertiary)
-                    Link("Chính sách quyền riêng tư", destination: AIConsent.privacyURL).font(.t12)
-                }
-                .frame(maxWidth: .infinity).padding(.top, 12)
+                // chân màn: chỉ chính sách quyền riêng tư — đổi máy chủ (công ty có máy chủ riêng) bằng lắc máy, không hiện địa chỉ trước mặt người dùng
+                Link("Chính sách quyền riêng tư", destination: AIConsent.privacyURL).font(.t12)
+                    .frame(maxWidth: .infinity).padding(.top, 12)
                 #endif
             }
             .padding(28)
@@ -239,16 +233,20 @@ private struct EmailSignIn: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(sent ? "Nhập mã trong email" : "Đăng nhập").font(.system(size: 20, weight: .semibold))
             if !sent {
-                TextField("", text: $email, prompt: Text("email@congty.vn").foregroundStyle(.secondary))
-                    .keyboardType(.emailAddress).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .font(.system(size: 17)).foregroundStyle(.primary).padding(.horizontal, 16).frame(height: 52)
+                // gợi ý vẽ tay, verbatim: Text("…@…") bị đọc như markdown ⇒ thành link xanh (trông như email đã điền sẵn), bỏ qua foregroundStyle
+                ZStack(alignment: .leading) {
+                    if email.isEmpty { Text(verbatim: "email@company.com").foregroundStyle(Color(uiColor: .placeholderText)).allowsHitTesting(false) }
+                    TextField("", text: $email)
+                        .keyboardType(.emailAddress).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .foregroundStyle(.primary)
+                }
+                    .font(.system(size: 17)).padding(.horizontal, 16).frame(height: 52)
                     .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.canvas))
                     .onSubmit { start() }
                 Button { start() } label: {
                     Text(busy ? "Đang gửi…" : "Nhận mã đăng nhập").font(.system(size: 17, weight: .semibold)).frame(maxWidth: .infinity).frame(height: 52)
                 }
                 .buttonStyle(.borderedProminent).buttonBorderShape(.roundedRectangle(radius: 14)).disabled(busy || !trimmed.contains("@"))
-                Text("Dùng email mà công ty đã mời — Gmail hay email công ty đều được.").font(.t12).foregroundStyle(.secondary)
             } else {
                 Text("Đã gửi mã 6 số tới \(trimmed). Mã hết hạn sau 10 phút.").font(.t14).foregroundStyle(.secondary)
                 TextField("••••••", text: $code)
@@ -278,7 +276,7 @@ private struct EmailSignIn: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Đăng nhập bằng email").font(.t12m).foregroundStyle(.secondary)
             HStack(spacing: 8) {
-                TextField("email@congty.vn", text: $email)
+                TextField("email@company.com", text: $email)
                     .textFieldStyle(.roundedBorder).disabled(sent).onSubmit { if !sent { start() } }
                     #if os(iOS)
                     .keyboardType(.emailAddress).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
